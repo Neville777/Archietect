@@ -124,6 +124,13 @@ enum Cmd {
         root: PathBuf,
         term: String,
     },
+    /// One-call architectural plan for an intent: canonical locations, owners,
+    /// decisions, impact — composition of the five queries an agent needs
+    Plan {
+        #[arg(long)]
+        root: PathBuf,
+        text: Vec<String>,
+    },
     /// The architectural timeline: what changed, when, and what the engine
     /// said about it — Git knows files changed; this knows ARCHITECTURE did
     History {
@@ -234,6 +241,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Tour { root } => query::tour(&index_for(&root)),
         Cmd::Duplicates { root } => query::duplicates(&index_for(&root)),
         Cmd::Owner { root, term } => query::owner(&index_for(&root), &term),
+        Cmd::Plan { root, text } => query::plan(&index_for(&root), &text.join(" ")),
         Cmd::History { root, concept, limit } => {
             serde_json::json!({
                 "root": root.display().to_string(),

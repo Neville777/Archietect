@@ -276,7 +276,12 @@ pub fn intent(idx: &Index, text: &str) -> Value {
 }
 
 pub fn impact(idx: &Index, term: &str) -> Value {
-    let r = concept(idx, term);
+    // law-010 generalized: exact key first (see owner())
+    let r = if idx.concepts.contains_key(term) {
+        concept_card(idx, term, term)
+    } else {
+        concept(idx, term)
+    };
     let Some(canon) = r["canonical"].as_str().map(String::from) else {
         return json!({
             "target": term,
@@ -571,7 +576,14 @@ pub fn duplicates(idx: &Index) -> Value {
 /// that use it. Declarations outweigh usage 2:1: maintaining the contract is
 /// ownership; calling it is only interest.
 pub fn owner(idx: &Index, term: &str) -> Value {
-    let r = concept(idx, term);
+    // LAW-010, generalized: a known concept name is an EXACT key, not a
+    // search term. plan() passed canonical names back through term search
+    // and multi-token names matched nothing — the alias bug's twin.
+    let r = if idx.concepts.contains_key(term) {
+        concept_card(idx, term, term)
+    } else {
+        concept(idx, term)
+    };
     let Some(canon) = r["canonical"].as_str().map(String::from) else {
         return json!({ "target": term, "owner": null, "detail": r });
     };
@@ -749,5 +761,56 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
         "recent_changes": crate::store::read_history(root, None, 5),
         "suggestions": suggestions,
         "note": "No health score, deliberately: a composite nobody measured is an unmeasured number wearing a measured one's clothes. Every line above is a fact or derived from one.",
+    })
+}
+
+/// `architect plan` — the agent's one-call architectural plan. PURE
+/// COMPOSITION: intent resolution, then per-concept owner, impact, governing
+/// decisions and duplicate risks, stitched into one answer. No new semantics,
+/// no AI, no heuristics beyond the queries it composes — it exists because an
+/// agent that needs five tool calls to assemble context will sometimes skip
+/// two of them, and the skipped ones are always the ones that mattered.
+pub fn plan(idx: &Index, text: &str) -> Value {
+    let it = intent(idx, text);
+    let mut planned = Vec::new();
+    for e in it["extend"].as_array().cloned().unwrap_or_default().iter().take(3) {
+        let Some(canon) = e["canonical"].as_str() else { continue };
+        let own = owner(idx, canon);
+        let imp = impact(idx, canon);
+        // governing decisions: any declared decision linking this concept
+        let decisions: Vec<Value> = idx
+            .decisions
+            .iter()
+            .filter(|d| {
+                d.links.iter().any(|l| {
+                    l.eq_ignore_ascii_case(canon) || names_concept(canon, l)
+                })
+            })
+            .map(|d| json!({ "id": d.id, "decision": d.decision, "rejected": d.rejected }))
+            .collect();
+        let c = &idx.concepts[canon];
+        planned.push(json!({
+            "concept": e["concept"],
+            "canonical": canon,
+            "canonical_location": own["owner_directory"],
+            "related": c.relations,
+            "existing_decisions": decisions,
+            "impact_if_changed": imp["severity"],
+            "affected_files": imp["used_by_files"],
+        }));
+    }
+    let create = it["create"].as_array().cloned().unwrap_or_default();
+    json!({
+        "intent": text,
+        "extend": planned,
+        "genuinely_new": create,
+        "needs_confirmation": it["needs_confirmation"],
+        "recommendation": it["smallest_correct_change"],
+        "conflicts": if planned.is_empty() && create.is_empty() {
+            json!("nothing recognised — vocabulary may differ from the project's")
+        } else {
+            json!("none detected at plan time — run `architect guard` on the actual patch before applying")
+        },
+        "note": "Pure composition of intent/owner/impact/decisions — one call instead of five, because the skipped calls are always the ones that mattered. Deterministic; the guard still rules on the final patch.",
     })
 }

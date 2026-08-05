@@ -2,8 +2,8 @@
 
 id = "law-010"
 title = "An alias target is an exact concept name, not a search term"
-statement = "Alias resolution looks the target up by exact concept name first; term search is only a fallback for targets that are not literal concept names."
-because = "TITAN declares theory = \"causal_hypotheses\" and got UNKNOWN: the target was fed back through token matching, and no single token of a multi-token name matches the whole name. The declaration names a concept; treating it as a query loses exactly the declarations with compound names."
+statement = "Any INTERNAL reference to a known concept — alias targets, composed queries passing canonical names — resolves by exact name first; term search is for human input only. Multi-token names match no single token of themselves, so feeding them through search silently loses them."
+because = "TITAN declares theory = \"causal_hypotheses\" and got UNKNOWN: the target was fed back through token matching. Struck AGAIN same day in plan(): canonical names passed to owner()/impact() through term search returned null locations. The same disease in two organs earns the general statement."
 discovered_in = ["TITAN"]
 introduced = "2026-08-05"
 status = "active"

@@ -67,12 +67,50 @@ Guard-outcome events are the advice-given view; merge/rename rulings are
 the action-taken view. Build once. Gated on the month proving the advice
 is consulted at all.
 
+**Cross-repository search** (`architect search User` across the org, with
+consolidation recommendations) — post-freeze Track, explicitly deferred
+twice now; single-repo value must be proven first.
+
+**`architect law new`** — interactive scaffolder (what happened → what was
+wrong → law toml + fixture + regression skeleton). Serves the maintainer,
+not the month; post-freeze.
+
+**TITAN internal/standalone unification** — TITAN's repair loop already
+passes through its INTERNAL guard (architecture.rs, wired 2026-08-05); the
+standalone engine serves this machine via MCP. One engine serving both is
+post-freeze consolidation — and must itself pass `architect concept guard`
+first, because two guards is a duplicate concept.
+
 **`architect explain <concept>`** — a NARRATIVE renderer over facts that
 already exist (provenance, relations, rejected duplicates, laws cited,
 decisions). No model, no generation: sentence templates over the same JSON.
 Six-month item; it becomes worth building only when decision-events exist
 to narrate — explain without archaeology is a paraphrase of the concept
 card.
+
+## Day-1 baseline (Track 3 — evidence, not marketing)
+
+Measured 2026-08-05, 12 repos on this machine. Cold = full init; warm =
+status via incremental cache; db = architect.db on disk.
+
+| repo | concepts | used | cold scan | warm query | db size |
+|---|---|---|---|---|---|
+| umami | 19 | 18 | 85ms | 40ms | 160K |
+| dub | 134 | 75 | 631ms | 171ms | 804K |
+| saleor | 131 | 82 | 785ms | 107ms | 936K |
+| redash | 22 | 16 | 98ms | 41ms | 136K |
+| chatwoot | 164 | 64 | 2487ms | 204ms | 588K |
+| lobe-chat | 149 | 132 | 2393ms | 369ms | 1.8M |
+| BookStack | 53 | 36 | 334ms | 56ms | 324K |
+| analytics | 54 | 19 | 324ms | 80ms | 236K |
+| spring-petclinic | 7 | 7 | 56ms | 15ms | 36K |
+| backend | 198 | 132 | 1081ms | 243ms | 340K |
+| ghosttrack-monorepo | 61 | 44 | 884ms | 93ms | 200K |
+| qa-studio | 127 | 86 | 1335ms | 188ms | 1.2M |
+
+Not yet measurable (recorder deferred): duplicates prevented, CI failures
+prevented, overrides, false positive/negative rates — those need the month
+and the decision-event recorder.
 
 ## The bar
 
@@ -121,3 +159,11 @@ true, and the month found that out at the cheapest possible price.
   was wrong once: CREATE TABLE of the canonical's own declared table is a
   MIGRATION (law-002 exemption), not a duplicate — the engine was right
   and the tester was not.
+- 2026-08-05 (day 1, cont.) — `architect plan` (pure composition, glance
+  precedent): one call = intent+owner+impact+decisions; first TITAN run
+  cited 'referral-tables-are-funnel-stages' recorded an hour earlier — the
+  decisions loop closed same-day. LAW-010 STRUCK TWICE: plan() passed
+  canonical names through term search (owner/impact null) — law generalized:
+  a known concept name is an exact key EVERYWHERE; term search is for human
+  input only. Baseline table recorded (12 repos: cold 56ms–2.5s, warm
+  15–369ms, db 36K–1.8M).

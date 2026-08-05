@@ -59,6 +59,14 @@ fn tool_defs() -> Value {
             }, "required": ["sql"] }
         },
         {
+            "name": "plan",
+            "description": "ONE-CALL architectural plan for an intent ('add fraud scoring'): canonical concepts to extend with their locations, owners, governing decisions, impact severity and affected files — the composition of concept/owner/impact/decisions an agent would otherwise need five calls for. Call FIRST for any feature request; then guard the final patch.",
+            "inputSchema": { "type": "object", "properties": {
+                "text": { "type": "string", "description": "The goal in plain language." },
+                "root": root_prop
+            }, "required": ["text"] }
+        },
+        {
             "name": "owner",
             "description": "Who owns a concept: the directory holding its declarations (maintaining the contract is ownership; calling it is only interest), with ranked directories by declaration+usage weight.",
             "inputSchema": { "type": "object", "properties": {
@@ -135,6 +143,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
                             "impact" => query::impact(&idx, args["term"].as_str().unwrap_or("")),
                             "guard" => query::guard(&idx, args["sql"].as_str().unwrap_or("")),
+                            "plan" => query::plan(&idx, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
                             "status" => query::status(&idx),
