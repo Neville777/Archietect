@@ -63,3 +63,15 @@ name = "local sweep (22 further projects)"
 kind = "mixed: node, markdown-only, no-schema controls"
 validated = "2026-08-05"
 contributed = ["honest zeros: Treka, BusPay, Poll-Maker et al."]
+
+[[repo]]
+name = "hackathon-starter"
+kind = "express + mongoose"
+validated = "2026-08-05"
+contributed = ["mongoose extractor", "mongoose-static usage matcher"]
+
+[[repo]]
+name = "nestjs-realworld-example-app"
+kind = "nestjs + typeorm"
+validated = "2026-08-05"
+contributed = ["typeorm extractor (@Entity/@Column/relations)", "guard verified: articles blocked citing ArticleEntity"]

@@ -37,7 +37,7 @@ use walkdir::WalkDir;
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 5;
+pub const EXTRACTOR_VERSION: u32 = 6;
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
@@ -270,6 +270,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
         needle_django: String,
         needle_construct: String,
         construct_re: Regex,
+        static_re: Option<Regex>,
+        repo_re: Option<Regex>,
         table_re: Option<Regex>,
         needle_table: Option<String>,
     }
@@ -284,7 +286,24 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
             let client_re =
                 Regex::new(&format!(r"\b(?:prisma|db|tx|client)\.{}\.", regex::escape(&lname)))
                     .unwrap();
-            let table = idx.concepts[name].table.clone();
+            let c0 = &idx.concepts[name];
+            let has_kind = |k: &str| c0.declared_in.iter().any(|(_, dk)| dk == k);
+            // Dialect matchers are built ONLY for concepts DECLARED in that
+            // dialect — `Anything.find(` in unrelated code must not inflate
+            // unrelated concepts.
+            let static_re = if has_kind("mongoose") {
+                Some(Regex::new(&format!(
+                    r"\b{}\.(?:find|findOne|findById|create|updateOne|deleteOne|countDocuments|aggregate|exists)\(",
+                    regex::escape(name)
+                )).unwrap())
+            } else { None };
+            let repo_re = if has_kind("typeorm") {
+                Some(Regex::new(&format!(
+                    r"(?:Repository<{0}>|getRepository\({0}\)|InjectRepository\({0}\))",
+                    regex::escape(name)
+                )).unwrap())
+            } else { None };
+            let table = c0.table.clone();
             let table_re = table.as_ref().map(|t| {
                 RegexBuilder::new(&format!(
                     r#"(?:insert\s+into|update|from|join)\s+["'`]?{}\b"#,
@@ -301,6 +320,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 needle_django: format!("{name}.objects."),
                 needle_construct: format!("{name}("),
                 construct_re: Regex::new(&format!(r"\b{}\(", regex::escape(name))).unwrap(),
+                static_re,
+                repo_re,
                 needle_table: table.map(|t| t.to_lowercase()),
                 table_re,
             }
@@ -334,6 +355,16 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                     && m.construct_re.is_match(&text)
                 {
                     hits.push((m.concept.clone(), "constructed".to_string()));
+                }
+                if let Some(re) = &m.static_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "mongoose-static".to_string()));
+                    }
+                }
+                if let Some(re) = &m.repo_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "typeorm-repository".to_string()));
+                    }
                 }
                 if let (Some(needle), Some(re)) = (&m.needle_table, &m.table_re) {
                     if lower.contains(needle.as_str()) && re.is_match(&lower) {
@@ -399,6 +430,20 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
         extract_sqlalchemy(text, &mut decls);
         if decls.len() > before {
             kinds.push("sqlalchemy".into());
+        }
+    }
+    if matches!(ext, "js" | "ts") && text.contains("mongoose.model(") {
+        let before = decls.len();
+        extract_mongoose(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("mongoose".into());
+        }
+    }
+    if ext == "ts" && text.contains("@Entity") {
+        let before = decls.len();
+        extract_typeorm(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("typeorm".into());
         }
     }
     if text.contains("CREATE TABLE") || text.contains("create table") {
@@ -575,6 +620,66 @@ fn extract_sql(is_sql_file: bool, text: &str, out: &mut Vec<DeclFragment>) {
             fields: Vec::new(),
             relations: Vec::new(),
             table: Some(name),
+        });
+    }
+}
+
+fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
+    // mongoose.model('User', userSchema) is the declaration. The default
+    // collection name is mongoose's own pluralizer — table stays None rather
+    // than guessing an inflection engine's output.
+    let model_re = Regex::new(r#"mongoose\.model\(\s*['"](\w+)['"]"#).unwrap();
+    let ref_re = Regex::new(r#"ref:\s*['"](\w+)['"]"#).unwrap();
+    let fields: Vec<String> = text
+        .find("Schema({")
+        .map(|i| {
+            let body = &text[i..text.len().min(i + 4000)];
+            Regex::new(r"(?m)^\s{2}(\w+)\s*:")
+                .unwrap()
+                .captures_iter(body)
+                .map(|c| c[1].to_string())
+                .take(30)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut relations: Vec<String> = ref_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in model_re.captures_iter(text) {
+        out.push(DeclFragment {
+            name: cap[1].to_string(),
+            kind: "mongoose".into(),
+            fields: fields.clone(),
+            relations: relations.clone(),
+            table: None,
+        });
+    }
+}
+
+fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
+    // @Entity() / @Entity('table_name') followed by `export class X`.
+    // Explicit table names are read; the DEFAULT is a naming-strategy output
+    // (varies per project), so absent an explicit name, table stays None.
+    let ent_re =
+        Regex::new(r#"@Entity\(\s*(?:['"]([^'"]+)['"])?\s*\)[\s\S]{0,200}?export class (\w+)"#)
+            .unwrap();
+    let col_re =
+        Regex::new(r"(?m)@(?:Primary\w*Column|Column)\([^)]*\)\s*\n\s*(\w+)[?!]?\s*[:;]").unwrap();
+    let rel_re = Regex::new(
+        r"@(?:ManyToOne|OneToMany|OneToOne|ManyToMany)\(\s*(?:type\s*=>|\(\)\s*=>)\s*(\w+)",
+    )
+    .unwrap();
+    let fields: Vec<String> = col_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in ent_re.captures_iter(text) {
+        out.push(DeclFragment {
+            name: cap[2].to_string(),
+            kind: "typeorm".into(),
+            fields: fields.clone(),
+            relations: relations.clone(),
+            table: cap.get(1).map(|m| m.as_str().to_string()),
         });
     }
 }
