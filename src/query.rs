@@ -240,3 +240,77 @@ pub fn status(idx: &Index) -> Value {
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death.",
     })
 }
+
+/// THE LAW — reject CREATE TABLE for a concept that already has a canonical
+/// implementation. Ported from the system this engine was extracted from,
+/// where it gates autonomously generated patches. Fails OPEN on anything it
+/// cannot parse: a guard that blocks all work on a hiccup costs more than the
+/// duplication it prevents.
+pub fn guard(idx: &Index, sql: &str) -> Value {
+    let re = regex::RegexBuilder::new(
+        r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#,
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap();
+    let proposed: Vec<String> = re
+        .captures_iter(sql)
+        .map(|c| c[1].to_string())
+        .collect();
+    if proposed.is_empty() {
+        return json!({
+            "allowed": true,
+            "reason": "no CREATE TABLE in this text",
+            "findings": [],
+        });
+    }
+    let mut findings = Vec::new();
+    let mut blocked = Vec::new();
+    for t in &proposed {
+        // check the CONCEPT the table names, not the literal string —
+        // `episodes` must collide with a declared `Story`-like model too.
+        let head = t
+            .trim_end_matches('s')
+            .rsplit('_')
+            .next()
+            .unwrap_or(t)
+            .to_string();
+        let r = concept(idx, &head);
+        let verdict = r["verdict"].as_str().unwrap_or("ABSENT");
+        let canonical = r["canonical"].as_str().unwrap_or("").to_string();
+        // The ONLY exemption is re-declaring the canonical's own storage table,
+        // matched EXACTLY (case-insensitive). Fuzzy matching here let
+        // `CREATE TABLE ghosts` through while model `Ghost` was ACTIVE —
+        // caught by the first end-to-end test, kept as a law: near-names are
+        // exactly what duplicates look like, so near-names must block.
+        let canonical_table = idx
+            .concepts
+            .get(&canonical)
+            .and_then(|c| c.table.as_deref())
+            .unwrap_or(&canonical);
+        if matches!(verdict, "ACTIVE" | "DECLARED_ONLY")
+            && !canonical.is_empty()
+            && !t.eq_ignore_ascii_case(canonical_table)
+            && !t.eq_ignore_ascii_case(&canonical)
+        {
+            blocked.push(format!(
+                "CREATE TABLE {t} rejected — '{head}' is already {verdict}, canonically implemented as '{canonical}'. Extend {canonical} instead."
+            ));
+        }
+        findings.push(json!({
+            "proposed_table": t,
+            "concept_checked": head,
+            "verdict": verdict,
+            "canonical": r["canonical"],
+        }));
+    }
+    json!({
+        "allowed": blocked.is_empty(),
+        "reason": if blocked.is_empty() {
+            format!("{} proposed table(s) check out as new", proposed.len())
+        } else {
+            blocked.join(" | ")
+        },
+        "findings": findings,
+    })
+}

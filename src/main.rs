@@ -14,6 +14,7 @@
 //!   architect intent  --root DIR "TEXT"   smallest correct change for an intent
 //!   architect impact  --root DIR TERM     what is affected if TERM changes
 
+mod mcp;
 mod model;
 mod query;
 mod scan;
@@ -59,6 +60,17 @@ enum Cmd {
         root: PathBuf,
         term: String,
     },
+    /// THE LAW: check text for CREATE TABLE that duplicates an existing concept
+    Guard {
+        #[arg(long)]
+        root: PathBuf,
+        sql: String,
+    },
+    /// Serve the index over MCP (stdio) — makes every AI coding tool a client
+    Mcp {
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
 }
 
 fn index_for(root: &PathBuf) -> model::Index {
@@ -83,6 +95,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::Concept { root, term } => query::concept(&index_for(&root), &term),
         Cmd::Intent { root, text } => query::intent(&index_for(&root), &text.join(" ")),
         Cmd::Impact { root, term } => query::impact(&index_for(&root), &term),
+        Cmd::Guard { root, sql } => query::guard(&index_for(&root), &sql),
+        Cmd::Mcp { root } => {
+            mcp::serve(root)?;
+            return Ok(());
+        }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
