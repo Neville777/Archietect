@@ -101,11 +101,49 @@ pub fn scan(root: &Path) -> Index {
         // pydantic models are concept declarations too (API contracts) —
         // found the hard way: a real service's models.py held only
         // pydantic.BaseModel classes and produced zero concepts.
-        if ext == "py" && text.contains("BaseModel") {
+        if ext == "py" && (text.contains("BaseModel") || text.contains("SQLModel")) {
             extract_pydantic(&mut idx, root, p, &text);
+        }
+        // SQLAlchemy: class X(db.Model) / __tablename__ — law from validation:
+        // redash declares ~30 models this way and v0 saw 4.
+        if ext == "py" && (text.contains("db.Model") || text.contains("__tablename__")) {
+            extract_sqlalchemy(&mut idx, root, p, &text);
         }
         if text.contains("CREATE TABLE") || text.contains("create table") {
             extract_sql(&mut idx, root, p, &text);
+        }
+    }
+
+    // ── merge: declarations that share a TABLE are one concept ──────────────
+    // Law from validation: umami declares `website` in SQL migrations and
+    // `Website` in Prisma mapped to the same table — one concept, counted
+    // twice, reported as competing with itself. SQL-only declarations whose
+    // name equals another concept's table mapping fold into that concept.
+    let merges: Vec<(String, String)> = idx
+        .concepts
+        .iter()
+        .filter(|(_, c)| c.declared_in.iter().all(|(_, k)| k == "sql"))
+        .filter_map(|(name, _)| {
+            idx.concepts
+                .iter()
+                .find(|(n2, c2)| {
+                    *n2 != name
+                        && c2
+                            .table
+                            .as_deref()
+                            .map(|t| t.eq_ignore_ascii_case(name))
+                            .unwrap_or(false)
+                })
+                .map(|(target, _)| (name.clone(), target.clone()))
+        })
+        .collect();
+    for (dupe, target) in merges {
+        if let Some(d) = idx.concepts.remove(&dupe) {
+            let t = idx.concepts.get_mut(&target).unwrap();
+            t.declared_in.extend(d.declared_in);
+            if t.table.is_none() {
+                t.table = d.table;
+            }
         }
     }
 
@@ -332,10 +370,17 @@ fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
             .join("\n");
         &filtered
     };
-    let re = RegexBuilder::new(r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#)
-        .case_insensitive(true)
-        .build()
-        .unwrap();
+    // A real CREATE TABLE is followed by a column list `(` (or AS SELECT).
+    // Law from validation: `logger.debug("CREATE TABLE query: %s", ...)` — a
+    // LOG MESSAGE — minted a phantom `query` concept whose fake usage then
+    // outranked the real Query model. Requiring the follower kills log/prose
+    // strings structurally, with no blacklist to maintain.
+    let re = RegexBuilder::new(
+        r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)["'`]?\s*(?:\(|as\b)"#,
+    )
+    .case_insensitive(true)
+    .build()
+    .unwrap();
     let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
     let mut any = false;
     for cap in re.captures_iter(text) {
@@ -352,15 +397,26 @@ fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
 
 fn extract_pydantic(idx: &mut Index, root: &Path, p: &Path, text: &str) {
     let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*BaseModel[^)]*)\)\s*:").unwrap();
+    // BaseModel (pydantic) and SQLModel both declare concepts. SQLModel with
+    // table=True is STORAGE; its default table name is the lowercased class
+    // name — a framework-documented rule, not a guess.
+    // Bases are captured raw and filtered in the loop: `class Item(ItemBase,
+    // table=True)` names neither BaseModel nor SQLModel, yet table=True IS the
+    // storage declaration — law from validation, where the template's real
+    // storage models were invisible while their API contracts were indexed.
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
     let field_re = Regex::new(r"(?m)^    (\w+)\s*:").unwrap();
     let top_re = Regex::new(r"(?m)^\S").unwrap();
     let mut any = false;
-    let starts: Vec<(usize, String)> = class_re
+    let starts: Vec<(usize, String, String)> = class_re
         .captures_iter(text)
-        .map(|c| (c.get(0).unwrap().end(), c[1].to_string()))
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
         .collect();
-    for (start, name) in starts {
+    for (start, name, bases) in starts {
+        let is_table = bases.contains("table=True") || bases.contains("table = True");
+        if !is_table && !bases.contains("BaseModel") && !bases.contains("SQLModel") {
+            continue;
+        }
         any = true;
         let body_end = top_re
             .find_at(text, start)
@@ -368,15 +424,58 @@ fn extract_pydantic(idx: &mut Index, root: &Path, p: &Path, text: &str) {
             .unwrap_or(text.len());
         let body = &text[start..body_end];
         let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let kind = if is_table || bases.contains("SQLModel") { "sqlmodel" } else { "pydantic" };
         let c = concept_entry(&mut idx.concepts, &name);
-        c.declared_in.push((rel.clone(), "pydantic".into()));
+        c.declared_in.push((rel.clone(), kind.into()));
         if c.fields.is_empty() {
             c.fields = fields;
         }
-        // table stays None: a pydantic model is an API contract, not storage,
-        // and inventing a table name for it would be a fabricated fact.
+        if is_table && c.table.is_none() {
+            c.table = Some(name.to_lowercase());
+        }
+        // otherwise table stays None: an API contract is not storage, and
+        // inventing a table name for it would be a fabricated fact.
     }
     if any {
         idx.declaration_files.push((rel, "pydantic".into()));
+    }
+}
+
+fn extract_sqlalchemy(idx: &mut Index, root: &Path, p: &Path, text: &str) {
+    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
+    let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
+    let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*(?:db\.)?Column\(").unwrap();
+    let top_re = Regex::new(r"(?m)^\S").unwrap();
+    let mut any = false;
+    let starts: Vec<(usize, String, String)> = class_re
+        .captures_iter(text)
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
+        .collect();
+    for (start, name, bases) in starts {
+        let body_end = top_re
+            .find_at(text, start)
+            .map(|m| m.start())
+            .unwrap_or(text.len());
+        let body = &text[start..body_end];
+        let tname = tname_re.captures(body).map(|m| m[1].to_string());
+        // a class is a SQLAlchemy model if it states a table OR inherits db.Model;
+        // bases named just "Base" are too ambiguous without __tablename__.
+        if tname.is_none() && !bases.contains("db.Model") {
+            continue;
+        }
+        any = true;
+        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let c = concept_entry(&mut idx.concepts, &name);
+        c.declared_in.push((rel.clone(), "sqlalchemy".into()));
+        if c.fields.is_empty() {
+            c.fields = fields;
+        }
+        if c.table.is_none() {
+            c.table = tname; // only what the class itself states — no guessed names
+        }
+    }
+    if any {
+        idx.declaration_files.push((rel, "sqlalchemy".into()));
     }
 }

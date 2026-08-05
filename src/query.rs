@@ -25,7 +25,20 @@ pub fn concept(idx: &Index, term: &str) -> Value {
         .collect();
     declared.sort_by_key(|n| {
         let c = &idx.concepts[n.as_str()];
-        std::cmp::Reverse((c.usage.len(), c.relations.len()))
+        // Exact-name match OUTRANKS token match, before any usage count.
+        // Law from validation: asking umami for 'website' returned
+        // WebsiteEvent (more usage) while a model literally named Website
+        // sat in the schema. The thing named for the concept IS the concept;
+        // heavier neighbours are still neighbours.
+        let exact = same_word(n, term);
+        // On exact ties, an ORM/schema declaration outranks an SQL-string-only
+        // concept. Law from validation: a phantom lowercase `query` (minted
+        // from SQL text, usage inflated by every `FROM query` in the repo)
+        // outranked the real Query model. Text that happens to say CREATE
+        // TABLE is the weakest form of declaration; a model class is a strong
+        // one — the ranking now says so.
+        let orm_declared = c.declared_in.iter().any(|(_, k)| k != "sql");
+        std::cmp::Reverse((exact, orm_declared, c.usage.len(), c.relations.len()))
     });
 
     if let Some(&canon) = declared.first() {
