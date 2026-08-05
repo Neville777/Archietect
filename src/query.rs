@@ -16,6 +16,37 @@ use crate::model::{names_concept, same_word, Evidence, Index, Tier};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+/// Build the answer card for a concept KNOWN to exist by exact name — no
+/// searching, no ranking. Used by alias resolution (law-010).
+fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
+    let c = &idx.concepts[name];
+    let mut evidence: Vec<Evidence> = c
+        .declared_in
+        .iter()
+        .map(|(f, k)| Evidence { tier: Tier::Declared, what: format!("{k} declaration in {f}") })
+        .collect();
+    evidence.extend(c.usage.iter().take(8).map(|(f, k)| Evidence {
+        tier: Tier::Used,
+        what: format!("{k} access in {f}"),
+    }));
+    let used = !c.usage.is_empty();
+    json!({
+        "concept": term,
+        "verdict": if used { "ACTIVE" } else { "DECLARED_ONLY" },
+        "canonical": name,
+        "table": c.table,
+        "fields": c.fields.iter().take(15).collect::<Vec<_>>(),
+        "relations": c.relations,
+        "competing": [],
+        "used_by_files": c.usage.iter().map(|(f, _)| f).take(10).collect::<Vec<_>>(),
+        "first_seen_ms": c.first_seen_ms,
+        "last_verified_ms": c.last_verified_ms,
+        "evidence": evidence,
+        "confidence": if used { "high" } else { "medium — declared but no observed access; may be scaffolding" },
+        "recommendation": format!("'{term}' already exists as '{name}'. Extend it; do not create a second implementation."),
+    })
+}
+
 pub fn concept(idx: &Index, term: &str) -> Value {
     let term = term.trim();
     let mut declared: Vec<&String> = idx
@@ -90,7 +121,16 @@ pub fn concept(idx: &Index, term: &str) -> Value {
         .iter()
         .find(|(k, _)| same_word(k, term) || names_concept(k, term))
     {
-        let mut r = concept(idx, target);
+        // LAW-010: an alias target is an EXACT concept name, not a search
+        // term. Feeding it back through term matching broke on any
+        // multi-token target — TITAN declares theory = "causal_hypotheses"
+        // and got UNKNOWN, because no single token of the target matches the
+        // whole target. Exact lookup first; term search only as fallback.
+        let mut r = if idx.concepts.contains_key(target) {
+            concept_card(idx, target, target)
+        } else {
+            concept(idx, target)
+        };
         if r["canonical"].is_null() {
             // A declared alias pointing at nothing is itself a finding.
             return json!({
@@ -386,7 +426,21 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn top_segment(path: &str) -> String {
-    path.split('/').next().unwrap_or("root").to_string()
+    // In a monorepo the first segment is a CONTAINER, not an owner — 'crates'
+    // owns nothing; 'crates/titan_knowledge' is the answer a human wants.
+    // The container list is ecosystem convention (like SKIP_DIRS), not a guess.
+    const CONTAINERS: &[&str] = &["crates", "packages", "apps", "bin", "services", "libs", "modules"];
+    let mut it = path.split('/');
+    let first = it.next().unwrap_or("root");
+    if CONTAINERS.contains(&first) {
+        if let Some(second) = it.next() {
+            if second.contains('.') {
+                return first.to_string(); // a file directly in the container
+            }
+            return format!("{first}/{second}");
+        }
+    }
+    first.to_string()
 }
 
 /// Repository summary for someone who just cloned it.
@@ -522,19 +576,36 @@ pub fn owner(idx: &Index, term: &str) -> Value {
         return json!({ "target": term, "owner": null, "detail": r });
     };
     let c = &idx.concepts[&canon];
-    let mut score: std::collections::BTreeMap<String, usize> = Default::default();
+    // Ownership comes from DECLARING directories ONLY — found on TITAN:
+    // three readers outvoted the single declaring directory under a weighted
+    // sum, contradicting the stated principle. Interest must never outvote
+    // the contract, at any count. Usage breaks ties among declarers and
+    // ranks the interested parties, nothing more.
+    let mut decl_score: std::collections::BTreeMap<String, usize> = Default::default();
     for (f, _) in &c.declared_in {
-        *score.entry(top_segment(f)).or_default() += 2;
+        *decl_score.entry(top_segment(f)).or_default() += 1;
     }
+    let mut use_score: std::collections::BTreeMap<String, usize> = Default::default();
     for (f, _) in &c.usage {
-        *score.entry(top_segment(f)).or_default() += 1;
+        *use_score.entry(top_segment(f)).or_default() += 1;
     }
-    let mut ranked: Vec<(String, usize)> = score.into_iter().collect();
+    let mut owners: Vec<(String, usize, usize)> = decl_score
+        .iter()
+        .map(|(d, n)| (d.clone(), *n, *use_score.get(d).unwrap_or(&0)))
+        .collect();
+    owners.sort_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)));
+    let mut ranked: Vec<(String, usize)> = owners.iter().map(|(d, n, u)| (d.clone(), n * 2 + u)).collect();
+    for (d, u) in &use_score {
+        if !decl_score.contains_key(d) {
+            ranked.push((d.clone(), *u));
+        }
+    }
     ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    let ranked_owner = owners.first().map(|(d, ..)| d.clone());
     json!({
         "target": canon,
-        "owner_directory": ranked.first().map(|(d, _)| d.clone()),
-        "because": ranked.first().map(|(d, _)| format!(
+        "owner_directory": ranked_owner.clone(),
+        "because": ranked_owner.as_ref().map(|d| format!(
             "'{d}' holds the declaration(s) — maintaining the contract is ownership; calling it is only interest"
         )),
         "declared_in": c.declared_in,

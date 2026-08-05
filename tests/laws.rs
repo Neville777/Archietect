@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// against the registry — adding a law without extending the suite fails.
 const COVERED: &[&str] = &[
     "law-001", "law-002", "law-003", "law-004", "law-005",
-    "law-006", "law-007", "law-008", "law-009",
+    "law-006", "law-007", "law-008", "law-009", "law-010",
 ];
 
 fn fixture(law: &str) -> architect::model::Index {
@@ -151,4 +151,16 @@ fn law_009_alias_resolution() {
         "rejection must cite the governing decision, got: {}",
         g["reason"]
     );
+}
+
+#[test]
+fn law_010_alias_exact_target() {
+    let idx = fixture("law_010");
+    let r = query::concept(&idx, "theory");
+    assert_eq!(
+        r["canonical"], "causal_hypotheses",
+        "multi-token alias target must resolve by exact name, got: {}",
+        r["verdict"]
+    );
+    assert_eq!(r["resolved_via"], "alias");
 }

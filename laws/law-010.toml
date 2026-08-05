@@ -1,0 +1,10 @@
+# law-010 — part of Architect's language specification.
+
+id = "law-010"
+title = "An alias target is an exact concept name, not a search term"
+statement = "Alias resolution looks the target up by exact concept name first; term search is only a fallback for targets that are not literal concept names."
+because = "TITAN declares theory = \"causal_hypotheses\" and got UNKNOWN: the target was fed back through token matching, and no single token of a multi-token name matches the whole name. The declaration names a concept; treating it as a query loses exactly the declarations with compound names."
+discovered_in = ["TITAN"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_010_alias_exact_target (fixture: tests/fixtures/law_010)"

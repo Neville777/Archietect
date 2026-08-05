@@ -66,3 +66,16 @@ true, and the month found that out at the cheapest possible price.
 - 2026-08-05 — freeze declared. 19 commits, 10 extractors, 9 laws,
   14-repo corpus, all interfaces built through GUI v0. TITAN registered as
   first client (architect.toml committed in its repo).
+- 2026-08-05 (day 1, full TITAN battery) — HELPED: episode/situation/theory
+  all resolve through the ontology; guard blocks episodes citing the ADR;
+  intent("per country phenomenon coverage") → extend phenomena, nothing new;
+  ci caught a repair-loop-style diff adding CREATE TABLE experiments (exit 1,
+  cited belief_experiments); duplicates surfaced the LEDGER FAMILY —
+  action_ledger/detector_ledger/reality_ledger/spend_ledger_ts, four ledgers,
+  a real TITAN finding worth an owner decision. GOT IN THE WAY / WRONG:
+  (1) theory→UNKNOWN — alias targets fed through term search broke on
+  multi-token names → LAW-010 + fixture, fixed same day; (2) owner→'crates'
+  — monorepo containers are not owners → two-segment rule; (3) owner then
+  picked titan_api (3 readers) over titan_knowledge (1 declaration),
+  contradicting the stated principle → owner now comes from DECLARING
+  directories only, usage breaks ties. 11/11 laws green after all three.

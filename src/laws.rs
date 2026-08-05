@@ -43,6 +43,7 @@ const LAW_FILES: &[&str] = &[
     include_str!("../laws/law-007.toml"),
     include_str!("../laws/law-008.toml"),
     include_str!("../laws/law-009.toml"),
+    include_str!("../laws/law-010.toml"),
 ];
 
 const CORPUS: &str = include_str!("../laws/corpus.toml");
