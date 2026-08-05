@@ -677,3 +677,77 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
         "note": "violations = CREATE TABLE colliding with an existing canonical (always fails). warnings = new declaration whose NAME collides (name evidence only; fails only under --strict, because related concepts legitimately share vocabulary).",
     })
 }
+
+/// The glance — bare `architect`, the git-status of architecture. A pure
+/// COMPOSITION of existing queries (freshness, drift, ontology, timeline)
+/// plus suggestions DERIVED from the facts. Deliberately no "health: 92/100":
+/// a composite score nobody measured is an unmeasured number wearing a
+/// measured one's clothes, and it would teach readers to distrust the real
+/// numbers beside it. Facts and derived suggestions only.
+pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
+    let db = root.join("architect.db");
+    let dup = duplicates(idx);
+    let needs_alias = dup["likely_same_concept_needs_alias"].as_array().map(|a| a.len()).unwrap_or(0);
+
+    // stale aliases — ontology pointing at nothing
+    let stale: Vec<&String> = idx
+        .aliases
+        .iter()
+        .filter(|(_, target)| {
+            !idx.concepts.contains_key(*target)
+                && !idx.concepts.keys().any(|n| names_concept(n, target.trim_end_matches('s')))
+        })
+        .map(|(k, _)| k)
+        .collect();
+
+    // SUGGESTIONS, each derived from a fact:
+    let mut suggestions: Vec<String> = Vec::new();
+    // (a) concept families sharing a token with no governing decision —
+    //     "four ledgers exist and nothing records why"
+    let mut fam: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for name in idx.concepts.keys() {
+        for tok in crate::model::name_tokens(name) {
+            if tok.len() >= 5 {
+                fam.entry(tok.to_lowercase()).or_default().push(name.clone());
+            }
+        }
+    }
+    // biggest families first — truncating alphabetically buried a 4-member
+    // ledger family under five 3-member ones on the very first TITAN run
+    let mut families: Vec<(&String, &Vec<String>)> = fam
+        .iter()
+        .filter(|(tok, members)| {
+            members.len() >= 3
+                && !idx.decisions.iter().any(|d| d.links.iter().any(|l| same_word(l, tok)))
+        })
+        .collect();
+    families.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    for (tok, members) in families.iter().take(5) {
+        suggestions.push(format!(
+            "Record why {} '{}' concepts exist ({}) — a family this size with no governing decision invites a {}th",
+            members.len(), tok, members.join(", "), members.len() + 1
+        ));
+    }
+    if needs_alias > 0 {
+        suggestions.push(format!(
+            "{needs_alias} model↔table pair(s) look like ONE concept the merge law cannot fold — declare the mapping in architect.toml [aliases]"
+        ));
+    }
+    for k in &stale {
+        suggestions.push(format!("Fix stale alias '{k}' in architect.toml — it points at a concept that no longer exists"));
+    }
+
+    json!({
+        "repository": root.display().to_string(),
+        "status": {
+            "index": if db.exists() { "current (incremental)" } else { "no architect.db — first scan was in-memory; run `architect init` or the daemon to persist" },
+            "concepts": idx.concepts.len(),
+            "duplicate_storage_risks": needs_alias,
+            "ontology_warnings": stale.len(),
+            "declared_decisions": idx.decisions.len(),
+        },
+        "recent_changes": crate::store::read_history(root, None, 5),
+        "suggestions": suggestions,
+        "note": "No health score, deliberately: a composite nobody measured is an unmeasured number wearing a measured one's clothes. Every line above is a fact or derived from one.",
+    })
+}

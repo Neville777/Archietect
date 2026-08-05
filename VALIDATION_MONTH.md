@@ -79,3 +79,10 @@ true, and the month found that out at the cheapest possible price.
   picked titan_api (3 readers) over titan_knowledge (1 declaration),
   contradicting the stated principle → owner now comes from DECLARING
   directories only, usage breaks ties. 11/11 laws green after all three.
+- 2026-08-05 (day 1, cont.) — owner codes terminal-only, no IDE: bare
+  `architect` now prints human text by default (--json for scripts;
+  subcommands stay JSON for jq). Size-sorted family suggestions immediately
+  deepened the findings: not 4 ledgers but FIVE (swarm_vitality_ledger),
+  plus EIGHT *_events tables and SIX *_state tables, no governing decisions.
+  Alphabetical truncation had buried the biggest family — presentation
+  order is epistemics too.

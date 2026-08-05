@@ -23,7 +23,11 @@ use std::path::PathBuf;
 #[command(name = "architect", version, about)]
 struct Cli {
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
+    /// Machine output for the bare glance (subcommands are always JSON —
+    /// they are the scripting/agent surface; pipe them to jq)
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -132,6 +136,37 @@ enum Cmd {
     },
 }
 
+/// Render the glance for a terminal. Pure presentation — every value comes
+/// from the same JSON `--json` emits; nothing is computed here.
+fn print_glance(g: &serde_json::Value) {
+    let s = &g["status"];
+    println!("Repository: {}", g["repository"].as_str().unwrap_or("?"));
+    println!(
+        "  {} concepts · {} decisions · {} duplicate-storage risks · {} ontology warnings",
+        s["concepts"], s["declared_decisions"], s["duplicate_storage_risks"], s["ontology_warnings"]
+    );
+    println!("  index: {}", s["index"].as_str().unwrap_or("?"));
+    let recent = g["recent_changes"].as_array().cloned().unwrap_or_default();
+    println!("
+Recent architectural changes");
+    if recent.is_empty() {
+        println!("  (none recorded — run the daemon and history accumulates)");
+    }
+    for e in recent {
+        println!("  {} {}", e["kind"].as_str().unwrap_or("?"), e["concept"].as_str().unwrap_or(""));
+    }
+    let sug = g["suggestions"].as_array().cloned().unwrap_or_default();
+    if !sug.is_empty() {
+        println!("
+Suggestions");
+        for x in sug {
+            println!("  • {}", x.as_str().unwrap_or(""));
+        }
+    }
+    println!("
+(architect --json for machine output; subcommands are always JSON)");
+}
+
 fn index_for(root: &PathBuf) -> model::Index {
     // Incremental: the scanner reuses per-file facts from architect.db where
     // (size, mtime, extractor version) are unchanged, and honours the
@@ -142,7 +177,21 @@ fn index_for(root: &PathBuf) -> model::Index {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let out = match cli.cmd {
+    // bare `architect` = the glance, on the current directory — the git-status
+    // of architecture, the thing you run without thinking before starting work
+    let Some(cmd) = cli.cmd else {
+        let root = std::env::current_dir()?;
+        let out = query::glance(&index_for(&root), &root);
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            // terminal-native by default — the glance is read by a human
+            // between `cd` and the first edit, like git status
+            print_glance(&out);
+        }
+        return Ok(());
+    };
+    let out = match cmd {
         Cmd::Init { root } => {
             let idx = scan::scan(&root);
             let path = store::save(&idx, &root)?;
