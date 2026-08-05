@@ -75,3 +75,15 @@ name = "nestjs-realworld-example-app"
 kind = "nestjs + typeorm"
 validated = "2026-08-05"
 contributed = ["typeorm extractor (@Entity/@Column/relations)", "guard verified: articles blocked citing ArticleEntity"]
+
+[[repo]]
+name = "chatwoot"
+kind = "rails/activerecord, 164 concepts"
+validated = "2026-08-05"
+contributed = ["rails extractor (models + schema.rb as sql-tier)", "guard verified: conversations blocked citing Conversation"]
+
+[[repo]]
+name = "lobe-chat"
+kind = "drizzle (pgTable), 149 concepts"
+validated = "2026-08-05"
+contributed = ["drizzle extractor (explicit table names)", "cross-dialect merge verified: sql migration folded into drizzle concept"]

@@ -37,13 +37,14 @@ use walkdir::WalkDir;
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 6;
+pub const EXTRACTOR_VERSION: u32 = 7;
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
 ];
-const SRC_EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "prisma", "sql"];
+const SRC_EXTS: &[&str] =
+    &["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "rb", "prisma", "sql"];
 const MAX_FILE_BYTES: u64 = 2_000_000;
 
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
@@ -272,6 +273,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
         construct_re: Regex,
         static_re: Option<Regex>,
         repo_re: Option<Regex>,
+        rails_re: Option<Regex>,
+        drizzle_re: Option<Regex>,
         table_re: Option<Regex>,
         needle_table: Option<String>,
     }
@@ -294,6 +297,18 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
             let static_re = if has_kind("mongoose") {
                 Some(Regex::new(&format!(
                     r"\b{}\.(?:find|findOne|findById|create|updateOne|deleteOne|countDocuments|aggregate|exists)\(",
+                    regex::escape(name)
+                )).unwrap())
+            } else { None };
+            let rails_re = if has_kind("rails") {
+                Some(Regex::new(&format!(
+                    r"\b{}\.(?:find|find_by|where|create|new|all|first|joins|includes|count)\b",
+                    regex::escape(name)
+                )).unwrap())
+            } else { None };
+            let drizzle_re = if has_kind("drizzle") {
+                Some(Regex::new(&format!(
+                    r"(?:from|insert|update|delete)\(\s*{}\s*[,)]",
                     regex::escape(name)
                 )).unwrap())
             } else { None };
@@ -322,6 +337,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 construct_re: Regex::new(&format!(r"\b{}\(", regex::escape(name))).unwrap(),
                 static_re,
                 repo_re,
+                rails_re,
+                drizzle_re,
                 needle_table: table.map(|t| t.to_lowercase()),
                 table_re,
             }
@@ -359,6 +376,16 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 if let Some(re) = &m.static_re {
                     if text.contains(m.concept.as_str()) && re.is_match(&text) {
                         hits.push((m.concept.clone(), "mongoose-static".to_string()));
+                    }
+                }
+                if let Some(re) = &m.rails_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "rails-static".to_string()));
+                    }
+                }
+                if let Some(re) = &m.drizzle_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "drizzle-query".to_string()));
                     }
                 }
                 if let Some(re) = &m.repo_re {
@@ -444,6 +471,20 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
         extract_typeorm(text, &mut decls);
         if decls.len() > before {
             kinds.push("typeorm".into());
+        }
+    }
+    if ext == "rb" {
+        let before = decls.len();
+        extract_rails(name, text, &mut decls);
+        if decls.len() > before {
+            kinds.push(if name == "schema.rb" { "rails-schema".into() } else { "rails".into() });
+        }
+    }
+    if matches!(ext, "ts" | "js") && (text.contains("pgTable(") || text.contains("sqliteTable(") || text.contains("mysqlTable(")) {
+        let before = decls.len();
+        extract_drizzle(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("drizzle".into());
         }
     }
     if text.contains("CREATE TABLE") || text.contains("create table") {
@@ -680,6 +721,70 @@ fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
             fields: fields.clone(),
             relations: relations.clone(),
             table: cap.get(1).map(|m| m.as_str().to_string()),
+        });
+    }
+}
+
+fn extract_rails(fname: &str, text: &str, out: &mut Vec<DeclFragment>) {
+    if fname == "schema.rb" {
+        // db/schema.rb is Rails' own generated DDL — `create_table "users"` is
+        // an authoritative table declaration. Emitted as kind "sql" so the
+        // same-table merge law and the ORM-outranks-sql ranking treat it as
+        // what it is: strong about the TABLE, weak about the concept.
+        let re = Regex::new(r#"create_table\s+"(\w+)""#).unwrap();
+        for cap in re.captures_iter(text) {
+            let name = cap[1].to_string();
+            out.push(DeclFragment {
+                name: name.clone(),
+                kind: "sql".into(),
+                fields: Vec::new(),
+                relations: Vec::new(),
+                table: Some(name),
+            });
+        }
+        return;
+    }
+    // app/models/*.rb: class X < ApplicationRecord. The table name is Rails'
+    // pluralizer output — None rather than imitating an inflection engine
+    // (same refusal as mongoose).
+    let class_re =
+        Regex::new(r"(?m)^class\s+(\w+)\s*<\s*(?:ApplicationRecord|ActiveRecord::Base)").unwrap();
+    let rel_re =
+        Regex::new(r"(?m)^\s+(?:belongs_to|has_many|has_one|has_and_belongs_to_many)\s+:(\w+)")
+            .unwrap();
+    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in class_re.captures_iter(text) {
+        out.push(DeclFragment {
+            name: cap[1].to_string(),
+            kind: "rails".into(),
+            fields: Vec::new(), // columns live in schema.rb, not the model file
+            relations: relations.clone(),
+            table: None,
+        });
+    }
+}
+
+fn extract_drizzle(text: &str, out: &mut Vec<DeclFragment>) {
+    // export const users = pgTable('users', {...}) — the concept is the
+    // exported binding, the table name is EXPLICIT in the first argument.
+    let tbl_re = Regex::new(
+        r#"(?:export\s+)?const\s+(\w+)\s*=\s*(?:pg|sqlite|mysql)Table\(\s*['"](\w+)['"]"#,
+    )
+    .unwrap();
+    let ref_re = Regex::new(r"references\(\s*\(\)\s*=>\s*(\w+)\.").unwrap();
+    let mut relations: Vec<String> = ref_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in tbl_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        out.push(DeclFragment {
+            name: name.clone(),
+            kind: "drizzle".into(),
+            fields: Vec::new(),
+            relations: relations.iter().filter(|r| **r != name).cloned().collect(),
+            table: Some(cap[2].to_string()),
         });
     }
 }
