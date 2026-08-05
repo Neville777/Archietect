@@ -81,6 +81,28 @@ enum Cmd {
         #[arg(long)]
         subscribe: Option<String>,
     },
+    /// Repository summary for someone who just cloned it (the intern's view)
+    Doctor {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Onboarding tour: important concepts, ignorable ones, and the mistakes
+    /// the ontology already knows people will make — zero generated prose
+    Tour {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Suspected duplicate concepts (name-token overlap — risk, not proof)
+    Duplicates {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Who owns a concept: the directory that declares it
+    Owner {
+        #[arg(long)]
+        root: PathBuf,
+        term: String,
+    },
     /// The architectural timeline: what changed, when, and what the engine
     /// said about it — Git knows files changed; this knows ARCHITECTURE did
     History {
@@ -128,6 +150,10 @@ fn main() -> anyhow::Result<()> {
             watch::run(root, subscribe)?;
             return Ok(());
         }
+        Cmd::Doctor { root } => query::doctor(&index_for(&root), &root),
+        Cmd::Tour { root } => query::tour(&index_for(&root)),
+        Cmd::Duplicates { root } => query::duplicates(&index_for(&root)),
+        Cmd::Owner { root, term } => query::owner(&index_for(&root), &term),
         Cmd::History { root, concept, limit } => {
             serde_json::json!({
                 "root": root.display().to_string(),

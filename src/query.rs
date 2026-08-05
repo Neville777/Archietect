@@ -377,3 +377,167 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
         "findings": findings,
     })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The intern's interface — doctor, tour, duplicates, owner.
+// No AI-generated prose anywhere: every line is derived from concepts,
+// decisions, aliases, usage, and history. A hallucination-free onboarding is
+// only possible BECAUSE the engine refuses to invent facts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn top_segment(path: &str) -> String {
+    path.split('/').next().unwrap_or("root").to_string()
+}
+
+/// Repository summary for someone who just cloned it.
+pub fn doctor(idx: &Index, root: &std::path::Path) -> Value {
+    // Domains = where declarations LIVE (top-level directories) — derived from
+    // the tree's own organisation, not from a curated list.
+    let mut domains: std::collections::BTreeMap<String, usize> = Default::default();
+    for (f, _) in &idx.declaration_files {
+        *domains.entry(top_segment(f)).or_default() += 1;
+    }
+    let mut top: Vec<(&String, usize)> =
+        idx.concepts.iter().map(|(n, c)| (n, c.usage.len())).collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1));
+    let unused: Vec<&String> = idx
+        .concepts
+        .iter()
+        .filter(|(_, c)| c.usage.is_empty())
+        .map(|(n, _)| n)
+        .take(15)
+        .collect();
+    let recent = crate::store::read_history(root, None, 10);
+    json!({
+        "domains": domains,
+        "top_concepts": top.iter().take(10).map(|(n, u)| json!({ "concept": n, "observed_uses": u })).collect::<Vec<_>>(),
+        "declared_but_never_observed_in_use": unused,
+        "recent_architectural_changes": recent,
+        "things_to_read": idx.decisions.iter().map(|d| json!({
+            "id": d.id, "decision": d.decision,
+        })).collect::<Vec<_>>(),
+        "counts": {
+            "concepts": idx.concepts.len(),
+            "files_scanned": idx.files_scanned,
+            "declared_decisions": idx.decisions.len(),
+            "declared_aliases": idx.aliases.len(),
+        },
+        "note": "Everything above is derived from declarations, usage, decisions and the timeline — nothing is generated prose. 'never observed in use' is evidence of absence at the USED tier only; verify before treating it as dead.",
+    })
+}
+
+/// The onboarding tour. Common mistakes come from the ontology itself: every
+/// alias is a "don't create X" waiting to happen, and every decision's
+/// rejected list is literally what the next person is about to propose.
+pub fn tour(idx: &Index) -> Value {
+    let mut top: Vec<(&String, usize)> =
+        idx.concepts.iter().map(|(n, c)| (n, c.usage.len())).collect();
+    top.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut mistakes: Vec<String> = idx
+        .aliases
+        .iter()
+        .map(|(alias, target)| format!(
+            "Don't create '{alias}' — '{target}' already owns that responsibility (declared alias)."
+        ))
+        .collect();
+    for d in &idx.decisions {
+        for r in &d.rejected {
+            mistakes.push(format!(
+                "Don't build '{r}' — considered and rejected in decision '{}': {}",
+                d.id, d.decision
+            ));
+        }
+    }
+    // Reading time: decisions at ~200 words/min — arithmetic, not a guess.
+    let words: usize = idx
+        .decisions
+        .iter()
+        .map(|d| d.decision.split_whitespace().count() + d.because.split_whitespace().count())
+        .sum();
+    json!({
+        "important_concepts": top.iter().take(8).map(|(n, _)| n).collect::<Vec<_>>(),
+        "probably_ignorable": idx.concepts.iter()
+            .filter(|(_, c)| c.usage.is_empty())
+            .map(|(n, _)| n).take(10).collect::<Vec<_>>(),
+        "common_mistakes": mistakes,
+        "decisions_to_read": idx.decisions.iter().map(|d| &d.id).collect::<Vec<_>>(),
+        "estimated_reading_minutes": (words / 200).max(1),
+        "note": "Derived entirely from declarations, usage, aliases and decisions — no generated prose, nothing to hallucinate. 'probably_ignorable' means no observed use at the USED tier; confirm before deleting anything.",
+    })
+}
+
+/// Suspected duplicate concepts: live pairs sharing a name token. Evidence of
+/// RISK, not proof — stated as such.
+pub fn duplicates(idx: &Index) -> Value {
+    let names: Vec<&String> = idx.concepts.keys().collect();
+    let mut pairs = Vec::new();
+    let mut needs_alias = Vec::new();
+    for i in 0..names.len() {
+        for j in (i + 1)..names.len() {
+            let (a, b) = (names[i], names[j]);
+            let shared: Vec<String> = crate::model::name_tokens(a)
+                .into_iter()
+                .filter(|t| t.len() >= 5 && names_concept(b, t))
+                .collect();
+            if !shared.is_empty() {
+                let (ca, cb) = (&idx.concepts[a.as_str()], &idx.concepts[b.as_str()]);
+                let sql_only = |c: &crate::model::Concept| c.declared_in.iter().all(|(_, k)| k == "sql");
+                let orm = |c: &crate::model::Concept| c.declared_in.iter().any(|(_, k)| k != "sql");
+                // An ORM model beside an sql-tier table sharing its name is
+                // PROBABLY one concept the merge law cannot fold, because the
+                // model declares no table name (we refuse to run inflection
+                // engines). That is not a duplicate — it is a missing link,
+                // and the fix is a one-line alias declaration.
+                let same_concept_unlinked =
+                    (sql_only(ca) && orm(cb)) || (sql_only(cb) && orm(ca));
+                let entry = json!({
+                    "concepts": [a, b],
+                    "shared_token": shared[0],
+                    "declared_in": [ca.declared_in.first(), cb.declared_in.first()],
+                });
+                if same_concept_unlinked {
+                    needs_alias.push(entry);
+                } else {
+                    pairs.push(entry);
+                }
+            }
+        }
+    }
+    pairs.truncate(40);
+    needs_alias.truncate(40);
+    json!({
+        "suspected_duplicates": pairs,
+        "likely_same_concept_needs_alias": needs_alias,
+        "note": "suspected_duplicates: name-token overlap is evidence of RISK, not proof — related concepts legitimately share vocabulary (Article/ArticleComment); the pairs worth investigating are the ones that surprise you. likely_same_concept_needs_alias: an ORM model beside an sql-tier table sharing its name is probably ONE concept the merge law cannot fold without a declared table name — declare the mapping in architect.toml [aliases] to link them.",
+    })
+}
+
+/// Who owns a concept — the directory that DECLARES it, then the directories
+/// that use it. Declarations outweigh usage 2:1: maintaining the contract is
+/// ownership; calling it is only interest.
+pub fn owner(idx: &Index, term: &str) -> Value {
+    let r = concept(idx, term);
+    let Some(canon) = r["canonical"].as_str().map(String::from) else {
+        return json!({ "target": term, "owner": null, "detail": r });
+    };
+    let c = &idx.concepts[&canon];
+    let mut score: std::collections::BTreeMap<String, usize> = Default::default();
+    for (f, _) in &c.declared_in {
+        *score.entry(top_segment(f)).or_default() += 2;
+    }
+    for (f, _) in &c.usage {
+        *score.entry(top_segment(f)).or_default() += 1;
+    }
+    let mut ranked: Vec<(String, usize)> = score.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1));
+    json!({
+        "target": canon,
+        "owner_directory": ranked.first().map(|(d, _)| d.clone()),
+        "because": ranked.first().map(|(d, _)| format!(
+            "'{d}' holds the declaration(s) — maintaining the contract is ownership; calling it is only interest"
+        )),
+        "declared_in": c.declared_in,
+        "ranked_directories": ranked.iter().take(6).map(|(d, s)| json!({ "dir": d, "weight": s })).collect::<Vec<_>>(),
+    })
+}
