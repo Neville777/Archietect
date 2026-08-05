@@ -51,6 +51,29 @@ advice before knowing anyone takes the advice is measuring the mirror.
 The override-reason field is the valuable half: "overridden — new bounded
 context" teaches more than any acceptance count.
 
+## Post-freeze queue (canonicalized — do not build twice)
+
+ONE deferred feature, proposed twice under different names and unified here
+before the duplication could happen (the tool's own discipline, applied to
+its own roadmap):
+
+**The decision-event** — a human ruling on an architectural question,
+recorded in the SAME append-only timeline the daemon writes. Covers both
+proposals: the "explanation recorder" (guard advice → followed/overridden +
+override reason) and the "runtime decision record" (merged X into Y, by
+whom, why, evidence). Same envelope, same storage, same archaeology
+queries. `architect history report` then answers WHY, not just what.
+Guard-outcome events are the advice-given view; merge/rename rulings are
+the action-taken view. Build once. Gated on the month proving the advice
+is consulted at all.
+
+**`architect explain <concept>`** — a NARRATIVE renderer over facts that
+already exist (provenance, relations, rejected duplicates, laws cited,
+decisions). No model, no generation: sentence templates over the same JSON.
+Six-month item; it becomes worth building only when decision-events exist
+to narrate — explain without archaeology is a paraphrase of the concept
+card.
+
 ## The bar
 
 > "It feels strange to work in a repository without Architect running."
