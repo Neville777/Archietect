@@ -11,3 +11,4 @@ pub mod model;
 pub mod query;
 pub mod scan;
 pub mod store;
+pub mod watch;

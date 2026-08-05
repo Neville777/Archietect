@@ -14,7 +14,7 @@
 //!   architect intent  --root DIR "TEXT"   smallest correct change for an intent
 //!   architect impact  --root DIR TERM     what is affected if TERM changes
 
-use architect::{mcp, model, query, scan, store};
+use architect::{mcp, model, query, scan, store, watch};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -70,6 +70,13 @@ enum Cmd {
     /// The law registry: every rule the engine obeys, with the wrong answer
     /// that taught it and the regression test that enforces it forever
     Laws,
+    /// Daemon mode: watch the tree, keep architect.db warm, and emit
+    /// unprompted findings (duplicate-concept risk, lost storage, stale
+    /// aliases) as JSON lines. Observation and notification — never action.
+    Watch {
+        #[arg(long)]
+        root: PathBuf,
+    },
 }
 
 fn index_for(root: &PathBuf) -> model::Index {
@@ -103,6 +110,10 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Laws => architect::laws::registry_json(),
+        Cmd::Watch { root } => {
+            watch::run(root)?;
+            return Ok(());
+        }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())

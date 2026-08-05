@@ -75,7 +75,7 @@ pub struct Decision {
 }
 
 /// Everything the scan learned about one repository.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Index {
     pub root: String,
     pub files_scanned: usize,
