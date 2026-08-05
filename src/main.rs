@@ -70,6 +70,15 @@ enum Cmd {
     /// The law registry: every rule the engine obeys, with the wrong answer
     /// that taught it and the regression test that enforces it forever
     Laws,
+    /// CI gate: pipe a diff in, get an exit code out.
+    /// `git diff main... | architect ci --root .`
+    Ci {
+        #[arg(long)]
+        root: PathBuf,
+        /// Also fail on name-collision warnings, not only storage violations
+        #[arg(long)]
+        strict: bool,
+    },
     /// REST API (127.0.0.1, read-only) — the GUI and CI become clients of the
     /// same engine; no business logic lives in any transport
     Serve {
@@ -154,6 +163,16 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Laws => architect::laws::registry_json(),
+        Cmd::Ci { root, strict } => {
+            let mut diff = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
+            let out = query::ci(&index_for(&root), &diff, strict);
+            println!("{}", serde_json::to_string_pretty(&out)?);
+            if out["pass"] == false {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         Cmd::Serve { root, port } => {
             rest::serve(root, port)?;
             return Ok(());

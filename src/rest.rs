@@ -67,6 +67,18 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             .map(PathBuf::from)
             .or_else(|| default_root.clone());
 
+        // GUI v0 — the embedded read-only dashboard, itself a client of the
+        // JSON endpoints below. No logic lives in it.
+        if path == "/" {
+            let response = tiny_http::Response::from_string(include_str!("../ui/index.html"))
+                .with_header(
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+                        .unwrap(),
+                );
+            let _ = req.respond(response);
+            continue;
+        }
+
         let body: Value = match (path.as_str(), root) {
             ("/laws", _) => laws::registry_json(),
             (_, None) => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),

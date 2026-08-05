@@ -1,0 +1,110 @@
+<!-- architect GUI v0 — a READ-ONLY client of the REST API, nothing more.
+     No business logic, no architectural reasoning, no state of its own:
+     every number on this page is a fetch of the same JSON the CLI and MCP
+     return. GitHub Desktop is a client of git; this page is a client of
+     the engine. Single file, no build step, vanilla JS. -->
+<meta charset="utf-8">
+<title>architect</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.5 ui-monospace, monospace; background:#0d1117; color:#c9d1d9;
+         max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.2rem; color:#e6edf3; } h1 small { color:#8b949e; font-weight:normal; }
+  input, button { font:inherit; background:#161b22; color:#c9d1d9; border:1px solid #30363d;
+                  padding:.35rem .6rem; border-radius:6px; }
+  button { cursor:pointer; } button.active { border-color:#58a6ff; color:#58a6ff; }
+  nav { margin:.8rem 0; display:flex; gap:.5rem; flex-wrap:wrap; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px;
+          padding:1rem; margin:.6rem 0; overflow-x:auto; }
+  .stat { display:inline-block; margin-right:1.6rem; }
+  .stat b { display:block; font-size:1.5rem; color:#e6edf3; }
+  .warn { color:#d29922; } .bad { color:#f85149; } .ok { color:#3fb950; }
+  table { border-collapse: collapse; width:100%; }
+  td, th { text-align:left; padding:.25rem .6rem; border-bottom:1px solid #21262d; vertical-align:top; }
+  th { color:#8b949e; font-weight:normal; }
+  .muted { color:#8b949e; } pre { white-space:pre-wrap; margin:0; }
+</style>
+
+<h1>architect <small>— read-only client of the engine · every number is a REST fetch</small></h1>
+<div>
+  root <input id="root" size="52" placeholder="/absolute/path/to/repo">
+  <button onclick="setRoot()">load</button>
+</div>
+<nav>
+  <button data-tab="overview" class="active" onclick="show('overview')">overview</button>
+  <button data-tab="timeline" onclick="show('timeline')">timeline</button>
+  <button data-tab="drift" onclick="show('drift')">drift</button>
+  <button data-tab="laws" onclick="show('laws')">laws</button>
+</nav>
+<div id="out" class="card"><span class="muted">set a repository root above</span></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let tab = 'overview';
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const api = (ep, extra='') => fetch(`${ep}?root=${encodeURIComponent($('root').value)}${extra}`).then(r => r.json());
+const t = ms => ms ? new Date(ms).toLocaleString() : '—';
+
+function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); }
+function show(name){
+  tab = name;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  if (!$('root').value) return;
+  $('out').innerHTML = '<span class="muted">loading…</span>';
+  ({overview, timeline, drift, laws})[name]();
+}
+
+async function overview(){
+  const d = await api('/doctor');
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  const c = d.counts;
+  $('out').innerHTML = `
+    <div>
+      <span class="stat"><b>${c.concepts}</b>concepts</span>
+      <span class="stat"><b>${c.files_scanned}</b>files</span>
+      <span class="stat"><b>${c.declared_decisions}</b>decisions</span>
+      <span class="stat"><b>${c.declared_aliases}</b>aliases</span>
+      <span class="stat"><b>${d.declared_but_never_observed_in_use.length}</b><span class="warn">never observed</span></span>
+    </div>
+    <h3>domains <span class="muted">(where declarations live)</span></h3>
+    <table>${Object.entries(d.domains).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v} declaration files</td></tr>`).join('')}</table>
+    <h3>top concepts <span class="muted">(by observed use)</span></h3>
+    <table>${d.top_concepts.map(x=>`<tr><td>${esc(x.concept)}</td><td>${x.observed_uses} uses</td></tr>`).join('')}</table>
+    <h3>decisions to read</h3>
+    <table>${d.things_to_read.map(x=>`<tr><td>${esc(x.id)}</td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — architect.toml [[decision]] entries appear here</td></tr>'}</table>`;
+}
+
+async function timeline(){
+  const d = await api('/history', '&limit=60');
+  const rows = (d.events||[]).map(e => `<tr>
+      <td class="muted">${t(e.ts_ms)}</td>
+      <td class="${e.kind.includes('duplicate')||e.kind.includes('lost')?'warn':'ok'}">${esc(e.kind)}</td>
+      <td>${esc(e.concept)}</td>
+      <td class="muted"><pre>${esc(JSON.stringify(e.detail).slice(0,180))}</pre></td></tr>`).join('');
+  $('out').innerHTML = `<h3>architectural timeline <span class="muted">(append-only; written only by the daemon)</span></h3>
+    <table><tr><th>when</th><th>event</th><th>concept</th><th>detail</th></tr>${rows ||
+    '<tr><td colspan=4 class="muted">no events yet — run `architect watch --root …` and history accumulates</td></tr>'}</table>`;
+}
+
+async function drift(){
+  const d = await api('/duplicates');
+  $('out').innerHTML = `
+    <h3 class="warn">likely same concept, needs alias <span class="muted">(one-line architect.toml fix)</span></h3>
+    <table>${(d.likely_same_concept_needs_alias||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>
+    <h3>suspected duplicates <span class="muted">(name overlap = risk, not proof)</span></h3>
+    <table>${(d.suspected_duplicates||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td><td class="muted">via ${esc(p.shared_token)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+}
+
+async function laws(){
+  const d = await fetch('/laws').then(r=>r.json());
+  $('out').innerHTML = `
+    <div><span class="stat"><b>${d.stats.laws_active}</b>active laws</span>
+    <span class="stat"><b>${d.stats.corpus_repositories}</b>corpus repos</span>
+    <span class="stat"><b>v${d.stats.extractor_version}</b>extractor</span></div>
+    <table><tr><th>law</th><th>statement</th><th>taught by</th></tr>
+    ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td><td class="muted">${esc(l.discovered_in.join(', '))}</td></tr>`).join('')}</table>`;
+}
+
+$('root').value = localStorage.getItem('arch_root') || '';
+if ($('root').value) show('overview');
+</script>

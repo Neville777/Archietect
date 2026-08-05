@@ -541,3 +541,68 @@ pub fn owner(idx: &Index, term: &str) -> Value {
         "ranked_directories": ranked.iter().take(6).map(|(d, s)| json!({ "dir": d, "weight": s })).collect::<Vec<_>>(),
     })
 }
+
+/// CI gate: check a unified diff's ADDED lines for architecture violations.
+///
+/// `git diff main... | architect ci --root .` — fails the pipeline when a
+/// patch introduces storage for a concept that already has a canonical
+/// implementation. Two severities, honestly separated:
+///
+///   violations — CREATE TABLE colliding with an existing concept (the
+///                guard's verdict; always fails)
+///   warnings   — a new ORM declaration whose name collides with an existing
+///                canonical (name evidence only — fails only with --strict,
+///                because related concepts legitimately share vocabulary)
+pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
+    // only lines the patch ADDS — removing architecture is not this gate's business
+    let added: String = diff
+        .lines()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .map(|l| &l[1..])
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let g = guard(idx, &added);
+    let violations: Vec<Value> = if g["allowed"] == false {
+        vec![json!({ "kind": "duplicate_storage", "reason": g["reason"], "findings": g["findings"] })]
+    } else {
+        Vec::new()
+    };
+
+    // new ORM-style declarations in the added lines, name-checked
+    let decl_re = regex::Regex::new(
+        r"(?m)^\s*(?:model\s+(\w+)\s*\{|export\s+class\s+(\w+)|class\s+(\w+)\s*\([^)]*Model[^)]*\))",
+    )
+    .unwrap();
+    let mut warnings = Vec::new();
+    for cap in decl_re.captures_iter(&added) {
+        let name = cap.get(1).or(cap.get(2)).or(cap.get(3)).map(|m| m.as_str()).unwrap_or("");
+        if name.len() < 4 || idx.concepts.contains_key(name) {
+            continue; // extending an existing concept is the GOAL, not a finding
+        }
+        for tok in crate::model::name_tokens(name) {
+            if tok.len() < 4 {
+                continue;
+            }
+            if let Some(existing) = idx.concepts.keys().find(|c| names_concept(c, &tok)) {
+                warnings.push(json!({
+                    "kind": "possible_duplicate_concept",
+                    "new_declaration": name,
+                    "collides_with": existing,
+                    "via_token": tok,
+                    "advice": format!("'{existing}' may already cover this — run `architect concept {tok}` before merging"),
+                }));
+                break;
+            }
+        }
+    }
+
+    let fail = !violations.is_empty() || (strict && !warnings.is_empty());
+    json!({
+        "pass": !fail,
+        "violations": violations,
+        "warnings": warnings,
+        "strict": strict,
+        "note": "violations = CREATE TABLE colliding with an existing canonical (always fails). warnings = new declaration whose NAME collides (name evidence only; fails only under --strict, because related concepts legitimately share vocabulary).",
+    })
+}
