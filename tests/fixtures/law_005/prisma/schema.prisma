@@ -1,0 +1,4 @@
+model Website {
+  id String @id
+  @@map("website")
+}

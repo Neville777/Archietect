@@ -1,0 +1,12 @@
+# law-006 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-006"
+title = "table=True declares storage regardless of base names"
+statement = "A Python class with table=True in its bases is a storage declaration even when no base is literally named SQLModel or BaseModel."
+because = "fastapi-template: class Item(ItemBase, table=True) names neither — the real storage models were invisible while their API contracts were indexed."
+discovered_in = ["full-stack-fastapi-template"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_006 (fixture: tests/fixtures/law_006)"

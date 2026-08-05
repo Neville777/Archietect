@@ -1,0 +1,1 @@
+CREATE TABLE stories (id BIGSERIAL);

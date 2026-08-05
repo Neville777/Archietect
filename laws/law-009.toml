@@ -1,0 +1,12 @@
+# law-009 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-009"
+title = "Declared ontology outranks name search; its absence is not ABSENT"
+statement = "architect.toml aliases resolve concepts no name search can see, at DECLARED tier; a stale alias pointing at nothing is reported as a finding, never silently ignored."
+because = "TITAN: 'episode' has no table named for it, but the project itself declares episode = stories. Without the ontology the guard allowed CREATE TABLE episodes on the very repo whose internal architect rejects it."
+discovered_in = ["TITAN"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_009 (fixture: tests/fixtures/law_009)"

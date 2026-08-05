@@ -1,0 +1,12 @@
+# law-007 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-007"
+title = "ORM declarations outrank SQL-string-only concepts on exact ties"
+statement = "When two exact-name candidates tie, the one with a non-SQL (ORM/schema) declaration wins."
+because = "redash: a phantom lowercase `query` outranked the real Query model on usage inflated by every FROM query in the repo. A model class is a strong declaration; text that happens to say CREATE TABLE is the weakest."
+discovered_in = ["redash"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_007 (fixture: tests/fixtures/law_007)"

@@ -1,0 +1,1 @@
+await prisma.websiteEvent.findMany();

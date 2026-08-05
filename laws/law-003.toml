@@ -1,0 +1,12 @@
+# law-003 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-003"
+title = "Prose about schema is not schema (comments)"
+statement = "Comment lines are stripped before CREATE TABLE extraction from non-.sql sources."
+because = "The guard's own doc comment — 'a patch proposing CREATE TABLE episodes is REJECTED' — minted a phantom episodes concept that then satisfied the exemption and defeated the guard it documented."
+discovered_in = ["TITAN"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_003 (fixture: tests/fixtures/law_003)"

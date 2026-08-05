@@ -1,0 +1,12 @@
+# law-002 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-002"
+title = "The guard's re-declaration exemption is exact-name only"
+statement = "A proposed CREATE TABLE is exempt from blocking only when it exactly equals (case-insensitive) the canonical concept's name or its declared table."
+because = "Fuzzy same_word exemption allowed CREATE TABLE ghosts while model Ghost was ACTIVE. Near-names are exactly what duplicates look like, so near-names must block."
+discovered_in = ["ghosttrack-monorepo"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_002 (fixture: tests/fixtures/law_002)"

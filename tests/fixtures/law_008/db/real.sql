@@ -1,0 +1,1 @@
+CREATE TABLE results (id INT);

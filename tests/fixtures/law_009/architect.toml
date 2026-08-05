@@ -1,0 +1,9 @@
+[aliases]
+episode = "stories"
+
+[[decision]]
+id = "stories-own-episodes"
+decision = "Episodes are stored as stories"
+because = "they always shared identity"
+rejected = ["separate episodes table"]
+links = ["episode", "stories"]

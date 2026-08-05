@@ -1,0 +1,1 @@
+CREATE TABLE website (id TEXT);

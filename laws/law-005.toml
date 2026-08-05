@@ -1,0 +1,12 @@
+# law-005 — part of Architect's language specification.
+# Laws are amended, not edited: a superseded law gets status = "superseded"
+# and a supersedes pointer from its successor — semantics are versioned.
+
+id = "law-005"
+title = "Declarations sharing a table are one concept"
+statement = "An SQL-only declaration whose name equals another concept's declared table mapping folds into that concept instead of competing with it."
+because = "umami declared `website` in SQL migrations and `Website` in Prisma mapped to the same table — one concept, reported as competing with itself."
+discovered_in = ["umami"]
+introduced = "2026-08-05"
+status = "active"
+regression = "tests/laws.rs::law_005 (fixture: tests/fixtures/law_005)"

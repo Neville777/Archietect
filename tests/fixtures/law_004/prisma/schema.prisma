@@ -1,0 +1,6 @@
+model Website {
+  id String @id
+}
+model WebsiteEvent {
+  id String @id
+}

@@ -1,0 +1,1 @@
+CREATE TABLE story (id INT);

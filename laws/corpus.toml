@@ -1,0 +1,65 @@
+# The validation corpus — repositories the engine has been run against,
+# with what each one contributed. The corpus taught the laws; the fixtures
+# preserve the lessons. Grown deliberately: every new ecosystem is a session
+# of running the loop (test → wrong answer → law → regression), not new
+# machinery.
+
+[[repo]]
+name = "TITAN (universal_trader/backend)"
+kind = "rust + raw SQL, ~200 concepts"
+validated = "2026-08-05"
+contributed = ["law-001", "law-003", "law-009", "all-source CREATE TABLE extraction"]
+
+[[repo]]
+name = "ghosttrack-monorepo"
+kind = "prisma + django + ts, 57 concepts"
+validated = "2026-08-05"
+contributed = ["law-002", "cross-stack stitching proof", "found real duplicate new_Ghost"]
+
+[[repo]]
+name = "umami"
+kind = "prisma + sql migrations"
+validated = "2026-08-05"
+contributed = ["law-004", "law-005"]
+
+[[repo]]
+name = "dub"
+kind = "prisma, 37 schema files"
+validated = "2026-08-05"
+contributed = ["guard verified on foreign repo"]
+
+[[repo]]
+name = "saleor"
+kind = "django + pydantic, 131 concepts"
+validated = "2026-08-05"
+contributed = ["django extractor at scale"]
+
+[[repo]]
+name = "redash"
+kind = "sqlalchemy"
+validated = "2026-08-05"
+contributed = ["law-007", "law-008", "sqlalchemy extractor"]
+
+[[repo]]
+name = "full-stack-fastapi-template"
+kind = "sqlmodel"
+validated = "2026-08-05"
+contributed = ["law-006", "sqlmodel extractor"]
+
+[[repo]]
+name = "excalidraw"
+kind = "frontend-only control"
+validated = "2026-08-05"
+contributed = ["honest-zero verification"]
+
+[[repo]]
+name = "Sentinel"
+kind = "pydantic + raw sql"
+validated = "2026-08-05"
+contributed = ["pydantic extractor"]
+
+[[repo]]
+name = "local sweep (22 further projects)"
+kind = "mixed: node, markdown-only, no-schema controls"
+validated = "2026-08-05"
+contributed = ["honest zeros: Treka, BusPay, Poll-Maker et al."]

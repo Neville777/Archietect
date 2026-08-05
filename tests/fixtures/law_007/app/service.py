@@ -1,0 +1,1 @@
+rows = Query.objects.all()

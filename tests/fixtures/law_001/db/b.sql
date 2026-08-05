@@ -1,0 +1,1 @@
+CREATE TABLE harvest_history (id INT);
