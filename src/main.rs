@@ -14,7 +14,7 @@
 //!   architect intent  --root DIR "TEXT"   smallest correct change for an intent
 //!   architect impact  --root DIR TERM     what is affected if TERM changes
 
-use architect::{mcp, model, query, scan, store, watch};
+use architect::{mcp, model, query, rest, scan, store, watch};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -70,6 +70,14 @@ enum Cmd {
     /// The law registry: every rule the engine obeys, with the wrong answer
     /// that taught it and the regression test that enforces it forever
     Laws,
+    /// REST API (127.0.0.1, read-only) — the GUI and CI become clients of the
+    /// same engine; no business logic lives in any transport
+    Serve {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, default_value_t = 7373)]
+        port: u16,
+    },
     /// Daemon mode: watch the tree, keep architect.db warm, and emit
     /// unprompted findings (duplicate-concept risk, lost storage, stale
     /// aliases) as JSON lines. Observation and notification — never action.
@@ -146,6 +154,10 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Laws => architect::laws::registry_json(),
+        Cmd::Serve { root, port } => {
+            rest::serve(root, port)?;
+            return Ok(());
+        }
         Cmd::Watch { root, subscribe } => {
             watch::run(root, subscribe)?;
             return Ok(());

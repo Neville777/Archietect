@@ -9,6 +9,7 @@ pub mod laws;
 pub mod mcp;
 pub mod model;
 pub mod query;
+pub mod rest;
 pub mod scan;
 pub mod store;
 pub mod watch;

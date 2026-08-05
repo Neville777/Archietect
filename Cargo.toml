@@ -15,6 +15,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 anyhow = "1"
 toml = "0.8"
 notify = "6"
+tiny_http = "0.12"
 
 [profile.release]
 lto = "thin"

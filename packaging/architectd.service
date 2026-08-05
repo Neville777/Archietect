@@ -1,0 +1,18 @@
+# systemd USER unit for the architect daemon — starts at login, like
+# rust-analyzer or docker: nobody starts it manually, everybody reads its
+# output. Install (user's own action, per repository watched):
+#
+#   cp packaging/architectd.service ~/.config/systemd/user/architectd@.service
+#   systemctl --user enable --now architectd@$(systemd-escape /path/to/repo)
+#
+# The daemon is the ONLY writer to architect.db; CLI/MCP/REST are readers.
+[Unit]
+Description=architect daemon (architectural memory) for %I
+
+[Service]
+ExecStart=%h/Personal_Projects/architect/target/release/architect watch --root %I
+Restart=on-failure
+Nice=10
+
+[Install]
+WantedBy=default.target
