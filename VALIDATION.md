@@ -1,5 +1,10 @@
 # Validation ledger — every wrong answer becomes a law
 
+> The machine-readable registry is `src/laws.rs` (`architect laws`); the
+> enforcement arm is `tests/laws.rs` — one self-contained fixture per law,
+> run by `cargo test`. This file is the narrative; those are the spec.
+> A law without its regression test is a wish.
+
 The maturation loop: run against real repositories, record every wrong
 answer, turn each into a rule the engine enforces forever. No wrong answer
 is fixed by patching the output; it is fixed by changing what the engine is

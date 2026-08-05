@@ -10,8 +10,10 @@
 //! Usage has a dependency the cache must honour: matchers are built FROM the
 //! concept set. So invalidation follows the compiler rule exactly —
 //!
-//!     a changed code file invalidates ITSELF;
-//!     a changed CONCEPT SET invalidates ALL usage.
+//! ```text
+//! a changed code file invalidates ITSELF;
+//! a changed CONCEPT SET invalidates ALL usage.
+//! ```
 //!
 //! `concepts_sig` (names + tables, hashed) detects the second case. Editing a
 //! service file re-reads one file; editing schema.prisma re-runs the usage

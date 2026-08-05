@@ -14,11 +14,7 @@
 //!   architect intent  --root DIR "TEXT"   smallest correct change for an intent
 //!   architect impact  --root DIR TERM     what is affected if TERM changes
 
-mod mcp;
-mod model;
-mod query;
-mod scan;
-mod store;
+use architect::{mcp, model, query, scan, store};
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -71,6 +67,9 @@ enum Cmd {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// The law registry: every rule the engine obeys, with the wrong answer
+    /// that taught it and the regression test that enforces it forever
+    Laws,
 }
 
 fn index_for(root: &PathBuf) -> model::Index {
@@ -103,6 +102,7 @@ fn main() -> anyhow::Result<()> {
             mcp::serve(root)?;
             return Ok(());
         }
+        Cmd::Laws => architect::laws::registry_json(),
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
