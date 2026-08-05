@@ -76,6 +76,20 @@ enum Cmd {
     Watch {
         #[arg(long)]
         root: PathBuf,
+        /// Only STREAM events touching this concept (all events are still
+        /// persisted to the timeline regardless)
+        #[arg(long)]
+        subscribe: Option<String>,
+    },
+    /// The architectural timeline: what changed, when, and what the engine
+    /// said about it — Git knows files changed; this knows ARCHITECTURE did
+    History {
+        #[arg(long)]
+        root: PathBuf,
+        /// Filter to events touching one concept
+        concept: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
     },
 }
 
@@ -110,9 +124,17 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Laws => architect::laws::registry_json(),
-        Cmd::Watch { root } => {
-            watch::run(root)?;
+        Cmd::Watch { root, subscribe } => {
+            watch::run(root, subscribe)?;
             return Ok(());
+        }
+        Cmd::History { root, concept, limit } => {
+            serde_json::json!({
+                "root": root.display().to_string(),
+                "concept": concept,
+                "events": store::read_history(&root, concept.as_deref(), limit),
+                "note": "Append-only architectural timeline, newest first, written only by the daemon. Git knows which files changed; this knows which CONCEPTS changed, when, and what the engine observed about it at the time.",
+            })
         }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
