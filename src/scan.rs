@@ -53,22 +53,59 @@ pub fn scan(root: &Path) -> Index {
         .map(|e| e.into_path())
         .collect();
 
-    // ── pass 1: declarations (sequential — few files, order-stable) ─────────
+    // ── pass 0: architect.toml — the project's OWN ontology and decisions ───
+    // Aliases ("episode = stories") answer the question a name search cannot:
+    // the concept exists under a different name. Decisions carry the WHY.
+    // Both are DECLARED-tier: written by whoever owns the architecture,
+    // reviewable in a diff — never inferred.
+    if let Ok(t) = std::fs::read_to_string(root.join("architect.toml")) {
+        if let Ok(v) = t.parse::<toml::Value>() {
+            if let Some(al) = v.get("aliases").and_then(|a| a.as_table()) {
+                for (k, val) in al {
+                    if let Some(s) = val.as_str() {
+                        idx.aliases.insert(k.to_lowercase(), s.to_string());
+                    }
+                }
+            }
+            if let Some(ds) = v.get("decision").and_then(|d| d.as_array()) {
+                for d in ds {
+                    let g = |k: &str| d.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let arr = |k: &str| d.get(k).and_then(|x| x.as_array()).map(|a| {
+                        a.iter().filter_map(|s| s.as_str().map(String::from)).collect()
+                    }).unwrap_or_default();
+                    idx.decisions.push(crate::model::Decision {
+                        id: g("id"), decision: g("decision"), because: g("because"),
+                        rejected: arr("rejected"), links: arr("links"),
+                    });
+                }
+            }
+            idx.declaration_files.push(("architect.toml".into(), "ontology".into()));
+        }
+    }
+
+    // ── pass 1: declarations (sequential — order-stable) ────────────────────
+    // Every file is read and checked for CREATE TABLE, not just .sql files:
+    // real systems declare schema inside string literals (the source system
+    // carries 110 CREATE TABLEs in Rust strings — a .sql-only extractor saw
+    // 92 of ~200 concepts). Cheap containment precheck before the regex.
     for p in &files {
         let name = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
         let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
         if ext == "prisma" {
-            if let Ok(text) = std::fs::read_to_string(p) {
-                extract_prisma(&mut idx, root, p, &text);
-            }
-        } else if name == "models.py" {
-            if let Ok(text) = std::fs::read_to_string(p) {
-                extract_django(&mut idx, root, p, &text);
-            }
-        } else if ext == "sql" {
-            if let Ok(text) = std::fs::read_to_string(p) {
-                extract_sql(&mut idx, root, p, &text);
-            }
+            extract_prisma(&mut idx, root, p, &text);
+        }
+        if name == "models.py" && text.contains("models.Model") {
+            extract_django(&mut idx, root, p, &text);
+        }
+        // pydantic models are concept declarations too (API contracts) —
+        // found the hard way: a real service's models.py held only
+        // pydantic.BaseModel classes and produced zero concepts.
+        if ext == "py" && text.contains("BaseModel") {
+            extract_pydantic(&mut idx, root, p, &text);
+        }
+        if text.contains("CREATE TABLE") || text.contains("create table") {
+            extract_sql(&mut idx, root, p, &text);
         }
     }
 
@@ -79,6 +116,8 @@ pub fn scan(root: &Path) -> Index {
         needle_client: String, // "prisma-ish .name."
         client_re: Regex,
         needle_django: String, // "Name.objects."
+        needle_construct: String, // "Name(" — construction is usage
+        construct_re: Regex,
         table_re: Option<Regex>,
         needle_table: Option<String>,
     }
@@ -110,6 +149,8 @@ pub fn scan(root: &Path) -> Index {
                 needle_client: format!(".{lname}."),
                 client_re,
                 needle_django: format!("{name}.objects."),
+                needle_construct: format!("{name}("),
+                construct_re: Regex::new(&format!(r"\b{}\(", regex::escape(name))).unwrap(),
                 needle_table: table.map(|t| t.to_lowercase()),
                 table_re,
             }
@@ -136,6 +177,15 @@ pub fn scan(root: &Path) -> Index {
                 }
                 if text.contains(&m.needle_django) {
                     hits.push((m.concept.clone(), rel.clone(), "django-orm".to_string()));
+                }
+                // construction only counts for real model names (len>=5 cuts
+                // collision-prone short words); it is still labelled with its
+                // own kind so a consumer can weigh it below orm access.
+                if m.concept.len() >= 5
+                    && text.contains(&m.needle_construct)
+                    && m.construct_re.is_match(&text)
+                {
+                    hits.push((m.concept.clone(), rel.clone(), "constructed".to_string()));
                 }
                 if let (Some(needle), Some(re)) = (&m.needle_table, &m.table_re) {
                     if lower.contains(needle.as_str()) && re.is_match(&lower) {
@@ -261,6 +311,27 @@ fn extract_django(idx: &mut Index, root: &Path, p: &Path, text: &str) {
 }
 
 fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
+    // For non-.sql sources, strip COMMENT lines before matching. Found the
+    // hard way: the source system's guard carries a doc comment reading
+    // "a patch proposing CREATE TABLE episodes is REJECTED" — the extractor
+    // minted a phantom `episodes` concept from the guard's own documentation,
+    // which then satisfied the guard's exact-name exemption and let the very
+    // table it documents rejecting through. Prose about schema is not schema.
+    let is_sql_file = p.extension().and_then(|x| x.to_str()) == Some("sql");
+    let filtered;
+    let text: &str = if is_sql_file {
+        text
+    } else {
+        filtered = text
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                !(t.starts_with("//") || t.starts_with('#') || t.starts_with("--") || t.starts_with('*'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        &filtered
+    };
     let re = RegexBuilder::new(r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#)
         .case_insensitive(true)
         .build()
@@ -276,5 +347,36 @@ fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
     }
     if any {
         idx.declaration_files.push((rel, "sql".into()));
+    }
+}
+
+fn extract_pydantic(idx: &mut Index, root: &Path, p: &Path, text: &str) {
+    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*BaseModel[^)]*)\)\s*:").unwrap();
+    let field_re = Regex::new(r"(?m)^    (\w+)\s*:").unwrap();
+    let top_re = Regex::new(r"(?m)^\S").unwrap();
+    let mut any = false;
+    let starts: Vec<(usize, String)> = class_re
+        .captures_iter(text)
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string()))
+        .collect();
+    for (start, name) in starts {
+        any = true;
+        let body_end = top_re
+            .find_at(text, start)
+            .map(|m| m.start())
+            .unwrap_or(text.len());
+        let body = &text[start..body_end];
+        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let c = concept_entry(&mut idx.concepts, &name);
+        c.declared_in.push((rel.clone(), "pydantic".into()));
+        if c.fields.is_empty() {
+            c.fields = fields;
+        }
+        // table stays None: a pydantic model is an API contract, not storage,
+        // and inventing a table name for it would be a fabricated fact.
+    }
+    if any {
+        idx.declaration_files.push((rel, "pydantic".into()));
     }
 }

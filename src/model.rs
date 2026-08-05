@@ -51,6 +51,21 @@ pub struct Concept {
     pub usage: Vec<(String, String)>,
 }
 
+/// A declared architectural decision — the WHY behind a shape, with the roads
+/// considered and rejected. Rationale is the one architectural fact that can
+/// NEVER be extracted from code: code shows the road taken, and the rejected
+/// road is exactly what the next person is about to propose.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Decision {
+    pub id: String,
+    pub decision: String,
+    pub because: String,
+    #[serde(default)]
+    pub rejected: Vec<String>,
+    #[serde(default)]
+    pub links: Vec<String>,
+}
+
 /// Everything the scan learned about one repository.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Index {
@@ -59,6 +74,11 @@ pub struct Index {
     pub declaration_files: Vec<(String, String)>,
     /// BTreeMap for deterministic output — same repo, same answer, same order.
     pub concepts: BTreeMap<String, Concept>,
+    /// architect.toml [aliases]: concept term → the concept that implements it.
+    /// The project's own ontology; DECLARED-tier evidence.
+    pub aliases: BTreeMap<String, String>,
+    /// architect.toml [[decision]] entries.
+    pub decisions: Vec<Decision>,
 }
 
 // ── word matching ────────────────────────────────────────────────────────────

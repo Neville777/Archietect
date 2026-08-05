@@ -12,7 +12,7 @@
 //! declared relations. Rows/usage alone never outrank declarations — a
 //! declaration is the project speaking; usage is the project acting.
 
-use crate::model::{names_concept, Evidence, Index, Tier};
+use crate::model::{names_concept, same_word, Evidence, Index, Tier};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
@@ -62,6 +62,39 @@ pub fn concept(idx: &Index, term: &str) -> Value {
                 format!("'{term}' is declared as '{canon}' but nothing observably uses it. Confirm whether it is scaffolding before extending OR replacing.")
             },
         });
+    }
+
+    // ALIAS resolution — the project's declared ontology (architect.toml).
+    // This is what a name search can never see: "episode" has no table named
+    // for it, but the project itself declares episode = stories. DECLARED
+    // tier, because the declaration file says so — not an inference.
+    if let Some((alias_key, target)) = idx
+        .aliases
+        .iter()
+        .find(|(k, _)| same_word(k, term) || names_concept(k, term))
+    {
+        let mut r = concept(idx, target);
+        if r["canonical"].is_null() {
+            // A declared alias pointing at nothing is itself a finding.
+            return json!({
+                "concept": term,
+                "verdict": "UNKNOWN",
+                "canonical": null,
+                "evidence": [Evidence { tier: Tier::Declared,
+                    what: format!("architect.toml declares '{alias_key}' = '{target}', but '{target}' is not a declared concept — the ontology file is stale or wrong") }],
+                "confidence": "low — declaration exists but points at nothing",
+                "recommendation": "Fix architect.toml: the alias target does not exist in the scanned declarations.",
+            });
+        }
+        r["concept"] = json!(term);
+        r["resolved_via"] = json!("alias");
+        if let Some(ev) = r["evidence"].as_array_mut() {
+            ev.insert(0, serde_json::to_value(Evidence {
+                tier: Tier::Declared,
+                what: format!("architect.toml declares '{alias_key}' = '{target}' — the project's own ontology, not an inference"),
+            }).unwrap());
+        }
+        return r;
     }
 
     // NAMED tier: filename resemblance only — and the answer says so.
@@ -293,8 +326,21 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             && !t.eq_ignore_ascii_case(canonical_table)
             && !t.eq_ignore_ascii_case(&canonical)
         {
+            // Cite the governing DECISION when one is declared. "The table
+            // already exists" states a fact; the decision states the REASONING
+            // and the alternatives already considered — which is what stops
+            // the same proposal returning next month under a different name.
+            let cite = idx
+                .decisions
+                .iter()
+                .find(|d| d.links.iter().any(|l| same_word(l, &head) || l.eq_ignore_ascii_case(t) || l.eq_ignore_ascii_case(&canonical)))
+                .map(|d| format!(
+                    " DECLARED DECISION ('{}'): {} Alternatives already considered and rejected: {}.",
+                    d.id, d.because, d.rejected.join("; ")
+                ))
+                .unwrap_or_default();
             blocked.push(format!(
-                "CREATE TABLE {t} rejected — '{head}' is already {verdict}, canonically implemented as '{canonical}'. Extend {canonical} instead."
+                "CREATE TABLE {t} rejected — '{head}' is already {verdict}, canonically implemented as '{canonical}'. Extend {canonical} instead.{cite}"
             ));
         }
         findings.push(json!({
