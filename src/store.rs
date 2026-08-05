@@ -72,6 +72,26 @@ pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<ser
         .collect()
 }
 
+/// Bump and return the ARCHITECTURE version — a monotonic counter that
+/// advances only when the concept SET changes (a new concept, a removed one,
+/// a rename). Like a migration number, but for architectural knowledge:
+/// "v12 → v13: + WebsiteStats, - CheckoutSession". Daemon-only write.
+pub fn bump_arch_version(root: &Path) -> Result<i64> {
+    let conn = Connection::open(root.join("architect.db"))?;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")?;
+    let cur: i64 = conn
+        .query_row("SELECT v FROM meta WHERE k='arch_version'", [], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let next = cur + 1;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (k, v) VALUES ('arch_version', ?1)",
+        [next.to_string()],
+    )?;
+    Ok(next)
+}
+
 pub fn save(idx: &Index, root: &Path) -> Result<std::path::PathBuf> {
     let db_path = root.join("architect.db");
     let conn = Connection::open(&db_path)?;

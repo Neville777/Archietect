@@ -73,9 +73,47 @@ fn event(out: &mut Vec<Event>, kind: &str, concept: &str, detail: serde_json::Va
 /// never actions — the daemon records and reports, it does not plan.
 fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     let mut out = Vec::new();
+
+    // ── RENAMES first: a removed + an appeared concept sharing IDENTITY
+    // (the same declared table, or strong field overlap) is one concept
+    // changing its name, not a death and an unrelated birth. Git sees a
+    // deleted string and an added string; this sees Story → Narrative.
+    // Renamed pairs are then EXCLUDED from appeared/lost/duplicate findings —
+    // reporting a rename as three separate alarms would bury the signal.
+    let mut renamed_from: Vec<String> = Vec::new();
+    let mut renamed_to: Vec<String> = Vec::new();
+    for (rname, oc) in &old.concepts {
+        if new.concepts.contains_key(rname) {
+            continue;
+        }
+        for (aname, nc) in &new.concepts {
+            if old.concepts.contains_key(aname) {
+                continue;
+            }
+            let same_table = oc.table.is_some() && oc.table == nc.table;
+            let shared = oc.fields.iter().filter(|f| nc.fields.contains(f)).count();
+            let overlap = shared >= 3 && shared * 10 >= oc.fields.len().max(1) * 6;
+            if same_table || overlap {
+                event(&mut out, "concept_renamed", aname, json!({
+                    "from": rname,
+                    "to": aname,
+                    "identity_evidence": if same_table {
+                        format!("same declared table '{}'", oc.table.clone().unwrap_or_default())
+                    } else {
+                        format!("{shared} shared fields")
+                    },
+                    "note": "provenance carries over: this is one concept changing its name, not a new concept",
+                }));
+                renamed_from.push(rname.clone());
+                renamed_to.push(aname.clone());
+                break;
+            }
+        }
+    }
+
     // NEW concepts — check each for collision with existing canonicals/aliases.
     for (name, c) in &new.concepts {
-        if old.concepts.contains_key(name) {
+        if old.concepts.contains_key(name) || renamed_to.contains(name) {
             continue;
         }
         event(&mut out, "concept_appeared", name, json!({
@@ -128,12 +166,37 @@ fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     }
     // REMOVED concepts — storage vanished; intentional or a refactor casualty?
     for name in old.concepts.keys() {
-        if !new.concepts.contains_key(name) {
+        if !new.concepts.contains_key(name) && !renamed_from.contains(name) {
             event(&mut out, "concept_lost_storage", name, json!({
                 "advice": "all declarations for this concept are gone — if unintentional, a refactor just deleted storage something may still depend on",
             }));
         }
     }
+    // ONTOLOGY changes — the declared layer has its own event vocabulary.
+    for (k, target) in &new.aliases {
+        if !old.aliases.contains_key(k) {
+            event(&mut out, "alias_introduced", k, json!({ "target": target }));
+        }
+    }
+    for (k, target) in &old.aliases {
+        if !new.aliases.contains_key(k) {
+            event(&mut out, "alias_removed", k, json!({ "was_target": target }));
+        }
+    }
+    for d in &new.decisions {
+        if !old.decisions.iter().any(|o| o.id == d.id) {
+            event(&mut out, "decision_added", &d.id, json!({ "decision": d.decision }));
+        }
+    }
+    for d in &old.decisions {
+        if !new.decisions.iter().any(|n| n.id == d.id) {
+            event(&mut out, "decision_removed", &d.id, json!({
+                "was": d.decision,
+                "advice": "a recorded architectural decision was deleted — rationale removed is rationale lost; supersede rather than delete",
+            }));
+        }
+    }
+
     // STALE aliases — the declared ontology pointing at nothing.
     for (k, target) in &new.aliases {
         let resolves = new
@@ -198,7 +261,23 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
 
         let next = scan::scan_with_prior(&root, Some(current.clone()));
-        let events = diff_findings(&current, &next);
+        let mut events = diff_findings(&current, &next);
+        // ARCHITECTURE VERSION: a monotonic number that advances only when
+        // the concept set changes — migration numbering for architectural
+        // knowledge, with the +/- delta recorded like a changelog entry.
+        let added: Vec<&String> =
+            next.concepts.keys().filter(|n| !current.concepts.contains_key(*n)).collect();
+        let removed: Vec<&String> =
+            current.concepts.keys().filter(|n| !next.concepts.contains_key(*n)).collect();
+        if !added.is_empty() || !removed.is_empty() {
+            if let Ok(v) = store::bump_arch_version(&root) {
+                events.push((now_ms(), "architecture_version".into(), format!("v{v}"), json!({
+                    "version": v,
+                    "added": added,
+                    "removed": removed,
+                })));
+            }
+        }
         store::save(&next, &root)?;
         // persist the timeline (append-only), THEN stream it — history that
         // exists only in a terminal scrollback is not history.
