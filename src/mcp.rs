@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::{query, scan, store};
+use crate::{query, scan};
 
 fn tool_defs() -> Value {
     let root_prop = json!({
@@ -67,7 +67,9 @@ fn tool_defs() -> Value {
 }
 
 fn index_for(root: &PathBuf) -> crate::model::Index {
-    store::load(root).unwrap_or_else(|| scan::scan(root))
+    // incremental scan — reuses cached per-file facts, honours the
+    // schema-invalidates-usage dependency rule
+    scan::scan(root)
 }
 
 pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {

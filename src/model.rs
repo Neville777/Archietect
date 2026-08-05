@@ -38,6 +38,14 @@ pub struct Evidence {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Concept {
     pub name: String,
+    /// When this concept FIRST appeared in the index — survives rescans, so
+    /// the engine can say "Story has existed here since 2026-08-01" rather
+    /// than only "Story exists". Memory, not cache.
+    #[serde(default)]
+    pub first_seen_ms: i64,
+    /// When the evidence for it was last re-verified against the tree.
+    #[serde(default)]
+    pub last_verified_ms: i64,
     /// (file, extractor-kind) pairs — where and how it is declared.
     pub declared_in: Vec<(String, String)>,
     pub fields: Vec<String>,
@@ -79,6 +87,43 @@ pub struct Index {
     pub aliases: BTreeMap<String, String>,
     /// architect.toml [[decision]] entries.
     pub decisions: Vec<Decision>,
+    /// Per-file extraction cache: the incremental engine. A file whose size,
+    /// mtime and extractor version are unchanged contributes its stored facts
+    /// without being re-read.
+    #[serde(default)]
+    pub file_facts: BTreeMap<String, FileFacts>,
+    /// Signature of the concept set (names + tables). If a rescan changes it,
+    /// ALL cached usage is invalid — usage matchers are built FROM the concept
+    /// set, so a schema change invalidates downstream exactly like a compiler:
+    /// schema → everything; a code file → only itself.
+    #[serde(default)]
+    pub concepts_sig: String,
+    #[serde(default)]
+    pub extractor_version: u32,
+}
+
+/// What one file contributed, cached against (size, mtime, extractor version).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileFacts {
+    pub size: u64,
+    pub mtime_ms: i64,
+    /// Declaration fragments this file asserts (merged globally at assembly).
+    pub decls: Vec<DeclFragment>,
+    /// (concept, access-kind) usage hits observed in this file.
+    pub usage: Vec<(String, String)>,
+    /// Which declaration kinds this file contributes (for declaration_files).
+    pub decl_kinds: Vec<String>,
+}
+
+/// One file's assertion about one concept — pure per-file output, so the
+/// global graph can be reassembled from cache without re-reading the file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeclFragment {
+    pub name: String,
+    pub kind: String,
+    pub fields: Vec<String>,
+    pub relations: Vec<String>,
+    pub table: Option<String>,
 }
 
 // ── word matching ────────────────────────────────────────────────────────────

@@ -74,8 +74,11 @@ enum Cmd {
 }
 
 fn index_for(root: &PathBuf) -> model::Index {
-    // fresh persisted index if available, else scan (bias: rescan over stale)
-    store::load(root).unwrap_or_else(|| scan::scan(root))
+    // Incremental: the scanner reuses per-file facts from architect.db where
+    // (size, mtime, extractor version) are unchanged, and honours the
+    // compiler rule — a changed concept set invalidates all cached usage.
+    // Queries stay read-only; only `init` persists.
+    scan::scan(root)
 }
 
 fn main() -> anyhow::Result<()> {

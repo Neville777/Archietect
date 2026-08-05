@@ -1,22 +1,41 @@
-//! Extraction — declarations first, then observed usage. One walk, parallel.
+//! Extraction — incremental, per-file, dependency-aware.
 //!
-//! v0 extractors: Prisma, Django models, raw SQL (CREATE TABLE). These are
-//! DECLARATION readers, not inference: schema.prisma and models.py are the
-//! project asserting its own concepts, which is strictly better evidence than
-//! anything derivable from application code. Everything v0 cannot parse
-//! degrades HONESTLY to the NAMED tier rather than pretending.
+//! ## The incremental model (compiler thinking)
 //!
-//! (The Python prototype died here: it recompiled per-concept regexes for
-//! every file — O(concepts × files) compiles. All matchers are built ONCE
-//! below, then files are scanned in parallel with cheap containment
-//! prechecks before any regex runs.)
+//! Extraction is PURE per file: a file's (size, mtime, extractor version)
+//! decides whether it is re-read; unchanged files contribute their cached
+//! fragments. The global graph is then ASSEMBLED from fragments — assembly is
+//! cheap, so it always runs fresh (merge laws, aliases, provenance).
+//!
+//! Usage has a dependency the cache must honour: matchers are built FROM the
+//! concept set. So invalidation follows the compiler rule exactly —
+//!
+//!     a changed code file invalidates ITSELF;
+//!     a changed CONCEPT SET invalidates ALL usage.
+//!
+//! `concepts_sig` (names + tables, hashed) detects the second case. Editing a
+//! service file re-reads one file; editing schema.prisma re-runs the usage
+//! pass everywhere, because every cached answer about "who uses what" was
+//! computed against a set that no longer exists.
+//!
+//! ## Extractor laws (see VALIDATION.md — every one came from a wrong answer)
+//!
+//! Declarations: Prisma, Django, pydantic/SQLModel (`table=True` declares
+//! storage regardless of base names), SQLAlchemy, CREATE TABLE from ALL
+//! sources — with comment lines stripped and a `(`/AS follower required,
+//! because prose about schema is not schema (a doc comment and a log message
+//! each minted phantom concepts that defeated the guard).
 
-use crate::model::{Concept, Index};
+use crate::model::{Concept, DeclFragment, FileFacts, Index};
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use std::collections::BTreeMap;
 use std::path::Path;
 use walkdir::WalkDir;
+
+/// Bump to invalidate every cached extraction (a changed extractor is a
+/// changed compiler — old object files are lies).
+pub const EXTRACTOR_VERSION: u32 = 5;
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
@@ -30,34 +49,26 @@ fn skip_dir(e: &walkdir::DirEntry) -> bool {
         && e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false)
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub fn scan(root: &Path) -> Index {
+    scan_with_prior(root, crate::store::load_raw(root))
+}
+
+pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
+    let prior = prior.filter(|p| p.extractor_version == EXTRACTOR_VERSION);
     let mut idx = Index {
         root: root.display().to_string(),
+        extractor_version: EXTRACTOR_VERSION,
         ..Default::default()
     };
 
-    // collect source files once
-    let files: Vec<std::path::PathBuf> = WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| !skip_dir(e))
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| SRC_EXTS.contains(&x))
-                .unwrap_or(false)
-        })
-        .filter(|e| e.metadata().map(|m| m.len() <= MAX_FILE_BYTES).unwrap_or(false))
-        .map(|e| e.into_path())
-        .collect();
-
-    // ── pass 0: architect.toml — the project's OWN ontology and decisions ───
-    // Aliases ("episode = stories") answer the question a name search cannot:
-    // the concept exists under a different name. Decisions carry the WHY.
-    // Both are DECLARED-tier: written by whoever owns the architecture,
-    // reviewable in a diff — never inferred.
+    // ── ontology + decisions: always re-read (one small file) ───────────────
     if let Ok(t) = std::fs::read_to_string(root.join("architect.toml")) {
         if let Ok(v) = t.parse::<toml::Value>() {
             if let Some(al) = v.get("aliases").and_then(|a| a.as_table()) {
@@ -70,12 +81,18 @@ pub fn scan(root: &Path) -> Index {
             if let Some(ds) = v.get("decision").and_then(|d| d.as_array()) {
                 for d in ds {
                     let g = |k: &str| d.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let arr = |k: &str| d.get(k).and_then(|x| x.as_array()).map(|a| {
-                        a.iter().filter_map(|s| s.as_str().map(String::from)).collect()
-                    }).unwrap_or_default();
+                    let arr = |k: &str| {
+                        d.get(k)
+                            .and_then(|x| x.as_array())
+                            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                            .unwrap_or_default()
+                    };
                     idx.decisions.push(crate::model::Decision {
-                        id: g("id"), decision: g("decision"), because: g("because"),
-                        rejected: arr("rejected"), links: arr("links"),
+                        id: g("id"),
+                        decision: g("decision"),
+                        because: g("because"),
+                        rejected: arr("rejected"),
+                        links: arr("links"),
                     });
                 }
             }
@@ -83,42 +100,120 @@ pub fn scan(root: &Path) -> Index {
         }
     }
 
-    // ── pass 1: declarations (sequential — order-stable) ────────────────────
-    // Every file is read and checked for CREATE TABLE, not just .sql files:
-    // real systems declare schema inside string literals (the source system
-    // carries 110 CREATE TABLEs in Rust strings — a .sql-only extractor saw
-    // 92 of ~200 concepts). Cheap containment precheck before the regex.
-    for p in &files {
-        let name = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
-        let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
-        let Ok(text) = std::fs::read_to_string(p) else { continue };
-        if ext == "prisma" {
-            extract_prisma(&mut idx, root, p, &text);
-        }
-        if name == "models.py" && text.contains("models.Model") {
-            extract_django(&mut idx, root, p, &text);
-        }
-        // pydantic models are concept declarations too (API contracts) —
-        // found the hard way: a real service's models.py held only
-        // pydantic.BaseModel classes and produced zero concepts.
-        if ext == "py" && (text.contains("BaseModel") || text.contains("SQLModel")) {
-            extract_pydantic(&mut idx, root, p, &text);
-        }
-        // SQLAlchemy: class X(db.Model) / __tablename__ — law from validation:
-        // redash declares ~30 models this way and v0 saw 4.
-        if ext == "py" && (text.contains("db.Model") || text.contains("__tablename__")) {
-            extract_sqlalchemy(&mut idx, root, p, &text);
-        }
-        if text.contains("CREATE TABLE") || text.contains("create table") {
-            extract_sql(&mut idx, root, p, &text);
+    // ── file inventory with metadata ────────────────────────────────────────
+    struct F {
+        path: std::path::PathBuf,
+        rel: String,
+        size: u64,
+        mtime_ms: i64,
+    }
+    let files: Vec<F> = WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !skip_dir(e))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| SRC_EXTS.contains(&x))
+                .unwrap_or(false)
+        })
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            if m.len() > MAX_FILE_BYTES {
+                return None;
+            }
+            let mtime_ms = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let rel = e.path().strip_prefix(root).unwrap_or(e.path()).display().to_string();
+            Some(F { path: e.into_path(), rel, size: m.len(), mtime_ms })
+        })
+        .collect();
+    idx.files_scanned = files.len();
+
+    let prior_facts: BTreeMap<String, FileFacts> =
+        prior.as_ref().map(|p| p.file_facts.clone()).unwrap_or_default();
+    let unchanged = |f: &F| {
+        prior_facts
+            .get(&f.rel)
+            .map(|pf| pf.size == f.size && pf.mtime_ms == f.mtime_ms)
+            .unwrap_or(false)
+    };
+
+    // ── pass 1: DECLARATIONS — changed files re-extracted, rest from cache ──
+    let decl_results: Vec<(String, u64, i64, Vec<DeclFragment>, Vec<String>)> = files
+        .par_iter()
+        .map(|f| {
+            if unchanged(f) {
+                let pf = &prior_facts[&f.rel];
+                return (f.rel.clone(), f.size, f.mtime_ms, pf.decls.clone(), pf.decl_kinds.clone());
+            }
+            let Ok(text) = std::fs::read_to_string(&f.path) else {
+                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new());
+            };
+            let (decls, kinds) = extract_declarations(&f.path, &text);
+            (f.rel.clone(), f.size, f.mtime_ms, decls, kinds)
+        })
+        .collect();
+
+    for (rel, size, mtime_ms, decls, decl_kinds) in &decl_results {
+        idx.file_facts.insert(
+            rel.clone(),
+            FileFacts {
+                size: *size,
+                mtime_ms: *mtime_ms,
+                decls: decls.clone(),
+                usage: Vec::new(),
+                decl_kinds: decl_kinds.clone(),
+            },
+        );
+        for k in decl_kinds {
+            idx.declaration_files.push((rel.clone(), k.clone()));
         }
     }
 
-    // ── merge: declarations that share a TABLE are one concept ──────────────
-    // Law from validation: umami declares `website` in SQL migrations and
-    // `Website` in Prisma mapped to the same table — one concept, counted
-    // twice, reported as competing with itself. SQL-only declarations whose
-    // name equals another concept's table mapping fold into that concept.
+    // ── assemble concepts from fragments (always fresh — cheap) ─────────────
+    let now = now_ms();
+    for (rel, ff) in &idx.file_facts.clone() {
+        for d in &ff.decls {
+            let c = idx.concepts.entry(d.name.clone()).or_insert_with(|| Concept {
+                name: d.name.clone(),
+                first_seen_ms: now,
+                ..Default::default()
+            });
+            c.declared_in.push((rel.clone(), d.kind.clone()));
+            if c.fields.is_empty() {
+                c.fields = d.fields.clone();
+            }
+            if c.relations.is_empty() {
+                c.relations = d.relations.clone();
+            }
+            if c.table.is_none() {
+                c.table = d.table.clone();
+            }
+        }
+    }
+    // Provenance: FIRST SEEN survives rescans — that is what makes this
+    // memory instead of cache. last_verified is this assembly.
+    if let Some(pr) = &prior {
+        for (name, c) in idx.concepts.iter_mut() {
+            if let Some(old) = pr.concepts.get(name) {
+                if old.first_seen_ms > 0 {
+                    c.first_seen_ms = old.first_seen_ms;
+                }
+            }
+        }
+    }
+    for c in idx.concepts.values_mut() {
+        c.last_verified_ms = now;
+    }
+
+    // Merge law: declarations sharing a TABLE are one concept.
     let merges: Vec<(String, String)> = idx
         .concepts
         .iter()
@@ -128,11 +223,7 @@ pub fn scan(root: &Path) -> Index {
                 .iter()
                 .find(|(n2, c2)| {
                     *n2 != name
-                        && c2
-                            .table
-                            .as_deref()
-                            .map(|t| t.eq_ignore_ascii_case(name))
-                            .unwrap_or(false)
+                        && c2.table.as_deref().map(|t| t.eq_ignore_ascii_case(name)).unwrap_or(false)
                 })
                 .map(|(target, _)| (name.clone(), target.clone()))
         })
@@ -141,20 +232,41 @@ pub fn scan(root: &Path) -> Index {
         if let Some(d) = idx.concepts.remove(&dupe) {
             let t = idx.concepts.get_mut(&target).unwrap();
             t.declared_in.extend(d.declared_in);
+            if d.first_seen_ms > 0 {
+                t.first_seen_ms = t.first_seen_ms.min(d.first_seen_ms);
+            }
             if t.table.is_none() {
                 t.table = d.table;
             }
         }
     }
 
-    // ── pass 2: usage. Matchers built ONCE, files scanned in parallel. ──────
+    // ── concept-set signature: the dependency edge schema → usage ───────────
+    let mut sig_src: Vec<String> = idx
+        .concepts
+        .iter()
+        .map(|(n, c)| format!("{n}:{}", c.table.as_deref().unwrap_or("")))
+        .collect();
+    sig_src.sort();
+    idx.concepts_sig = {
+        // FNV-1a — change detection, not cryptography
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in sig_src.join("|").bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        format!("{h:x}")
+    };
+    let usage_cache_valid =
+        prior.as_ref().map(|p| p.concepts_sig == idx.concepts_sig).unwrap_or(false);
+
+    // ── pass 2: USAGE — matchers built once from the assembled set ──────────
     struct Matcher {
         concept: String,
-        /// cheap containment precheck before any regex
-        needle_client: String, // "prisma-ish .name."
+        needle_client: String,
         client_re: Regex,
-        needle_django: String, // "Name.objects."
-        needle_construct: String, // "Name(" — construction is usage
+        needle_django: String,
+        needle_construct: String,
         construct_re: Regex,
         table_re: Option<Regex>,
         needle_table: Option<String>,
@@ -167,11 +279,9 @@ pub fn scan(root: &Path) -> Index {
             if let Some(c) = lname.get_mut(0..1) {
                 c.make_ascii_lowercase();
             }
-            let client_re = Regex::new(&format!(
-                r"\b(?:prisma|db|tx|client)\.{}\.",
-                regex::escape(&lname)
-            ))
-            .unwrap();
+            let client_re =
+                Regex::new(&format!(r"\b(?:prisma|db|tx|client)\.{}\.", regex::escape(&lname)))
+                    .unwrap();
             let table = idx.concepts[name].table.clone();
             let table_re = table.as_ref().map(|t| {
                 RegexBuilder::new(&format!(
@@ -195,57 +305,55 @@ pub fn scan(root: &Path) -> Index {
         })
         .collect();
 
-    let usage: Vec<(String, String, String)> = files
+    let usage_results: Vec<(String, Vec<(String, String)>)> = files
         .par_iter()
-        .filter(|p| p.extension().and_then(|x| x.to_str()) != Some("prisma"))
-        .flat_map(|p| {
-            let Ok(text) = std::fs::read_to_string(p) else {
-                return Vec::new();
+        .filter(|f| f.path.extension().and_then(|x| x.to_str()) != Some("prisma"))
+        .map(|f| {
+            // The compiler rule: reuse cached usage ONLY if this file is
+            // unchanged AND the concept set it was computed against is the
+            // one that exists now.
+            if usage_cache_valid && unchanged(f) {
+                return (f.rel.clone(), prior_facts[&f.rel].usage.clone());
+            }
+            let Ok(text) = std::fs::read_to_string(&f.path) else {
+                return (f.rel.clone(), Vec::new());
             };
             let lower = text.to_lowercase();
-            let rel = p
-                .strip_prefix(root)
-                .unwrap_or(p)
-                .display()
-                .to_string();
             let mut hits = Vec::new();
             for m in &matchers {
                 if text.contains(&m.needle_client) && m.client_re.is_match(&text) {
-                    hits.push((m.concept.clone(), rel.clone(), "orm-client".to_string()));
+                    hits.push((m.concept.clone(), "orm-client".to_string()));
                 }
                 if text.contains(&m.needle_django) {
-                    hits.push((m.concept.clone(), rel.clone(), "django-orm".to_string()));
+                    hits.push((m.concept.clone(), "django-orm".to_string()));
                 }
-                // construction only counts for real model names (len>=5 cuts
-                // collision-prone short words); it is still labelled with its
-                // own kind so a consumer can weigh it below orm access.
                 if m.concept.len() >= 5
                     && text.contains(&m.needle_construct)
                     && m.construct_re.is_match(&text)
                 {
-                    hits.push((m.concept.clone(), rel.clone(), "constructed".to_string()));
+                    hits.push((m.concept.clone(), "constructed".to_string()));
                 }
                 if let (Some(needle), Some(re)) = (&m.needle_table, &m.table_re) {
                     if lower.contains(needle.as_str()) && re.is_match(&lower) {
-                        hits.push((m.concept.clone(), rel.clone(), "raw-sql".to_string()));
+                        hits.push((m.concept.clone(), "raw-sql".to_string()));
                     }
                 }
             }
-            hits
+            (f.rel.clone(), hits)
         })
         .collect();
 
-    idx.files_scanned = files.len();
-    for (concept, file, kind) in usage {
-        // a declaration file "using" its own concept is not usage
-        if idx.concepts[&concept]
-            .declared_in
-            .iter()
-            .any(|(f, _)| *f == file)
-        {
-            continue;
+    for (rel, hits) in usage_results {
+        if let Some(ff) = idx.file_facts.get_mut(&rel) {
+            ff.usage = hits.clone();
         }
-        idx.concepts.get_mut(&concept).unwrap().usage.push((file, kind));
+        for (concept, kind) in hits {
+            let Some(c) = idx.concepts.get_mut(&concept) else { continue };
+            if c.declared_in.iter().any(|(f, _)| *f == rel) {
+                continue; // a declaration file "using" its own concept is not usage
+            }
+            c.usage.push((rel.clone(), kind));
+        }
     }
     for c in idx.concepts.values_mut() {
         c.usage.sort();
@@ -254,20 +362,58 @@ pub fn scan(root: &Path) -> Index {
     idx
 }
 
-fn concept_entry<'a>(concepts: &'a mut BTreeMap<String, Concept>, name: &str) -> &'a mut Concept {
-    concepts.entry(name.to_string()).or_insert_with(|| Concept {
-        name: name.to_string(),
-        ..Default::default()
-    })
+// ── per-file declaration extraction (pure) ───────────────────────────────────
+
+fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
+    let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+    let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+    let mut decls = Vec::new();
+    let mut kinds = Vec::new();
+
+    if ext == "prisma" {
+        extract_prisma(text, &mut decls);
+        if !decls.is_empty() {
+            kinds.push("prisma".into());
+        }
+    }
+    if name == "models.py" && text.contains("models.Model") {
+        let before = decls.len();
+        extract_django(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("django".into());
+        }
+    }
+    if ext == "py"
+        && (text.contains("BaseModel") || text.contains("SQLModel") || text.contains("table=True"))
+    {
+        let before = decls.len();
+        extract_pydantic(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("pydantic".into());
+        }
+    }
+    if ext == "py" && (text.contains("db.Model") || text.contains("__tablename__")) {
+        let before = decls.len();
+        extract_sqlalchemy(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("sqlalchemy".into());
+        }
+    }
+    if text.contains("CREATE TABLE") || text.contains("create table") {
+        let before = decls.len();
+        extract_sql(ext == "sql", text, &mut decls);
+        if decls.len() > before {
+            kinds.push("sql".into());
+        }
+    }
+    (decls, kinds)
 }
 
 const PRISMA_SCALARS: &[&str] = &[
     "String", "Int", "BigInt", "Float", "Decimal", "Boolean", "DateTime", "Json", "Bytes",
 ];
 
-fn extract_prisma(idx: &mut Index, root: &Path, p: &Path, text: &str) {
-    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    idx.declaration_files.push((rel.clone(), "prisma".into()));
+fn extract_prisma(text: &str, out: &mut Vec<DeclFragment>) {
     let model_re = Regex::new(r"(?ms)^model\s+(\w+)\s*\{(.*?)^\}").unwrap();
     let map_re = Regex::new(r#"@@map\("([^"]+)"\)"#).unwrap();
     let field_re = Regex::new(r"^(\w+)\s+(\w+)").unwrap();
@@ -292,44 +438,39 @@ fn extract_prisma(idx: &mut Index, root: &Path, p: &Path, text: &str) {
         }
         relations.sort();
         relations.dedup();
-        let table = map_re
-            .captures(body)
-            .map(|m| m[1].to_string())
-            .unwrap_or_else(|| name.to_string());
-        let c = concept_entry(&mut idx.concepts, name);
-        c.declared_in.push((rel.clone(), "prisma".into()));
-        c.fields = fields;
-        c.relations = relations;
-        c.table = Some(table);
+        let table =
+            map_re.captures(body).map(|m| m[1].to_string()).unwrap_or_else(|| name.to_string());
+        out.push(DeclFragment {
+            name: name.to_string(),
+            kind: "prisma".into(),
+            fields,
+            relations,
+            table: Some(table),
+        });
     }
     let enum_re = Regex::new(r"(?m)^enum\s+(\w+)\s*\{").unwrap();
     for cap in enum_re.captures_iter(text) {
-        let c = concept_entry(&mut idx.concepts, &cap[1]);
-        c.declared_in.push((rel.clone(), "prisma-enum".into()));
+        out.push(DeclFragment {
+            name: cap[1].to_string(),
+            kind: "prisma-enum".into(),
+            ..Default::default()
+        });
     }
 }
 
-fn extract_django(idx: &mut Index, root: &Path, p: &Path, text: &str) {
-    if !text.contains("models.Model") {
-        return;
-    }
-    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    idx.declaration_files.push((rel.clone(), "django".into()));
+fn extract_django(text: &str, out: &mut Vec<DeclFragment>) {
     let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\([^)]*Model[^)]*\)\s*:").unwrap();
     let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*models\.").unwrap();
     let rel_re =
         Regex::new(r#"models\.(?:ForeignKey|OneToOneField|ManyToManyField)\(\s*['"]?(\w+)"#)
             .unwrap();
+    let top_re = Regex::new(r"(?m)^\S").unwrap();
     let starts: Vec<(usize, String)> = class_re
         .captures_iter(text)
         .map(|c| (c.get(0).unwrap().end(), c[1].to_string()))
         .collect();
-    let top_re = Regex::new(r"(?m)^\S").unwrap();
     for (start, name) in starts {
-        let body_end = top_re
-            .find_at(text, start)
-            .map(|m| m.start())
-            .unwrap_or(text.len());
+        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
         let body = &text[start..body_end];
         let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
         let mut relations: Vec<String> = rel_re
@@ -339,23 +480,71 @@ fn extract_django(idx: &mut Index, root: &Path, p: &Path, text: &str) {
             .collect();
         relations.sort();
         relations.dedup();
-        let c = concept_entry(&mut idx.concepts, &name);
-        c.declared_in.push((rel.clone(), "django".into()));
-        c.fields = fields;
-        c.relations = relations;
-        // table stays None: Django's real table name needs the app label,
-        // and we do not guess.
+        // table stays None: Django's real table name needs the app label, and
+        // we do not guess.
+        out.push(DeclFragment { name, kind: "django".into(), fields, relations, table: None });
     }
 }
 
-fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
-    // For non-.sql sources, strip COMMENT lines before matching. Found the
-    // hard way: the source system's guard carries a doc comment reading
-    // "a patch proposing CREATE TABLE episodes is REJECTED" — the extractor
-    // minted a phantom `episodes` concept from the guard's own documentation,
-    // which then satisfied the guard's exact-name exemption and let the very
-    // table it documents rejecting through. Prose about schema is not schema.
-    let is_sql_file = p.extension().and_then(|x| x.to_str()) == Some("sql");
+fn extract_pydantic(text: &str, out: &mut Vec<DeclFragment>) {
+    // Bases captured raw and filtered in the loop: `class Item(ItemBase,
+    // table=True)` names neither BaseModel nor SQLModel, yet table=True IS
+    // the storage declaration (validation law 6).
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
+    let field_re = Regex::new(r"(?m)^    (\w+)\s*:").unwrap();
+    let top_re = Regex::new(r"(?m)^\S").unwrap();
+    let starts: Vec<(usize, String, String)> = class_re
+        .captures_iter(text)
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
+        .collect();
+    for (start, name, bases) in starts {
+        let is_table = bases.contains("table=True") || bases.contains("table = True");
+        if !is_table && !bases.contains("BaseModel") && !bases.contains("SQLModel") {
+            continue;
+        }
+        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
+        let body = &text[start..body_end];
+        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let kind = if is_table || bases.contains("SQLModel") { "sqlmodel" } else { "pydantic" };
+        // SQLModel's default table name is the lowercased class name — a
+        // framework-documented rule, not a guess. Contracts get None.
+        let table = if is_table { Some(name.to_lowercase()) } else { None };
+        out.push(DeclFragment { name, kind: kind.into(), fields, relations: Vec::new(), table });
+    }
+}
+
+fn extract_sqlalchemy(text: &str, out: &mut Vec<DeclFragment>) {
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
+    let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
+    let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*(?:db\.)?Column\(").unwrap();
+    let top_re = Regex::new(r"(?m)^\S").unwrap();
+    let starts: Vec<(usize, String, String)> = class_re
+        .captures_iter(text)
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
+        .collect();
+    for (start, name, bases) in starts {
+        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
+        let body = &text[start..body_end];
+        let tname = tname_re.captures(body).map(|m| m[1].to_string());
+        // a SQLAlchemy model states a table OR inherits db.Model; a bare
+        // "Base" parent without __tablename__ is too ambiguous to assert.
+        if tname.is_none() && !bases.contains("db.Model") {
+            continue;
+        }
+        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        out.push(DeclFragment {
+            name,
+            kind: "sqlalchemy".into(),
+            fields,
+            relations: Vec::new(),
+            table: tname,
+        });
+    }
+}
+
+fn extract_sql(is_sql_file: bool, text: &str, out: &mut Vec<DeclFragment>) {
+    // Comment lines stripped for non-.sql sources (law 3) and a `(`/AS
+    // follower required (law 8): prose about schema is not schema.
     let filtered;
     let text: &str = if is_sql_file {
         text
@@ -370,112 +559,20 @@ fn extract_sql(idx: &mut Index, root: &Path, p: &Path, text: &str) {
             .join("\n");
         &filtered
     };
-    // A real CREATE TABLE is followed by a column list `(` (or AS SELECT).
-    // Law from validation: `logger.debug("CREATE TABLE query: %s", ...)` — a
-    // LOG MESSAGE — minted a phantom `query` concept whose fake usage then
-    // outranked the real Query model. Requiring the follower kills log/prose
-    // strings structurally, with no blacklist to maintain.
     let re = RegexBuilder::new(
         r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)["'`]?\s*(?:\(|as\b)"#,
     )
     .case_insensitive(true)
     .build()
     .unwrap();
-    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    let mut any = false;
     for cap in re.captures_iter(text) {
-        any = true;
         let name = cap[1].to_string();
-        let c = concept_entry(&mut idx.concepts, &name);
-        c.declared_in.push((rel.clone(), "sql".into()));
-        c.table = Some(name);
-    }
-    if any {
-        idx.declaration_files.push((rel, "sql".into()));
-    }
-}
-
-fn extract_pydantic(idx: &mut Index, root: &Path, p: &Path, text: &str) {
-    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    // BaseModel (pydantic) and SQLModel both declare concepts. SQLModel with
-    // table=True is STORAGE; its default table name is the lowercased class
-    // name — a framework-documented rule, not a guess.
-    // Bases are captured raw and filtered in the loop: `class Item(ItemBase,
-    // table=True)` names neither BaseModel nor SQLModel, yet table=True IS the
-    // storage declaration — law from validation, where the template's real
-    // storage models were invisible while their API contracts were indexed.
-    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
-    let field_re = Regex::new(r"(?m)^    (\w+)\s*:").unwrap();
-    let top_re = Regex::new(r"(?m)^\S").unwrap();
-    let mut any = false;
-    let starts: Vec<(usize, String, String)> = class_re
-        .captures_iter(text)
-        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
-        .collect();
-    for (start, name, bases) in starts {
-        let is_table = bases.contains("table=True") || bases.contains("table = True");
-        if !is_table && !bases.contains("BaseModel") && !bases.contains("SQLModel") {
-            continue;
-        }
-        any = true;
-        let body_end = top_re
-            .find_at(text, start)
-            .map(|m| m.start())
-            .unwrap_or(text.len());
-        let body = &text[start..body_end];
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
-        let kind = if is_table || bases.contains("SQLModel") { "sqlmodel" } else { "pydantic" };
-        let c = concept_entry(&mut idx.concepts, &name);
-        c.declared_in.push((rel.clone(), kind.into()));
-        if c.fields.is_empty() {
-            c.fields = fields;
-        }
-        if is_table && c.table.is_none() {
-            c.table = Some(name.to_lowercase());
-        }
-        // otherwise table stays None: an API contract is not storage, and
-        // inventing a table name for it would be a fabricated fact.
-    }
-    if any {
-        idx.declaration_files.push((rel, "pydantic".into()));
-    }
-}
-
-fn extract_sqlalchemy(idx: &mut Index, root: &Path, p: &Path, text: &str) {
-    let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
-    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
-    let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
-    let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*(?:db\.)?Column\(").unwrap();
-    let top_re = Regex::new(r"(?m)^\S").unwrap();
-    let mut any = false;
-    let starts: Vec<(usize, String, String)> = class_re
-        .captures_iter(text)
-        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
-        .collect();
-    for (start, name, bases) in starts {
-        let body_end = top_re
-            .find_at(text, start)
-            .map(|m| m.start())
-            .unwrap_or(text.len());
-        let body = &text[start..body_end];
-        let tname = tname_re.captures(body).map(|m| m[1].to_string());
-        // a class is a SQLAlchemy model if it states a table OR inherits db.Model;
-        // bases named just "Base" are too ambiguous without __tablename__.
-        if tname.is_none() && !bases.contains("db.Model") {
-            continue;
-        }
-        any = true;
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
-        let c = concept_entry(&mut idx.concepts, &name);
-        c.declared_in.push((rel.clone(), "sqlalchemy".into()));
-        if c.fields.is_empty() {
-            c.fields = fields;
-        }
-        if c.table.is_none() {
-            c.table = tname; // only what the class itself states — no guessed names
-        }
-    }
-    if any {
-        idx.declaration_files.push((rel, "sqlalchemy".into()));
+        out.push(DeclFragment {
+            name: name.clone(),
+            kind: "sql".into(),
+            fields: Vec::new(),
+            relations: Vec::new(),
+            table: Some(name),
+        });
     }
 }

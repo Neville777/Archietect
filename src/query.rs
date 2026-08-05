@@ -60,6 +60,10 @@ pub fn concept(idx: &Index, term: &str) -> Value {
             "concept": term,
             "verdict": if used { "ACTIVE" } else { "DECLARED_ONLY" },
             "canonical": canon,
+            // memory, not cache: when this concept FIRST entered the index,
+            // and when its evidence was last re-verified against the tree
+            "first_seen_ms": c.first_seen_ms,
+            "last_verified_ms": c.last_verified_ms,
             "table": c.table,
             "fields": c.fields.iter().take(15).collect::<Vec<_>>(),
             "relations": c.relations,

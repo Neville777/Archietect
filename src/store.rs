@@ -29,23 +29,16 @@ pub fn save(idx: &Index, root: &Path) -> Result<std::path::PathBuf> {
     Ok(db_path)
 }
 
-pub fn load(root: &Path) -> Option<Index> {
+/// Load whatever index is stored, with NO staleness judgement — the
+/// incremental scanner makes that call per file (size+mtime+extractor
+/// version), which replaced the old whole-index invalidation: one touched
+/// file used to throw away everything.
+pub fn load_raw(root: &Path) -> Option<Index> {
     let db_path = root.join("architect.db");
     if !db_path.exists() {
         return None;
     }
     let conn = Connection::open(&db_path).ok()?;
-    let written: i64 = conn
-        .query_row("SELECT v FROM meta WHERE k='written_ms'", [], |r| {
-            r.get::<_, String>(0)
-        })
-        .ok()?
-        .parse()
-        .ok()?;
-    // staleness: any newer source file invalidates the index
-    if newest_mtime_ms(root) > written {
-        return None;
-    }
     let doc: String = conn
         .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get(0))
         .ok()?;
@@ -59,24 +52,3 @@ fn chrono_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn newest_mtime_ms(root: &Path) -> i64 {
-    use walkdir::WalkDir;
-    WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| {
-            !(e.file_type().is_dir()
-                && matches!(
-                    e.file_name().to_str(),
-                    Some("node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__")
-                ))
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| e.file_name().to_str() != Some("architect.db"))
-        .filter_map(|e| e.metadata().ok())
-        .filter_map(|m| m.modified().ok())
-        .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .max()
-        .unwrap_or(i64::MAX) // unreadable mtimes → treat as stale, rescan
-}
