@@ -167,3 +167,16 @@ true, and the month found that out at the cheapest possible price.
   a known concept name is an exact key EVERYWHERE; term search is for human
   input only. Baseline table recorded (12 repos: cold 56ms–2.5s, warm
   15–369ms, db 36K–1.8M).
+- 2026-08-05 (day 1, owner's first real-world use) — owner ran it on a WORK
+  repo (Coseke onboard-v1) and filed the first outside bug report: bare
+  `architect` infers root but every subcommand demanded --root. Fixed
+  git-style: ONE resolver before dispatch, --root optional everywhere.
+  The fix found two deeper bugs in sequence: (1) weak markers (Cargo.toml)
+  LIE in workspaces — resolver stopped at crates/titan_api and confidently
+  answered for one crate; strong markers (architect.db/.toml/.git) now beat
+  weak at any distance. (2) THE READ THAT WROTE: read_history opened
+  SQLite without an existence check, and SQLite creates on open — the
+  glance left 0-byte architect.db droppings wherever it ran, and each
+  dropping became a STRONG root marker poisoning discovery. Reads now open
+  SQLITE_OPEN_READ_ONLY; droppings cleaned. A read-path that writes
+  corrupts more than the principle — it corrupted navigation.

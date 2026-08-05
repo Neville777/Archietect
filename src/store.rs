@@ -35,7 +35,19 @@ pub fn append_events(root: &Path, events: &[(i64, String, String, String)]) -> R
 /// `users.rs` changed; this knows the Authentication ARCHITECTURE changed,
 /// when, and what the engine said about it at the time.
 pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<serde_json::Value> {
-    let Ok(conn) = Connection::open(root.join("architect.db")) else {
+    let db = root.join("architect.db");
+    // Existence check BEFORE open: SQLite CREATES a file on open, so an
+    // unchecked open turns this read into a write — the glance was leaving
+    // 0-byte architect.db droppings wherever it ran, and each dropping then
+    // became a STRONG root marker that corrupted git-style discovery from
+    // subdirectories. A read that writes poisons more than the principle.
+    if !db.exists() {
+        return Vec::new();
+    }
+    let Ok(conn) = Connection::open_with_flags(
+        &db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) else {
         return Vec::new();
     };
     let Ok(mut stmt) =
@@ -119,7 +131,11 @@ pub fn load_raw(root: &Path) -> Option<Index> {
     if !db_path.exists() {
         return None;
     }
-    let conn = Connection::open(&db_path).ok()?;
+    let conn = Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()?;
     let doc: String = conn
         .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get(0))
         .ok()?;
