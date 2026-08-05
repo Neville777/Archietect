@@ -37,14 +37,15 @@ use walkdir::WalkDir;
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 7;
+pub const EXTRACTOR_VERSION: u32 = 8;
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
 ];
-const SRC_EXTS: &[&str] =
-    &["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "rb", "prisma", "sql"];
+const SRC_EXTS: &[&str] = &[
+    "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "rb", "php", "ex", "exs", "prisma", "sql",
+];
 const MAX_FILE_BYTES: u64 = 2_000_000;
 
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
@@ -275,6 +276,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
         repo_re: Option<Regex>,
         rails_re: Option<Regex>,
         drizzle_re: Option<Regex>,
+        eloquent_re: Option<Regex>,
+        gorm_re: Option<Regex>,
         table_re: Option<Regex>,
         needle_table: Option<String>,
     }
@@ -312,6 +315,14 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                     regex::escape(name)
                 )).unwrap())
             } else { None };
+            let eloquent_re = if has_kind("eloquent") {
+                // Book::query(), Book::where(...) — PHP static access
+                Some(Regex::new(&format!(r"\b{}::", regex::escape(name))).unwrap())
+            } else { None };
+            let gorm_re = if has_kind("gorm") {
+                // &ArticleModel{...} / ArticleModel{} — Go struct literals
+                Some(Regex::new(&format!(r"\b{}\{{", regex::escape(name))).unwrap())
+            } else { None };
             let repo_re = if has_kind("typeorm") {
                 Some(Regex::new(&format!(
                     r"(?:Repository<{0}>|getRepository\({0}\)|InjectRepository\({0}\))",
@@ -339,6 +350,8 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 repo_re,
                 rails_re,
                 drizzle_re,
+                eloquent_re,
+                gorm_re,
                 needle_table: table.map(|t| t.to_lowercase()),
                 table_re,
             }
@@ -381,6 +394,16 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 if let Some(re) = &m.rails_re {
                     if text.contains(m.concept.as_str()) && re.is_match(&text) {
                         hits.push((m.concept.clone(), "rails-static".to_string()));
+                    }
+                }
+                if let Some(re) = &m.eloquent_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "eloquent-static".to_string()));
+                    }
+                }
+                if let Some(re) = &m.gorm_re {
+                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
+                        hits.push((m.concept.clone(), "gorm-literal".to_string()));
                     }
                 }
                 if let Some(re) = &m.drizzle_re {
@@ -485,6 +508,34 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
         extract_drizzle(text, &mut decls);
         if decls.len() > before {
             kinds.push("drizzle".into());
+        }
+    }
+    if ext == "php" && text.contains("class ") && (path_has_models_dir(path) || text.contains("extends Model")) {
+        let before = decls.len();
+        extract_eloquent(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("eloquent".into());
+        }
+    }
+    if ext == "java" && text.contains("@Entity") {
+        let before = decls.len();
+        extract_jpa(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("jpa".into());
+        }
+    }
+    if ext == "go" && text.contains("gorm") {
+        let before = decls.len();
+        extract_gorm(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("gorm".into());
+        }
+    }
+    if matches!(ext, "ex" | "exs") && text.contains("schema \"") {
+        let before = decls.len();
+        extract_ecto(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("ecto".into());
         }
     }
     if text.contains("CREATE TABLE") || text.contains("create table") {
@@ -787,4 +838,106 @@ fn extract_drizzle(text: &str, out: &mut Vec<DeclFragment>) {
             table: Some(cap[2].to_string()),
         });
     }
+}
+
+fn path_has_models_dir(p: &Path) -> bool {
+    // Laravel convention: models live under a Models/ directory. BookStack's
+    // Book extends a project base class (Entity), not Model directly — the
+    // directory convention IS the declaration convention in Laravel, and it
+    // is a stated framework norm, not a guess.
+    p.components().any(|c| c.as_os_str().to_str() == Some("Models"))
+}
+
+fn extract_eloquent(text: &str, out: &mut Vec<DeclFragment>) {
+    let class_re = Regex::new(r"(?m)^(?:abstract\s+)?class\s+(\w+)\s+extends\s+\w+").unwrap();
+    let table_re = Regex::new(r#"protected\s+\$table\s*=\s*['"](\w+)['"]"#).unwrap();
+    let rel_re = Regex::new(r"(?:hasMany|belongsTo|hasOne|belongsToMany|morphMany)\(\s*(\w+)::class").unwrap();
+    let table = table_re.captures(text).map(|m| m[1].to_string());
+    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in class_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        if name.ends_with("Controller") || name.ends_with("Test") || name.ends_with("Exception") {
+            continue;
+        }
+        out.push(DeclFragment {
+            name,
+            kind: "eloquent".into(),
+            fields: Vec::new(),
+            relations: relations.clone(),
+            // explicit $table read; the default is Laravel's pluralizer —
+            // an inflection engine we refuse to imitate (rails/mongoose rule)
+            table: table.clone(),
+        });
+    }
+}
+
+fn extract_jpa(text: &str, out: &mut Vec<DeclFragment>) {
+    // @Entity [@Table(name="owners")] public class Owner — table explicit
+    // when @Table names it; the default is a naming strategy, so None.
+    let ent_re = Regex::new(
+        r#"@Entity[\s\S]{0,300}?(?:@Table\s*\(\s*name\s*=\s*"(\w+)"[\s\S]{0,120}?)?(?:public\s+)?class\s+(\w+)"#,
+    )
+    .unwrap();
+    let rel_re = Regex::new(r"@(?:ManyToOne|OneToMany|OneToOne|ManyToMany)[\s\S]{0,200}?(?:private|protected)\s+(?:\w+<)?(\w+)>?\s+\w+").unwrap();
+    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string())
+        .filter(|r| !matches!(r.as_str(), "Set" | "List" | "Collection")).collect();
+    relations.sort();
+    relations.dedup();
+    for cap in ent_re.captures_iter(text) {
+        out.push(DeclFragment {
+            name: cap[2].to_string(),
+            kind: "jpa".into(),
+            fields: Vec::new(),
+            relations: relations.clone(),
+            table: cap.get(1).map(|m| m.as_str().to_string()),
+        });
+    }
+}
+
+fn extract_gorm(text: &str, out: &mut Vec<DeclFragment>) {
+    // type ArticleModel struct { ... `gorm:"..."` ... } — a struct is a gorm
+    // model when its body carries gorm tags. Table name is gorm's pluralizer:
+    // None (the standing refusal to imitate inflection engines).
+    let struct_re = Regex::new(r"(?ms)^type\s+(\w+)\s+struct\s*\{(.*?)^\}").unwrap();
+    let field_re = Regex::new(r"(?m)^\s+(\w+)\s+\S+").unwrap();
+    for cap in struct_re.captures_iter(text) {
+        let (name, body) = (&cap[1], &cap[2]);
+        if !body.contains("gorm:") {
+            continue;
+        }
+        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).take(30).collect();
+        out.push(DeclFragment {
+            name: name.to_string(),
+            kind: "gorm".into(),
+            fields,
+            relations: Vec::new(),
+            table: None,
+        });
+    }
+}
+
+fn extract_ecto(text: &str, out: &mut Vec<DeclFragment>) {
+    // defmodule Plausible.Site do ... schema "sites" do — the concept is the
+    // last module segment; the table is EXPLICIT in the schema macro.
+    let mod_re = Regex::new(r"(?m)^\s*defmodule\s+([\w.]+)\s+do").unwrap();
+    let schema_re = Regex::new(r#"(?m)^\s*schema\s+"(\w+)"\s+do"#).unwrap();
+    let rel_re = Regex::new(r"(?m)^\s*(?:belongs_to|has_many|has_one)\s+:(\w+)").unwrap();
+    let Some(sc) = schema_re.captures(text) else { return };
+    let table = sc[1].to_string();
+    let name = mod_re
+        .captures(text)
+        .map(|m| m[1].rsplit('.').next().unwrap_or(&m[1]).to_string())
+        .unwrap_or_else(|| table.clone());
+    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    relations.sort();
+    relations.dedup();
+    out.push(DeclFragment {
+        name,
+        kind: "ecto".into(),
+        fields: Vec::new(),
+        relations,
+        table: Some(table),
+    });
 }

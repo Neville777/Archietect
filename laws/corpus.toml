@@ -87,3 +87,27 @@ name = "lobe-chat"
 kind = "drizzle (pgTable), 149 concepts"
 validated = "2026-08-05"
 contributed = ["drizzle extractor (explicit table names)", "cross-dialect merge verified: sql migration folded into drizzle concept"]
+
+[[repo]]
+name = "BookStack"
+kind = "laravel/eloquent, 53 concepts"
+validated = "2026-08-05"
+contributed = ["eloquent extractor (Models/ dir convention — models extend project bases, not Model)", "eloquent-static usage matcher"]
+
+[[repo]]
+name = "spring-petclinic"
+kind = "spring/jpa"
+validated = "2026-08-05"
+contributed = ["jpa extractor (@Entity/@Table explicit names)"]
+
+[[repo]]
+name = "golang-gin-realworld-example-app"
+kind = "go/gorm"
+validated = "2026-08-05"
+contributed = ["gorm extractor (struct + gorm tags)", "gorm struct-literal usage matcher"]
+
+[[repo]]
+name = "plausible/analytics"
+kind = "elixir/ecto, 54 concepts"
+validated = "2026-08-05"
+contributed = ["ecto extractor (schema macro = explicit table)", "confirmed law-002 exemption semantics: CREATE TABLE of the canonical's own declared table is a migration, not a duplicate"]

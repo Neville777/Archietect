@@ -109,3 +109,15 @@ true, and the month found that out at the cheapest possible price.
   plus EIGHT *_events tables and SIX *_state tables, no governing decisions.
   Alphabetical truncation had buried the biggest family — presentation
   order is epistemics too.
+- 2026-08-05 (day 1, cont.) — recorded 10 family decisions in TITAN's
+  architect.toml (events/state/ledger/referral/history + snapshots/domain/
+  holon/transactions/access), evidence-checked: the deposit_events pair is
+  TWO CHAINS (naming asymmetry = deliberate debt), swarm_vitality_ledger
+  has NO WRITER (suspected orphan, recorded do-not-extend). The dormant
+  domain_*/holon_* truth is now in the ontology, out loud. Kernel check:
+  architecture:duplicate_concepts carries 97 belief_events — the drive
+  loop revised it every beat all day. Corpus crank: 4 ecosystems in one
+  pass (Eloquent/JPA/gorm/Ecto, corpus at 18). My guard-test expectation
+  was wrong once: CREATE TABLE of the canonical's own declared table is a
+  MIGRATION (law-002 exemption), not a duplicate — the engine was right
+  and the tester was not.
