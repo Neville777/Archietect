@@ -177,5 +177,17 @@ pub fn name_tokens(name: &str) -> Vec<String> {
 }
 
 pub fn names_concept(name: &str, term: &str) -> bool {
-    name_tokens(name).iter().any(|t| same_word(t, term))
+    // WHOLE-NAME match first. Found by dogfooding: `architect concept
+    // ScoreBreakdown` — the exact, correct, full name of a real struct —
+    // returned ABSENT ("building it is justified"), because this function
+    // only ever compared TOKENS of the name against the whole term. Neither
+    // "Score" nor "Breakdown" is close enough to "ScoreBreakdown" under
+    // same_word's length-bounded prefix rule, so a multi-token declared name
+    // could never match a query for its own literal spelling. A false
+    // ABSENT on the exact name is the single worst answer this engine can
+    // give — it looks like knowledge and it is a lie. same_word() already
+    // rejects unrelated words by shared-prefix bound (story vs history
+    // still fails, law-001 unaffected), so trying the whole name first only
+    // ADDS the exact-name case, it does not loosen anything.
+    same_word(name, term) || name_tokens(name).iter().any(|t| same_word(t, term))
 }

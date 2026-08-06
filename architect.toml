@@ -2,4 +2,11 @@
 
 # Directories to exclude from scanning. Paths are relative to this file's
 # location and can be listed with or without a trailing slash.
-exclude = ["validation", "target"]
+#
+# tests/fixtures is excluded deliberately, not incidentally: those
+# directories contain INTENTIONAL lexical collisions (Ghost/ghosts,
+# Query/query, Website/WebsiteEvent) as regression bait for the law suite.
+# Scanning them as real source made `architect duplicates` on this repo
+# report 3 fake duplicate-storage risks — found by dogfooding the tool on
+# itself the same day this exclude was missing.
+exclude = ["validation", "target", "tests/fixtures"]

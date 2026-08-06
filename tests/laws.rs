@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// against the registry — adding a law without extending the suite fails.
 const COVERED: &[&str] = &[
     "law-001", "law-002", "law-003", "law-004", "law-005",
-    "law-006", "law-007", "law-008", "law-009", "law-010", "law-011",
+    "law-006", "law-007", "law-008", "law-009", "law-010", "law-011", "law-012",
 ];
 
 fn fixture(law: &str) -> architect::model::Index {
@@ -184,4 +184,23 @@ fn law_011_ontology_before_name_search() {
         r["canonical"]
     );
     assert_eq!(r["resolved_via"], "alias");
+}
+
+#[test]
+fn law_012_whole_name_matches_self() {
+    // Found by dogfooding: `architect concept ScoreBreakdown` — the exact,
+    // correct, full name of a real live struct — returned ABSENT. A
+    // multi-token declared name must be findable by querying its own
+    // literal spelling, not only by a single token close enough to match.
+    let idx = fixture("law_012");
+    assert!(
+        idx.concepts.contains_key("ScoreBreakdown"),
+        "fixture must actually produce the multi-token concept, or this test proves nothing"
+    );
+    let r = query::concept(&idx, "ScoreBreakdown");
+    assert_eq!(
+        r["canonical"], "ScoreBreakdown",
+        "querying a concept's own exact name returned {} instead of finding it — a false ABSENT on the literal spelling",
+        r["verdict"]
+    );
 }
