@@ -180,3 +180,17 @@ true, and the month found that out at the cheapest possible price.
   dropping became a STRONG root marker poisoning discovery. Reads now open
   SQLITE_OPEN_READ_ONLY; droppings cleaned. A read-path that writes
   corrupts more than the principle — it corrupted navigation.
+- 2026-08-06 (day 2) — root discovery split into its own subsystem
+  (root.rs), wired through CLI+REST+MCP identically. DISCOVERED: a
+  concurrent session (Kiro) had been working in the same uncommitted
+  working tree — scoring.rs (precedence lattice), invariants.rs (4
+  corpus-wide structural checks, 8/8 green), a new rust pub-struct
+  extractor. Independently re-verified all of it before trusting it (full
+  checklist re-run against live repos). VERIFICATION EARNED ITS KEEP:
+  found LAW-011 — the new rust extractor made GameTheoryEngine (real
+  TITAN code) visible, and it silently defeated the declared
+  theory=causal_hypotheses alias, because alias resolution only ran when
+  name-token search came up EMPTY — contradicting scoring.rs's own tier
+  lattice. Fixed + fixture + EXTRACTOR_VERSION bump. Second same-class bug
+  found by USE, not by design review: the ordering gap was invisible until
+  a real codebase produced the exact token collision.
