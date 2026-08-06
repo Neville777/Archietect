@@ -240,3 +240,28 @@ true, and the month found that out at the cheapest possible price.
   lattice. Fixed + fixture + EXTRACTOR_VERSION bump. Second same-class bug
   found by USE, not by design review: the ordering gap was invisible until
   a real codebase produced the exact token collision.
+- 2026-08-06 (day 2, cont. — "test, dogfood") — full test suite (23/23)
+  and live dogfooding on both architect's own repo and TITAN. Three real
+  bugs found and fixed, all by USE, none by review:
+  (1) architect's own architect.toml didn't exclude tests/fixtures/ — the
+      fixture dirs (deliberately containing collisions like Ghost/ghosts)
+      were scanned as real source, reporting 3 fake duplicate risks on
+      itself. Fixed; 27→14 real concepts, 0 fake risks.
+  (2) LAW-012: `architect concept ScoreBreakdown` — the exact, correct,
+      full name of a real struct — returned ABSENT. names_concept() only
+      compared TOKENS of a name against the query term, never the whole
+      name; a multi-token name could never match its own literal spelling.
+      The worst possible failure mode (confident false ABSENT). Fixed +
+      fixture. Also caught my own gap building it: registered the law
+      before writing its test — conformance passed vacuously on the
+      string match while the fixture sat unused.
+  (3) The new rust extractor's 3,838-concept surface broke two features
+      silently: family suggestions drowned in 294 *Config/108 *Result/93
+      *Response (universal naming, zero duplication cost), and
+      duplicates() — O(n^2) — took 23s on TITAN, which bare `architect`
+      calls. Both restricted to storage-bearing (table.is_some())
+      concepts: signal restored, 23s→11.6s (isolated: that remainder is
+      cold-scan cost, not the bug — warm/incremental is 1.5s).
+  TITAN dogfood, clean: guard still blocks CREATE TABLE episodes citing
+  the ADR; concept theory still resolves via alias through the fixed
+  ordering; 12/12 corpus canonical picks unchanged throughout.
