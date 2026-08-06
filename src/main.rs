@@ -182,7 +182,34 @@ fn main() -> anyhow::Result<()> {
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
             let out = query::ci(&index_for(&root), &diff, strict);
             println!("{}", serde_json::to_string_pretty(&out)?);
-            if out["pass"] == false {
+
+            // Record the outcome. query::ci() itself stays read-only — REST
+            // or MCP could call the same query to CHECK a diff without
+            // meaning to record a decision — so the write belongs at this
+            // ONE call site, which is the actual commit-time decision point
+            // (the pre-commit hook). Closes the concrete gap found
+            // 2026-08-06: a real duplicate was prevented through this exact
+            // path and `architect history` had no way to say so.
+            let pass = out["pass"] == true;
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let concept = out["violations"]
+                .as_array()
+                .and_then(|v| v.first())
+                .and_then(|v| v["findings"].as_array())
+                .and_then(|f| f.first())
+                .and_then(|f| f["canonical"].as_str())
+                .unwrap_or("commit")
+                .to_string();
+            let kind = if pass { "ci_passed" } else { "ci_blocked" };
+            let _ = store::append_events(
+                &root,
+                &[(ts, kind.to_string(), concept, out.to_string())],
+            );
+
+            if !pass {
                 std::process::exit(1);
             }
             return Ok(());
