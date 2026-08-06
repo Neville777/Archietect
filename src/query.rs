@@ -766,7 +766,7 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
     //     specifically about STORAGE — another table, another migration —
     //     which is exactly what table.is_some() identifies.
     let mut fam: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for (name, c) in idx.concepts.iter().filter(|(_, c)| c.table.is_some()) {
+    for (name, _) in idx.concepts.iter().filter(|(_, c)| c.table.is_some()) {
         for tok in crate::model::name_tokens(name) {
             if tok.len() >= 5 {
                 fam.entry(tok.to_lowercase()).or_default().push(name.clone());

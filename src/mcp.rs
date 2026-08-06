@@ -87,15 +87,16 @@ fn tool_defs() -> Value {
     ])
 }
 
-fn index_for(root: &PathBuf) -> crate::model::Index {
-    // incremental scan — reuses cached per-file facts, honours the
-    // schema-invalidates-usage dependency rule
-    scan::scan(root)
-}
-
 pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    // Warm cache across the whole MCP session, same fix and same reasoning
+    // as rest.rs: an agent composing one architectural answer easily makes
+    // five tool calls (concept, owner, impact, decisions via plan) in a row.
+    // Without this, each one was a full cold scan — five times the cost for
+    // one question. stdin is read one line at a time, sequentially, so a
+    // plain HashMap needs no lock here either.
+    let mut cache: std::collections::HashMap<PathBuf, crate::model::Index> = std::collections::HashMap::new();
 
     for line in stdin.lock().lines() {
         let line = line?;
@@ -137,7 +138,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         Err((-32602i64, format!("root does not exist: {}", root.display())))
                     }
                     Some(root) => {
-                        let idx = index_for(&root);
+                        let idx = scan::scan_with_prior(&root, cache.remove(&root));
                         let out = match name {
                             "concept" => query::concept(&idx, args["term"].as_str().unwrap_or("")),
                             "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
@@ -149,6 +150,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "status" => query::status(&idx),
                             other => json!({ "error": format!("unknown tool {other}") }),
                         };
+                        cache.insert(root, idx);
                         Ok(json!({
                             "content": [ { "type": "text", "text": serde_json::to_string_pretty(&out)? } ],
                             "isError": false

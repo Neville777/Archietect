@@ -18,11 +18,31 @@
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
+//!
+//! ## The warm cache
+//!
+//! REST is a long-running SERVER, not a one-shot CLI invocation — but until
+//! this fix it behaved like the CLI called in a loop: every request called
+//! `scan::scan(&root)` fresh, with no memory of the previous request. Found
+//! by dogfooding: on TITAN (1,483 files) with no persisted architect.db,
+//! that meant every single HTTP request paid the full 11+ SECOND cold-scan
+//! cost, forever — a "server" that was never actually warm.
+//!
+//! The fix mirrors what the daemon already does, scoped to this process:
+//! keep the last built `Index` per root IN MEMORY and pass it as `prior` to
+//! `scan_with_prior`. The first request for a root still pays scan cost
+//! (once); every request after that is incremental — only files whose
+//! (size, mtime) changed get re-parsed, the same guarantee `architect
+//! watch` gives. This is a request-loop-local cache, not a second daemon:
+//! it holds no lock, needs no thread-safety, because `serve` is a single
+//! blocking loop over `incoming_requests()` — one request handled at a
+//! time, by construction.
 
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::{laws, query, root, scan, store};
+use crate::{laws, model::Index, query, root, scan, store};
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
 /// tiny: this API serves identifiers and short text, not arbitrary payloads.
@@ -60,6 +80,10 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     eprintln!("architect REST listening on http://127.0.0.1:{port} (read-only)");
 
+    // The warm cache. Single-threaded loop, one request at a time — plain
+    // HashMap, no lock needed.
+    let mut cache: HashMap<PathBuf, Index> = HashMap::new();
+
     for req in server.incoming_requests() {
         let (path, p) = params(req.url());
         let root = root::resolve(
@@ -86,34 +110,40 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                 json!({ "error": format!("root does not exist: {}", root.display()) })
             }
             (ep, Some(root)) => {
-                let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
-                match ep {
-                    "/concept" => query::concept(&scan::scan(&root), q),
-                    "/intent" => query::intent(&scan::scan(&root), q),
-                    "/impact" => query::impact(&scan::scan(&root), q),
-                    "/owner" => query::owner(&scan::scan(&root), q),
-                    "/guard" => query::guard(
-                        &scan::scan(&root),
-                        p.get("sql").map(|s| s.as_str()).unwrap_or(""),
-                    ),
-                    "/status" => query::status(&scan::scan(&root)),
-                    "/doctor" => query::doctor(&scan::scan(&root), &root),
-                    "/tour" => query::tour(&scan::scan(&root)),
-                    "/duplicates" => query::duplicates(&scan::scan(&root)),
-                    "/history" => json!({
-                        "events": store::read_history(
-                            &root,
-                            p.get("q").map(|s| s.as_str()),
-                            p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
-                        )
-                    }),
-                    other => json!({
-                        "error": format!("unknown endpoint {other}"),
-                        "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard",
-                                      "/status", "/doctor", "/tour", "/duplicates",
-                                      "/history", "/laws"],
-                    }),
-                }
+                // ONE scan per request, incremental against THIS process's
+                // last result for this root — not a fresh cold scan every
+                // time. Refreshed and re-stored before dispatch, so every
+                // endpoint below reads the same warm index.
+                let idx = scan::scan_with_prior(&root, cache.remove(&root));
+                let result = {
+                    let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
+                    match ep {
+                        "/concept" => query::concept(&idx, q),
+                        "/intent" => query::intent(&idx, q),
+                        "/impact" => query::impact(&idx, q),
+                        "/owner" => query::owner(&idx, q),
+                        "/guard" => query::guard(&idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
+                        "/status" => query::status(&idx),
+                        "/doctor" => query::doctor(&idx, &root),
+                        "/tour" => query::tour(&idx),
+                        "/duplicates" => query::duplicates(&idx),
+                        "/history" => json!({
+                            "events": store::read_history(
+                                &root,
+                                p.get("q").map(|s| s.as_str()),
+                                p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
+                            )
+                        }),
+                        other => json!({
+                            "error": format!("unknown endpoint {other}"),
+                            "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard",
+                                          "/status", "/doctor", "/tour", "/duplicates",
+                                          "/history", "/laws"],
+                        }),
+                    }
+                };
+                cache.insert(root, idx);
+                result
             }
         };
 
