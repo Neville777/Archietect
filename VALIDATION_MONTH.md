@@ -287,3 +287,37 @@ true, and the month found that out at the cheapest possible price.
   the setup instructions tell the owner to enable architectd@; without
   today's fix, that would have pegged a CPU core indefinitely on the
   first real edit. Full regression: 23/23 tests, 12/12 corpus unchanged.
+
+## The four-phase frame (recorded 2026-08-06, not enacted)
+
+1. **Stable engine** — everything fixed today (root resolution, watcher
+   feedback loop, cold-scan caches, ranking, aliases). Goal: "can this run
+   for months without surprising me?" Honest calibration: not "~95%
+   complete" — that's a guess. What's true is every KNOWN failure mode
+   found so far is fixed; unknown ones (multi-day uptime, concurrent
+   daemons, real edit patterns over weeks) are unmeasured, not "5% left."
+   Daemon uptime as of this entry: 1h14min. Real evidence, not proof.
+2. **Daily usage** — the point of the freeze; setup finally complete
+   2026-08-06 (MCP registered, daemon enabled, CI hook wired — all three
+   verified live, not just installed).
+3. **Archaeology** — "why five ledgers / who merged X / when did this
+   alias appear" answerable forever. THIS IS the decision-event recorder,
+   already queued and gated. Concrete gap found live today: the NEW CI
+   hook (installed this same day) does not write to the timeline at all —
+   grep confirms zero references to append_events/history in query::ci or
+   the pre-commit script. A real duplicate WAS prevented today (the
+   CREATE TABLE trades test) and `architect history` cannot say so. The
+   recorder needs to cover CI-block events, not only guard-outcomes and
+   merge-rulings as originally scoped.
+4. **Distribution** — already logged, not started, gated on 2-3 first.
+
+Design principle for when building resumes: QUIETER, not bigger. Sketch
+for the glance (facts only, no scores, no dashboard):
+  Repository / Changed today / Needs attention / Recent decision /
+  Next recommendation — all derivable from data that already exists
+  (timeline + decisions + duplicates) EXCEPT "duplicate prevented," which
+  needs the CI→history connection above.
+
+Finish line (matches the bar already stated at the top of this file,
+restated independently — same definition, arrived at twice): a repository
+feels strange without it running.
