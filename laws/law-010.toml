@@ -7,4 +7,11 @@ because = "TITAN declares theory = \"causal_hypotheses\" and got UNKNOWN: the ta
 discovered_in = ["TITAN"]
 introduced = "2026-08-05"
 status = "active"
+category = "philosophy"
+# philosophy — this is the companion to law-009 and equally irreducible.
+# The human types a term; the engine searches. The engine passes a canonical
+# name; the engine resolves exactly. That boundary — human input vs.
+# internal reference — is an architectural principle, not a parser rule or
+# ranking weight. It cannot be expressed as a constant or an invariant;
+# it governs the contract between layers of the system.
 regression = "tests/laws.rs::law_010_alias_exact_target (fixture: tests/fixtures/law_010)"

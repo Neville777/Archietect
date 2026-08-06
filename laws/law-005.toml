@@ -9,4 +9,10 @@ because = "umami declared `website` in SQL migrations and `Website` in Prisma ma
 discovered_in = ["umami"]
 introduced = "2026-08-05"
 status = "active"
+category = "constraint"
+# constraint — this is the storage identity constraint: one table → one
+# concept. It's now expressed as invariant I-1 in src/invariants.rs and
+# enforced against all corpus repos. The merge logic lives in scan.rs.
+# The regression fixture stays as the minimal reproduction; the invariant
+# tests catch this class of bug across all corpora.
 regression = "tests/laws.rs::law_005 (fixture: tests/fixtures/law_005)"

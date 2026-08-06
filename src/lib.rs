@@ -5,11 +5,14 @@
 //! a third. Everything here is deterministic and offline — AI tools consume
 //! this through MCP, they are never a component of it.
 
+pub mod invariants;
 pub mod laws;
 pub mod mcp;
 pub mod model;
 pub mod query;
+pub mod root;
 pub mod rest;
 pub mod scan;
+pub mod scoring;
 pub mod store;
 pub mod watch;

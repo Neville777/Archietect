@@ -37,7 +37,7 @@ use walkdir::WalkDir;
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 8;
+pub const EXTRACTOR_VERSION: u32 = 9; // +rust pub-struct extractor, +ontology-before-name-search (law-011)
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
@@ -51,6 +51,25 @@ const MAX_FILE_BYTES: u64 = 2_000_000;
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir()
         && e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false)
+}
+
+/// Returns true if the entry's root-relative path starts with any of the
+/// user-declared exclude prefixes (architect.toml `exclude = ["validation/",
+/// "fixtures/"]`). Trailing slash on a prefix is stripped before comparison
+/// so both `"validation"` and `"validation/"` work.
+fn skip_excluded(e: &walkdir::DirEntry, root: &Path, excludes: &[String]) -> bool {
+    if excludes.is_empty() {
+        return false;
+    }
+    let rel = match e.path().strip_prefix(root) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    let rel_str = rel.to_string_lossy();
+    excludes.iter().any(|ex| {
+        let ex = ex.trim_end_matches('/');
+        rel_str == ex || rel_str.starts_with(&format!("{ex}/"))
+    })
 }
 
 fn now_ms() -> i64 {
@@ -104,6 +123,27 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
         }
     }
 
+    // ── exclude list: paths declared in architect.toml [exclude] ────────────
+    // Loaded separately (after the toml block above) so the walker below can
+    // use it. Supports both string and array forms:
+    //   exclude = ["validation/", "fixtures/"]
+    let excludes: Vec<String> = std::fs::read_to_string(root.join("architect.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .and_then(|v| {
+            v.get("exclude").cloned().map(|e| match e {
+                toml::Value::Array(arr) => arr
+                    .into_iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect(),
+                toml::Value::String(s) => vec![s],
+                _ => vec![],
+            })
+        })
+        .unwrap_or_default();
+
+    idx.excludes = excludes.clone();
+
     // ── file inventory with metadata ────────────────────────────────────────
     struct F {
         path: std::path::PathBuf,
@@ -113,7 +153,7 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
     }
     let files: Vec<F> = WalkDir::new(root)
         .into_iter()
-        .filter_entry(|e| !skip_dir(e))
+        .filter_entry(|e| !skip_dir(e) && !skip_excluded(e, root, &excludes))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
@@ -453,6 +493,13 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
     let mut decls = Vec::new();
     let mut kinds = Vec::new();
 
+    if ext == "rs" {
+        let before = decls.len();
+        extract_rust(text, &mut decls);
+        if decls.len() > before {
+            kinds.push("rust".into());
+        }
+    }
     if ext == "prisma" {
         extract_prisma(text, &mut decls);
         if !decls.is_empty() {
@@ -940,4 +987,70 @@ fn extract_ecto(text: &str, out: &mut Vec<DeclFragment>) {
         relations,
         table: Some(table),
     });
+}
+
+fn extract_rust(text: &str, out: &mut Vec<DeclFragment>) {
+    // Extract `pub struct Name` declarations from Rust source.
+    // Only public structs — private structs are implementation detail, not
+    // architectural concepts visible to callers or agents.
+    // Fields: `pub field_name: Type` lines inside the struct body.
+    // No table (Rust structs have no storage by declaration).
+    //
+    // The brace-counting approach is deliberate over a regex: nested generics
+    // and where-clauses make balanced-brace matching far more reliable than
+    // any regex that tries to capture the whole body.
+    let struct_re = Regex::new(r"(?m)^pub struct\s+(\w+)").unwrap();
+    let field_re = Regex::new(r"(?m)^\s+pub\s+(\w+)\s*:").unwrap();
+
+    for cap in struct_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        // Skip derives and marker structs with no body (unit structs end in `;`
+        // or are tuple structs) — we only care about named-field structs.
+        let after = &text[cap.get(0).unwrap().end()..];
+        // Walk forward past whitespace and generic params to find `{` or `;`
+        let trimmed = after.trim_start_matches(|c: char| c != '{' && c != ';');
+        if !trimmed.starts_with('{') {
+            continue; // unit struct or tuple struct — skip
+        }
+
+        // Collect fields from the struct body (up to the matching `}`).
+        let mut fields = Vec::new();
+        let mut depth = 0usize;
+        let mut body_start = None;
+        let body_chars: Vec<char> = trimmed.chars().collect();
+        for (i, ch) in body_chars.iter().enumerate() {
+            match ch {
+                '{' => {
+                    if depth == 0 {
+                        body_start = Some(i + 1);
+                    }
+                    depth += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = body_start {
+                            let body: String = body_chars[start..i].iter().collect();
+                            for fc in field_re.captures_iter(&body) {
+                                let f = fc[1].to_string();
+                                if f != "_" {
+                                    fields.push(f);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        out.push(DeclFragment {
+            name,
+            kind: "rust".into(),
+            fields,
+            relations: Vec::new(),
+            table: None,
+        });
+    }
 }

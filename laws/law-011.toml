@@ -1,0 +1,11 @@
+# law-011 — part of Architect's language specification.
+
+id = "law-011"
+title = "Declared ontology is checked before name-token search runs at all"
+statement = "Alias resolution (architect.toml [aliases]) is attempted BEFORE name-token declared-concept search, unconditionally — not merely as a fallback when name search comes up empty."
+because = "The tier lattice in scoring.rs puts DeclaredOntology at tier 1, above ExactOrm/TokenOrm — but the control flow reached alias resolution only when name-token search returned nothing. TITAN declares theory = \"causal_hypotheses\" in architect.toml, while crates/titan_evolution independently declares a real struct GameTheoryEngine that token-matches \"theory\". The old order let GameTheoryEngine win outright and silently — no error, no signal the ontology was bypassed. An unrelated concept sharing one token with an alias key must never defeat the ontology."
+category = "ranking"
+discovered_in = ["TITAN"]
+introduced = "2026-08-06"
+status = "active"
+regression = "tests/laws.rs::law_011_ontology_before_name_search (fixture: tests/fixtures/law_011)"

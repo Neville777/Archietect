@@ -9,4 +9,9 @@ because = "'%sd%' matched USD and declared a broken pipeline healthy; 'story' cl
 discovered_in = ["TITAN", "local-sweep"]
 introduced = "2026-08-05"
 status = "active"
+category = "parser"
+# parser — this is a scanner correctness rule, not architectural philosophy.
+# The matching logic lives in model::names_concept / model::same_word.
+# The regression fixture prevents the substring bug from recurring; the
+# rule itself belongs with the tokeniser, not the law registry.
 regression = "tests/laws.rs::law_001 (fixture: tests/fixtures/law_001)"

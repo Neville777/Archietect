@@ -9,4 +9,8 @@ because = "The guard's own doc comment — 'a patch proposing CREATE TABLE episo
 discovered_in = ["TITAN"]
 introduced = "2026-08-05"
 status = "active"
+category = "parser"
+# parser — comment stripping is scanner/lexer correctness. The rule is
+# implemented in scan::extract_sql. The regression fixture is valuable;
+# the rule itself is not architectural philosophy.
 regression = "tests/laws.rs::law_003 (fixture: tests/fixtures/law_003)"

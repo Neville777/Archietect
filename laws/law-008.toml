@@ -9,4 +9,10 @@ because = "redash: logger.debug(\"CREATE TABLE query: %s\") — a log message �
 discovered_in = ["redash"]
 introduced = "2026-08-05"
 status = "active"
+category = "parser"
+# parser — the `(` follower requirement is a SQL lexer correctness rule.
+# It lives in scan::extract_sql. The regression fixture is valuable;
+# the rule belongs with the extractor, not the philosophical law registry.
+# Note: law-003 and law-008 are siblings — both enforce "prose ≠ schema"
+# at different syntactic positions (comment lines vs. string content).
 regression = "tests/laws.rs::law_008 (fixture: tests/fixtures/law_008)"

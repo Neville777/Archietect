@@ -25,6 +25,14 @@ pub struct Law {
     pub discovered_in: Vec<String>,
     pub introduced: String,
     pub status: String,
+    /// What kind of rule this is. Determines where it naturally lives
+    /// and how it should evolve:
+    ///   "parser"      — scanner/extractor correctness; belongs in scan.rs
+    ///   "ranking"     — canonical selection weight; belongs in scoring.rs
+    ///   "constraint"  — output property; expressed as invariant in invariants.rs
+    ///   "guard"       — guard exemption logic; belongs in query::guard
+    ///   "philosophy"  — irreducible architectural principle; stays here forever
+    pub category: String,
     pub regression: String,
     #[serde(default)]
     pub supersedes: Option<String>,
@@ -44,6 +52,7 @@ const LAW_FILES: &[&str] = &[
     include_str!("../laws/law-008.toml"),
     include_str!("../laws/law-009.toml"),
     include_str!("../laws/law-010.toml"),
+    include_str!("../laws/law-011.toml"),
 ];
 
 const CORPUS: &str = include_str!("../laws/corpus.toml");
@@ -72,6 +81,15 @@ pub fn registry_json() -> Value {
     let laws = all();
     let corpus: CorpusFile = toml::from_str(CORPUS).unwrap_or(CorpusFile { repo: vec![] });
     let active = laws.iter().filter(|l| l.status == "active").count();
+
+    // Category breakdown — makes the "laws are doing too many jobs" problem
+    // visible at a glance. Philosophy laws are the irreducible ones; the rest
+    // have a natural home in their respective implementation layer.
+    let mut by_category: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for l in laws.iter().filter(|l| l.status == "active") {
+        *by_category.entry(l.category.as_str()).or_insert(0) += 1;
+    }
+
     json!({
         "laws": laws.iter().map(|l| json!({
             "id": l.id,
@@ -81,17 +99,15 @@ pub fn registry_json() -> Value {
             "discovered_in": l.discovered_in,
             "introduced": l.introduced,
             "status": l.status,
+            "category": l.category,
             "supersedes": l.supersedes,
             "regression": l.regression,
         })).collect::<Vec<_>>(),
-        // The trust panel: countable facts only. No precision percentage is
-        // reported because none has been MEASURED against ground truth — a
-        // trust panel that includes an unmeasured number teaches readers to
-        // distrust the measured ones.
         "stats": {
             "laws_total": laws.len(),
             "laws_active": active,
             "laws_superseded": laws.len() - active,
+            "by_category": by_category,
             "corpus_repositories": corpus.repo.len(),
             "extractor_version": crate::scan::EXTRACTOR_VERSION,
         },
@@ -99,6 +115,6 @@ pub fn registry_json() -> Value {
             "name": r.name, "kind": r.kind, "validated": r.validated,
             "contributed": r.contributed,
         })).collect::<Vec<_>>(),
-        "note": "Laws are the engine's language specification, loaded from laws/*.toml (one source of truth for the CLI, the regression suite, and documentation). Each was distilled from a wrong answer on a real repository and is enforced forever by its named fixture. Laws are amended, not edited: superseded laws remain in the registry with their history.",
+        "note": "Laws are the engine's language specification, loaded from laws/*.toml. Each category indicates where the rule naturally lives: 'philosophy' laws are irreducible and stay here permanently; 'parser'/'ranking'/'constraint'/'guard' laws have a home in their implementation layer and their fixture is the regression record. Laws are amended, not edited.",
     })
 }

@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// against the registry — adding a law without extending the suite fails.
 const COVERED: &[&str] = &[
     "law-001", "law-002", "law-003", "law-004", "law-005",
-    "law-006", "law-007", "law-008", "law-009", "law-010",
+    "law-006", "law-007", "law-008", "law-009", "law-010", "law-011",
 ];
 
 fn fixture(law: &str) -> architect::model::Index {
@@ -161,6 +161,27 @@ fn law_010_alias_exact_target() {
         r["canonical"], "causal_hypotheses",
         "multi-token alias target must resolve by exact name, got: {}",
         r["verdict"]
+    );
+    assert_eq!(r["resolved_via"], "alias");
+}
+
+#[test]
+fn law_011_ontology_before_name_search() {
+    // Reproduces the exact TITAN collision: architect.toml declares
+    // theory = "causal_hypotheses", while an UNRELATED public struct
+    // (GameTheoryEngine) independently token-matches "theory". The ontology
+    // must win — an unrelated concept sharing one token with an alias key
+    // must never silently defeat the declared alias.
+    let idx = fixture("law_011");
+    assert!(
+        idx.concepts.contains_key("GameTheoryEngine"),
+        "fixture must actually produce the colliding concept, or this test proves nothing"
+    );
+    let r = query::concept(&idx, "theory");
+    assert_eq!(
+        r["canonical"], "causal_hypotheses",
+        "declared ontology was defeated by an unrelated name-token match, got: {}",
+        r["canonical"]
     );
     assert_eq!(r["resolved_via"], "alias");
 }

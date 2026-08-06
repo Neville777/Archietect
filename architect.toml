@@ -1,0 +1,5 @@
+# Architect ontology for the architect project itself.
+
+# Directories to exclude from scanning. Paths are relative to this file's
+# location and can be listed with or without a trailing slash.
+exclude = ["validation", "target"]

@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::{query, scan};
+use crate::{query, root, scan};
 
 fn tool_defs() -> Value {
     let root_prop = json!({
@@ -126,11 +126,11 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
             "tools/call" => {
                 let name = msg["params"]["name"].as_str().unwrap_or("");
                 let args = &msg["params"]["arguments"];
-                let root = args
-                    .get("root")
-                    .and_then(|r| r.as_str())
-                    .map(PathBuf::from)
-                    .or_else(|| default_root.clone());
+                let root = root::resolve(
+                    args.get("root").and_then(|r| r.as_str()).map(PathBuf::from)
+                        .or_else(|| default_root.clone()),
+                    &std::env::current_dir().unwrap_or_default(),
+                ).ok();
                 match root {
                     None => Err((-32602i64, "no repository root: pass `root` or start the server with --root".to_string())),
                     Some(root) if !root.exists() => {

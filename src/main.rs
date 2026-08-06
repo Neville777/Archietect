@@ -18,7 +18,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use architect::{mcp, model, query, rest, scan, store, watch};
+use architect::{mcp, model, query, rest, root, scan, store, watch};
 
 #[derive(Parser)]
 #[command(name = "architect", version, about)]
@@ -96,44 +96,6 @@ enum Cmd {
     Mcp,
 }
 
-/// STRONG markers identify a repository root unambiguously (architect's own
-/// files, or .git). WEAK markers (Cargo.toml, package.json...) identify a
-/// project but LIE inside workspaces: crates/titan_api has its own
-/// Cargo.toml, and stopping there answers questions about one crate while
-/// believing it answered for the repo — found by the very first from-a-
-/// subdirectory test. Strong beats weak at any distance; weak is only the
-/// fallback when nothing strong exists anywhere above.
-const STRONG_MARKERS: &[&str] = &["architect.db", "architect.toml", ".git"];
-const WEAK_MARKERS: &[&str] = &[
-    "Cargo.toml", "package.json", "composer.json", "manage.py", "mix.exs",
-    "go.mod", "Gemfile", "pom.xml",
-];
-
-/// Resolve the repository root ONCE: explicit --root wins; otherwise the
-/// NEAREST strong marker walking upward; otherwise the nearest weak marker;
-/// otherwise cwd (a bare directory still scans).
-fn resolve_root(cli_root: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(r) = cli_root {
-        anyhow::ensure!(r.exists(), "root does not exist: {}", r.display());
-        return Ok(r);
-    }
-    let cwd = std::env::current_dir()?;
-    let mut weak_hit: Option<PathBuf> = None;
-    let mut dir = cwd.clone();
-    loop {
-        if STRONG_MARKERS.iter().any(|m| dir.join(m).exists()) {
-            return Ok(dir);
-        }
-        if weak_hit.is_none() && WEAK_MARKERS.iter().any(|m| dir.join(m).exists()) {
-            weak_hit = Some(dir.clone());
-        }
-        match dir.parent() {
-            Some(p) => dir = p.to_path_buf(),
-            None => return Ok(weak_hit.unwrap_or(cwd)),
-        }
-    }
-}
-
 fn index_for(root: &PathBuf) -> model::Index {
     // Incremental: reuses per-file facts from architect.db where unchanged,
     // honours the schema-invalidates-usage dependency rule. Queries stay
@@ -151,6 +113,9 @@ fn print_glance(g: &serde_json::Value) {
         s["concepts"], s["declared_decisions"], s["duplicate_storage_risks"], s["ontology_warnings"]
     );
     println!("  index: {}", s["index"].as_str().unwrap_or("?"));
+    if let Some(ob) = g["onboarding"].as_str() {
+        println!("\n{ob}");
+    }
     let recent = g["recent_changes"].as_array().cloned().unwrap_or_default();
     println!("\nRecent architectural changes");
     if recent.is_empty() {
@@ -172,7 +137,7 @@ fn print_glance(g: &serde_json::Value) {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // ONE resolver, before dispatch — every handler receives the same root.
-    let root = resolve_root(cli.root)?;
+    let root = root::resolve_from_cwd(cli.root)?;
 
     // bare `architect` = the glance — the git-status of architecture
     let Some(cmd) = cli.cmd else {

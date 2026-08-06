@@ -9,4 +9,9 @@ because = "redash: a phantom lowercase `query` outranked the real Query model on
 discovered_in = ["redash"]
 introduced = "2026-08-05"
 status = "active"
+category = "ranking"
+# ranking — this principle is now encoded as scoring::ORM_DECLARED = 1_000
+# in src/scoring.rs, which structurally outranks any usage+relation score
+# on an exact-name tie. The regression fixture stays; the constant IS the
+# rule. Future ranking wrong answers tune a constant, not a new law.
 regression = "tests/laws.rs::law_007 (fixture: tests/fixtures/law_007)"

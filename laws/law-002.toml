@@ -9,4 +9,9 @@ because = "Fuzzy same_word exemption allowed CREATE TABLE ghosts while model Gho
 discovered_in = ["ghosttrack-monorepo"]
 introduced = "2026-08-05"
 status = "active"
+category = "guard"
+# guard — this is a correctness rule for the guard's exemption logic, not
+# architectural philosophy. The subtlety (near-names look like duplicates)
+# is worth the regression fixture; the rule itself belongs with the guard
+# implementation in query::guard, not in the philosophical law registry.
 regression = "tests/laws.rs::law_002 (fixture: tests/fixtures/law_002)"

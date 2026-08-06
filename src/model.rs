@@ -100,6 +100,11 @@ pub struct Index {
     pub concepts_sig: String,
     #[serde(default)]
     pub extractor_version: u32,
+    /// Paths excluded from scanning, as declared in architect.toml `exclude`.
+    /// Stored in the index so query-time walkers (NAMED-tier search) respect
+    /// the same boundaries as the extraction pass.
+    #[serde(default)]
+    pub excludes: Vec<String>,
 }
 
 /// What one file contributed, cached against (size, mtime, extractor version).

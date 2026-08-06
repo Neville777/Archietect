@@ -22,7 +22,7 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-use crate::{laws, query, scan, store};
+use crate::{laws, query, root, scan, store};
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
 /// tiny: this API serves identifiers and short text, not arbitrary payloads.
@@ -62,10 +62,10 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 
     for req in server.incoming_requests() {
         let (path, p) = params(req.url());
-        let root = p
-            .get("root")
-            .map(PathBuf::from)
-            .or_else(|| default_root.clone());
+        let root = root::resolve(
+            p.get("root").map(PathBuf::from).or_else(|| default_root.clone()),
+            &std::env::current_dir().unwrap_or_default(),
+        ).ok();
 
         // GUI v0 — the embedded read-only dashboard, itself a client of the
         // JSON endpoints below. No logic lives in it.

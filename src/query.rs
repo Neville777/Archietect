@@ -13,6 +13,7 @@
 //! declaration is the project speaking; usage is the project acting.
 
 use crate::model::{names_concept, same_word, Evidence, Index, Tier};
+use crate::scoring;
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
@@ -47,8 +48,71 @@ fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
     })
 }
 
+/// Resolve a declared alias (architect.toml [aliases]) to its canonical
+/// concept card. This is what a name search can never see: "episode" has no
+/// table named for it, but the project itself declares episode = stories.
+/// DECLARED tier, because the declaration file says so — not an inference.
+///
+/// Split out from `concept()` so it can be called BEFORE name-token search
+/// runs at all (law-011), rather than only as a fallback when name search
+/// comes up empty — the ordering that let GameTheoryEngine silently defeat
+/// the declared theory=causal_hypotheses alias on TITAN.
+fn resolve_alias(idx: &Index, term: &str, alias_key: &str, target: &str) -> Value {
+    // LAW-010: an alias target is an EXACT concept name, not a search term.
+    // Feeding it back through term matching broke on any multi-token target
+    // — TITAN declares theory = "causal_hypotheses" and got UNKNOWN, because
+    // no single token of the target matches the whole target. Exact lookup
+    // first; term search only as fallback.
+    let mut r = if idx.concepts.contains_key(target) {
+        concept_card(idx, target, target)
+    } else {
+        concept(idx, target)
+    };
+    if r["canonical"].is_null() {
+        // A declared alias pointing at nothing is itself a finding.
+        return json!({
+            "concept": term,
+            "verdict": "UNKNOWN",
+            "canonical": null,
+            "evidence": [Evidence { tier: Tier::Declared,
+                what: format!("architect.toml declares '{alias_key}' = '{target}', but '{target}' is not a declared concept — the ontology file is stale or wrong") }],
+            "confidence": "low — declaration exists but points at nothing",
+            "recommendation": "Fix architect.toml: the alias target does not exist in the scanned declarations.",
+        });
+    }
+    r["concept"] = json!(term);
+    r["resolved_via"] = json!("alias");
+    if let Some(ev) = r["evidence"].as_array_mut() {
+        ev.insert(0, serde_json::to_value(Evidence {
+            tier: Tier::Declared,
+            what: format!("architect.toml declares '{alias_key}' = '{target}' — the project's own ontology, not an inference"),
+        }).unwrap());
+    }
+    r
+}
+
 pub fn concept(idx: &Index, term: &str) -> Value {
     let term = term.trim();
+
+    // LAW-011: declared ontology is checked BEFORE name-token search, full
+    // stop — not merely as a fallback when no name matches. scoring.rs's own
+    // tier lattice puts DeclaredOntology at tier 1, above ExactOrm/TokenOrm;
+    // but the control flow here used to reach alias resolution only when
+    // `declared` (name-token matches) came back EMPTY. That silently
+    // defeated the ontology whenever an UNRELATED concept happened to share
+    // a token with an alias key. Caught live on TITAN: architect.toml
+    // declares theory = "causal_hypotheses", but crates/titan_evolution
+    // independently declares GameTheoryEngine — a real struct that
+    // token-matches "theory" — and the old order let it win outright,
+    // silently, with no error and no signal that the ontology was bypassed.
+    if let Some((alias_key, target)) = idx
+        .aliases
+        .iter()
+        .find(|(k, _)| same_word(k, term) || names_concept(k, term))
+    {
+        return resolve_alias(idx, term, alias_key, target);
+    }
+
     let mut declared: Vec<&String> = idx
         .concepts
         .keys()
@@ -56,20 +120,10 @@ pub fn concept(idx: &Index, term: &str) -> Value {
         .collect();
     declared.sort_by_key(|n| {
         let c = &idx.concepts[n.as_str()];
-        // Exact-name match OUTRANKS token match, before any usage count.
-        // Law from validation: asking umami for 'website' returned
-        // WebsiteEvent (more usage) while a model literally named Website
-        // sat in the schema. The thing named for the concept IS the concept;
-        // heavier neighbours are still neighbours.
-        let exact = same_word(n, term);
-        // On exact ties, an ORM/schema declaration outranks an SQL-string-only
-        // concept. Law from validation: a phantom lowercase `query` (minted
-        // from SQL text, usage inflated by every `FROM query` in the repo)
-        // outranked the real Query model. Text that happens to say CREATE
-        // TABLE is the weakest form of declaration; a model class is a strong
-        // one — the ranking now says so.
-        let orm_declared = c.declared_in.iter().any(|(_, k)| k != "sql");
-        std::cmp::Reverse((exact, orm_declared, c.usage.len(), c.relations.len()))
+        // Ranking is defined in scoring.rs — named constants with documented
+        // rationale. Laws 004 and 007 both encode ranking rules; they point
+        // here rather than duplicating logic in sort comparators.
+        std::cmp::Reverse(scoring::rank(n, c, term))
     });
 
     if let Some(&canon) = declared.first() {
@@ -112,57 +166,29 @@ pub fn concept(idx: &Index, term: &str) -> Value {
         });
     }
 
-    // ALIAS resolution — the project's declared ontology (architect.toml).
-    // This is what a name search can never see: "episode" has no table named
-    // for it, but the project itself declares episode = stories. DECLARED
-    // tier, because the declaration file says so — not an inference.
-    if let Some((alias_key, target)) = idx
-        .aliases
-        .iter()
-        .find(|(k, _)| same_word(k, term) || names_concept(k, term))
-    {
-        // LAW-010: an alias target is an EXACT concept name, not a search
-        // term. Feeding it back through term matching broke on any
-        // multi-token target — TITAN declares theory = "causal_hypotheses"
-        // and got UNKNOWN, because no single token of the target matches the
-        // whole target. Exact lookup first; term search only as fallback.
-        let mut r = if idx.concepts.contains_key(target) {
-            concept_card(idx, target, target)
-        } else {
-            concept(idx, target)
-        };
-        if r["canonical"].is_null() {
-            // A declared alias pointing at nothing is itself a finding.
-            return json!({
-                "concept": term,
-                "verdict": "UNKNOWN",
-                "canonical": null,
-                "evidence": [Evidence { tier: Tier::Declared,
-                    what: format!("architect.toml declares '{alias_key}' = '{target}', but '{target}' is not a declared concept — the ontology file is stale or wrong") }],
-                "confidence": "low — declaration exists but points at nothing",
-                "recommendation": "Fix architect.toml: the alias target does not exist in the scanned declarations.",
-            });
-        }
-        r["concept"] = json!(term);
-        r["resolved_via"] = json!("alias");
-        if let Some(ev) = r["evidence"].as_array_mut() {
-            ev.insert(0, serde_json::to_value(Evidence {
-                tier: Tier::Declared,
-                what: format!("architect.toml declares '{alias_key}' = '{target}' — the project's own ontology, not an inference"),
-            }).unwrap());
-        }
-        return r;
-    }
-
     // NAMED tier: filename resemblance only — and the answer says so.
+    let root_path = std::path::Path::new(&idx.root);
     let named: Vec<String> = WalkDir::new(&idx.root)
         .into_iter()
         .filter_entry(|e| {
-            !(e.file_type().is_dir()
-                && matches!(
+            if e.file_type().is_dir() {
+                if matches!(
                     e.file_name().to_str(),
                     Some("node_modules" | ".git" | "target" | "dist" | ".next" | "__pycache__")
-                ))
+                ) {
+                    return false;
+                }
+                // respect the same excludes used during scan
+                let rel = e.path().strip_prefix(root_path).unwrap_or(e.path());
+                let rel_str = rel.to_string_lossy();
+                if idx.excludes.iter().any(|ex| {
+                    let ex = ex.trim_end_matches('/');
+                    rel_str == ex || rel_str.starts_with(&format!("{ex}/"))
+                }) {
+                    return false;
+                }
+            }
+            true
         })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
@@ -749,14 +775,21 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
         suggestions.push(format!("Fix stale alias '{k}' in architect.toml — it points at a concept that no longer exists"));
     }
 
+    // No persisted index is normal on a first run, not an error — the scan
+    // just happened in memory. Treated as onboarding (a next step, not a
+    // warning glyph) the way `git init` invites rather than scolds.
+    let persisted = db.exists();
     json!({
         "repository": root.display().to_string(),
         "status": {
-            "index": if db.exists() { "current (incremental)" } else { "no architect.db — first scan was in-memory; run `architect init` or the daemon to persist" },
+            "index": if persisted { "current (incremental)" } else { "not persisted (this scan ran in-memory)" },
             "concepts": idx.concepts.len(),
             "duplicate_storage_risks": needs_alias,
             "ontology_warnings": stale.len(),
             "declared_decisions": idx.decisions.len(),
+        },
+        "onboarding": if persisted { Value::Null } else {
+            json!("Run `architect init` to persist this index (instant lookups, no rescan), or `architect watch` to keep it continuously warm and start recording architectural history.")
         },
         "recent_changes": crate::store::read_history(root, None, 5),
         "suggestions": suggestions,

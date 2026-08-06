@@ -9,4 +9,9 @@ because = "umami: 'website' returned WebsiteEvent (more usage) while a model lit
 discovered_in = ["umami"]
 introduced = "2026-08-05"
 status = "active"
+category = "ranking"
+# ranking — this principle is now encoded as scoring::EXACT_NAME = 10_000
+# in src/scoring.rs, which structurally outranks any usage+relation score.
+# The regression fixture stays; the constant in scoring.rs IS this rule.
+# Future ranking wrong answers tune a constant, not a new law.
 regression = "tests/laws.rs::law_004 (fixture: tests/fixtures/law_004)"
