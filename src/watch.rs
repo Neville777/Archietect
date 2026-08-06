@@ -36,16 +36,67 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
+use walkdir::WalkDir;
 
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
 ];
 
+fn skip_dir(e: &walkdir::DirEntry) -> bool {
+    e.file_type().is_dir()
+        && e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false)
+}
+
+/// Every directory the watcher should register on, respecting SKIP_DIRS
+/// entirely — not just filtering events after the fact, but never
+/// registering a watch inside an excluded subtree in the first place.
+///
+/// Found by dogfooding on TITAN: `watcher.watch(&root, RecursiveMode::
+/// Recursive)` registers ONE recursive watch on the whole tree, which
+/// means the OS watch backend (inotify on Linux) has to walk and register
+/// every directory underneath — including target/, which on TITAN is 15GB
+/// across 3,430 directories. `relevant()` filtered target/ EVENTS, but by
+/// then the registration cost (and, on Linux, inotify's default
+/// max_user_watches limit — often far below 3,430) was already paid. The
+/// daemon pegged one CPU core at 100% for minutes registering watches it
+/// was going to discard every event from anyway.
+///
+/// Trade-off, stated: each returned directory gets a NON-recursive watch,
+/// so a brand-new subdirectory created after startup won't be picked up
+/// until the daemon restarts. That is a real gap, but it is a vastly
+/// smaller one than "the daemon cannot start on any repository with a
+/// large build-artifact directory" — which is what the recursive call
+/// produced in practice.
+fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
+    WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !skip_dir(e))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_dir())
+        .map(|e| e.into_path())
+        .collect()
+}
+
 fn relevant(path: &Path) -> bool {
-    // never react to our own database (the daemon writing it must not wake
-    // the daemon), nor to anything inside a skipped tree
-    if path.file_name().and_then(|f| f.to_str()) == Some("architect.db") {
+    // Never react to our own database — the daemon writing it must not wake
+    // the daemon. PREFIX match, not exact: found by dogfooding on TITAN.
+    // SQLite's rollback-journal file (architect.db-journal) is created and
+    // deleted around EVERY write transaction — a file whose name does not
+    // equal "architect.db" exactly, so the old exact check let both its
+    // create and delete events through as "relevant". Each daemon write
+    // (store::save, store::append_events) generated new events that woke
+    // the daemon, which rescanned and wrote again — a fully self-sustaining
+    // feedback loop, observed live: 1,300+ queued events every 300ms,
+    // forever, with the daemon never actually going idle. Covers -journal,
+    // -wal, -shm, and any future SQLite auxiliary/temp file with this
+    // prefix, not just the ones known today.
+    if path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .map(|f| f.starts_with("architect.db"))
+        .unwrap_or(false)
+    {
         return false;
     }
     if path.components().any(|c| {
@@ -249,7 +300,19 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
             }
         }
     })?;
-    watcher.watch(&root, RecursiveMode::Recursive)?;
+    // NON-recursive, per included directory — never registers inside
+    // SKIP_DIRS at all (target/, node_modules/, .git/, ...), instead of
+    // registering everywhere and filtering events afterward. See
+    // watchable_dirs() for why: a single recursive call from root pegged a
+    // CPU core for minutes registering watches on TITAN's 15GB target/
+    // before discarding every event it produced.
+    let dirs = watchable_dirs(&root);
+    for dir in &dirs {
+        // Best-effort: a directory that vanished between the walk and here
+        // (a build tool cleaning up) should not abort the whole daemon.
+        let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
+    }
+    eprintln!("architect watch: registered {} directories (skipped target/node_modules/.git/...)", dirs.len());
 
     loop {
         // block until something changes…
