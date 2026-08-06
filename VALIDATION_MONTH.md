@@ -265,3 +265,25 @@ true, and the month found that out at the cheapest possible price.
   TITAN dogfood, clean: guard still blocks CREATE TABLE episodes citing
   the ADR; concept theory still resolves via alias through the fixed
   ordering; 12/12 corpus canonical picks unchanged throughout.
+- 2026-08-06 (day 2, cont.) — "keep dogfooding: run architect watch on
+  TITAN for a real stretch." This was the highest-value finding of the
+  day. Two SEVERE, separate daemon bugs, both making it unusable at
+  TITAN's scale, NEITHER the bug I expected going in:
+  (1) `watcher.watch(&root, RecursiveMode::Recursive)` registers ONE
+      recursive watch on the whole tree — including target/ (15GB, 3,430
+      dirs on TITAN). Registration alone: unmeasured, still running
+      after 2+ minutes, killed. Fixed: walk the tree respecting the same
+      SKIP_DIRS the scanner uses, register non-recursive watches per
+      directory. 545 real dirs, 10s startup.
+  (2) The real bug, and NOT the O(n^2) rename-detection I suspected
+      (instrumented and proved it: 20ms, fine). SQLite's rollback-journal
+      file is created+deleted around every write; `relevant()`'s exact-
+      filename check let both events through, so every daemon WRITE
+      generated a new event that WOKE the daemon, which wrote again —
+      fully self-sustaining. Observed: 1,300+ events drained every 300ms,
+      100% CPU, 4+ minutes, killed. Fixed: prefix match, not exact.
+  Verified: single touch -> exactly one 1.3s rescan -> daemon genuinely
+  idle (STAT=Sl) at 3 checkpoints over 20+ seconds. This was blocking —
+  the setup instructions tell the owner to enable architectd@; without
+  today's fix, that would have pegged a CPU core indefinitely on the
+  first real edit. Full regression: 23/23 tests, 12/12 corpus unchanged.
