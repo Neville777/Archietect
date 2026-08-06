@@ -555,7 +555,22 @@ pub fn tour(idx: &Index) -> Value {
 /// Suspected duplicate concepts: live pairs sharing a name token. Evidence of
 /// RISK, not proof — stated as such.
 pub fn duplicates(idx: &Index) -> Value {
-    let names: Vec<&String> = idx.concepts.keys().collect();
+    // Restricted to STORAGE-bearing concepts. Found by dogfooding on TITAN
+    // (3,838 concepts once the rust pub-struct extractor landed): this loop
+    // is O(n^2) name-token comparisons, and over the full concept set that
+    // was 23 SECONDS for one call — bare `architect` (which calls this)
+    // would be unusably slow on any large Rust codebase, the opposite of
+    // the git-status instant-glance this tool exists to be. It was also
+    // pure noise: "AIAllocationSuggestion vs RustcSuggestion" sharing the
+    // token "Suggestion" has zero architectural meaning. Storage duplication
+    // (two tables for one concept) has a real cost — a migration, a merge.
+    // Two unrelated in-memory structs sharing an English suffix do not.
+    let names: Vec<&String> = idx
+        .concepts
+        .iter()
+        .filter(|(_, c)| c.table.is_some())
+        .map(|(n, _)| n)
+        .collect();
     let mut pairs = Vec::new();
     let mut needs_alias = Vec::new();
     for i in 0..names.len() {
@@ -740,10 +755,18 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
 
     // SUGGESTIONS, each derived from a fact:
     let mut suggestions: Vec<String> = Vec::new();
-    // (a) concept families sharing a token with no governing decision —
-    //     "four ledgers exist and nothing records why"
+    // (a) STORAGE concept families sharing a token with no governing decision
+    //     — "four ledgers exist and nothing records why". Restricted to
+    //     concepts with a declared TABLE, found by dogfooding on TITAN: once
+    //     the rust pub-struct extractor made every domain type a "concept",
+    //     this drowned in 294 *Config structs, 108 *Result, 93 *Response —
+    //     universal Rust naming conventions with ZERO duplication cost
+    //     (every module having its own Config is normal; every module having
+    //     its own ledger table is not). The "invites an Nth" reasoning is
+    //     specifically about STORAGE — another table, another migration —
+    //     which is exactly what table.is_some() identifies.
     let mut fam: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for name in idx.concepts.keys() {
+    for (name, c) in idx.concepts.iter().filter(|(_, c)| c.table.is_some()) {
         for tok in crate::model::name_tokens(name) {
             if tok.len() >= 5 {
                 fam.entry(tok.to_lowercase()).or_default().push(name.clone());
