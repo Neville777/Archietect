@@ -81,6 +81,52 @@ standalone engine serves this machine via MCP. One engine serving both is
 post-freeze consolidation — and must itself pass `architect concept guard`
 first, because two guards is a duplicate concept.
 
+**The taxonomy rename** (`laws/` → `engine semantics / evidence model /
+policy / regression / explanation`) — proposed three times now (2026-08-05
+×2, 2026-08-06), deferred each time. Verdict unchanged: no bug requires
+it, it's mid-freeze churn on working, fixture-enforced code, and each
+proposal has arrived as pure taxonomy with no new behavior attached. NOT
+untrue, though — `scoring.rs` (built 2026-08-06, credited above) already
+implements MOST of the "evidence model" half: `RankTier::base_score()` is
+a precedence-per-source ordering (alias > ORM > SQL > usage), which is
+exactly the `Evidence { source, precedence }` shape proposed. The one real
+gap: `resolve_alias()` bypasses the lattice entirely as a special-cased
+early check (law-011's fix) rather than `DeclaredOntology` being a normal
+tier the sort naturally selects — structurally fine (correct answers,
+verified), but not yet the "one ranking path" purity the vision wants.
+TRIGGER for finally doing this: batch it with the decision-event work
+above — both touch query.rs's core paths, so one pass, one round of
+re-verification, not two. Do not start it opportunistically mid-freeze
+just because it keeps being proposed.
+
+## The five-year frame (recorded 2026-08-06, not enacted)
+
+"Architect becomes the compiler for architecture" — every client (CLI,
+MCP, REST, GUI, CI, IDE, TITAN) asks, none compute; the daemon is the one
+writer, the product, and eventually invisible the way git/rust-analyzer
+are invisible. Matches what's already built (one engine, thin transports,
+read-only clients) — nothing here contradicts current architecture, it's
+a naming of the destination already being walked toward.
+
+**Post-freeze success metrics (replaces commit/law/corpus counts as the
+headline, once the month ends):**
+1. Architectural consistency — duplicate concepts / conflicting decisions
+   actually prevented, not just detectable.
+2. Time to architectural answer — `architect owner X` vs. manually
+   grepping, measured, not assumed.
+3. Trust — recommendations accepted without independent verification.
+   (Needs the decision-event recorder above to measure at all — currently
+   0 of these 3 are instrumented; commit/law/corpus counts remain the
+   ONLY measured numbers until then, and diary entries should keep saying
+   so rather than implying otherwise.)
+
+**Distribution roadmap (not started):** single binary, subcommands own
+daemon/mcp/serve/ci/watch (no separate installs to explain — already true
+today); package managers (cargo install today; brew/apt/winget later);
+`architect bootstrap` one-shot init+daemon-enable; framework integration
+(`cargo new` / `npx create-next-app` prompting to enable it) is a
+multi-year distribution bet, not a near-term item.
+
 **`architect explain <concept>`** — a NARRATIVE renderer over facts that
 already exist (provenance, relations, rejected duplicates, laws cited,
 decisions). No model, no generation: sentence templates over the same JSON.
