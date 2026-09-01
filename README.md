@@ -352,3 +352,5 @@ service, or bundling it into a paid developer-tools product) without a
 separate commercial license. Converts automatically to Apache License 2.0
 (fully open source) on 2030-09-01, or sooner if a future release sets an
 earlier date.
+
+For a commercial license, or any other licensing question: nevillejemo@gmail.com.
