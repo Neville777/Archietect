@@ -89,6 +89,8 @@ const NON_CODE_EXTS: &[&str] = &[
     "dbml", "jsonl", "patch", "snap", // schema-adjacent/data/diff/test-snapshot formats
     "desktop", "ru", // Linux .desktop shortcuts, Rack's config.ru — config, not code
     "mdx", // overwhelmingly prose (docs/blog) in real-world use, like .md
+    "erb", // Rails view templates — markup with embedded Ruby CALLS, never
+           // declarations; checked real examples, nothing to extract
 ];
 
 /// Files that exist in this repo but are neither recognized as source

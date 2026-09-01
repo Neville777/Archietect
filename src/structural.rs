@@ -159,7 +159,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached architect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 10; // fix: .mts/.cts (real TS module variants) were never scannable
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 11; // +Gherkin (.feature), .jbuilder as Ruby; .erb moved to non-code
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -464,7 +464,7 @@ pub const LANGUAGES: &[LanguageSpec] = &[
     },
     LanguageSpec {
         name: "Ruby",
-        extensions: &["rb"],
+        extensions: &["rb", "jbuilder"],
         extractor: extract_rb,
         symbol_support: "classes, modules, methods, routes",
         frameworks: &["Rails"],
@@ -552,6 +552,13 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extractor: extract_proto,
         symbol_support: "message types, services, rpc methods (as routes)",
         frameworks: &["gRPC"],
+    },
+    LanguageSpec {
+        name: "Gherkin",
+        extensions: &["feature"],
+        extractor: extract_gherkin,
+        symbol_support: "Feature and Scenario/Scenario Outline names",
+        frameworks: &["Cucumber"],
     },
 ];
 
@@ -2380,5 +2387,59 @@ service AdminService {
             "rpc method leaked across service boundaries"
         );
         assert!(imports.iter().any(|i| i.to_module == "google/protobuf/empty.proto"));
+    }
+}
+
+// ── Gherkin / Cucumber ───────────────────────────────────────────────────────
+
+fn extract_gherkin(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    _imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    // Feature/Scenario names are free text, not identifiers — including
+    // real-world non-ASCII names (Gherkin has no language restriction, and
+    // this is common: a real .feature file found during this session's own
+    // corpus check had a Chinese-language Feature/Scenario pair).
+    let feature_re = Regex::new(r"(?m)^\s*Feature:\s*(.+)$").unwrap();
+    for cap in feature_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+    let scenario_re = Regex::new(r"(?m)^\s*Scenario(?:\s+Outline)?:\s*(.+)$").unwrap();
+    for cap in scenario_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+}
+
+#[cfg(test)]
+mod gherkin_tests {
+    use super::*;
+
+    #[test]
+    fn extract_gherkin_finds_feature_and_scenario_names() {
+        let src = "\
+@oidc @regression @smoke @P0
+Feature: OIDC Device Flow 原生表单提交
+
+  作为 LobeHub CLI 用户，
+
+  @OIDC-DEVICE-001
+  Scenario: loading 状态不会阻断设备授权表单提交
+    Given CLI 已发起 OIDC Device Flow
+    When 用户打开设备授权链接
+
+  Scenario Outline: retry with <count> attempts
+    Given a failed request
+";
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_gherkin("features/oidc.feature", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(symbols.iter().any(|s| s.name == "OIDC Device Flow 原生表单提交" && s.kind == SymbolKind::Class));
+        assert!(symbols.iter().any(|s| s.name == "loading 状态不会阻断设备授权表单提交" && s.kind == SymbolKind::Function));
+        assert!(symbols.iter().any(|s| s.name == "retry with <count> attempts" && s.kind == SymbolKind::Function));
     }
 }
