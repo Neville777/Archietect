@@ -340,3 +340,15 @@ Born inside TITAN (an autonomous agent system) after a repeated failure:
 "build X" → thirty minutes later → "X already existed." The fix was never
 to remember to check; it was to make checking a capability, then a law, then
 an always-running daemon. TITAN is now the first client.
+
+## License
+
+[Business Source License 1.1](LICENSE) — source-available, not permissive
+open source. In plain language: free to read, run, modify, and use in
+production — including at work, on your employer's codebases, as an
+employee or paid contractor — for anything except turning Architect itself
+into a competing commercial offering (reselling it as a hosted/managed
+service, or bundling it into a paid developer-tools product) without a
+separate commercial license. Converts automatically to Apache License 2.0
+(fully open source) on 2030-09-01, or sooner if a future release sets an
+earlier date.

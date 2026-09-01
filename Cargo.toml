@@ -3,6 +3,7 @@ name = "architect"
 version = "0.1.0"
 edition = "2021"
 description = "Architectural memory engine — answers 'does this concept already exist, what is canonical, and what is the evidence' for any codebase. Deterministic; AI is a client, never a component."
+license-file = "LICENSE"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
