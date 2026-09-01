@@ -351,6 +351,7 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
                 "question": format!("Do any of these files implement or represent '{term}'?"),
                 "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
                 "escalation": "If this reflects a structural pattern rather than a one-off, propose an extractor or decision via `architect proposal submit` instead of a one-off finding.",
+                "if_universal_defect": "That proposal path is for LOCAL fixes (this project's own architect.toml, or a new extractor only you run). If instead the actual problem looks like a defect in Architect's own matching/ranking logic — something that would misfire on any codebase, not just this one — a local fix can't correct that. Report it instead: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
             },
         });
     }
@@ -407,6 +408,7 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
                 "question": format!("Do any of these files implement or represent '{term}'?"),
                 "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
                 "escalation": "If this language has no structural extractor at all, propose one via `architect proposal submit --kind extractor` — it will be validated against the existing laws + invariants suite before anyone applies it.",
+                "if_universal_defect": "That's for a missing extractor — a coverage gap, fixable locally. If instead this looks like a defect in Architect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
             },
         });
     }

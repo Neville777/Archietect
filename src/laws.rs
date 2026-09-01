@@ -36,6 +36,18 @@ pub struct Law {
     pub regression: String,
     #[serde(default)]
     pub supersedes: Option<String>,
+    /// The CURRENT enforcement approach — deliberately separate from
+    /// `statement`. A law is a timeless claim about what Architect is
+    /// allowed to assert ("must not return a confident ABSENT when
+    /// coverage is insufficient"); `mechanism` is how today's code happens
+    /// to enforce that claim, and is expected to change — a rewrite, a
+    /// faster algorithm, a real parser someday — without the law itself
+    /// changing at all. Conflating the two (a `statement` that names a
+    /// specific function) makes the law read as obsolete the moment that
+    /// function gets refactored, even though the underlying claim never
+    /// stopped being true.
+    #[serde(default)]
+    pub mechanism: Option<String>,
 }
 
 /// The law files, embedded at compile time. Adding a law = adding its .toml
@@ -99,6 +111,7 @@ pub fn registry_json() -> Value {
             "id": l.id,
             "title": l.title,
             "statement": l.statement,
+            "mechanism": l.mechanism,
             "because": l.because,
             "discovered_in": l.discovered_in,
             "introduced": l.introduced,

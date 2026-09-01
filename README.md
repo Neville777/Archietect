@@ -58,6 +58,25 @@ $ architect concept PaymentRefundService
   "recommendation": "Genuinely new for this project. Building it is justified." }
 ```
 
+And when part of a repo is in a language Architect genuinely can't see into, it says so
+instead of guessing — a third state, distinct from both of the above:
+
+```
+$ architect concept processOrder
+{ "verdict": "INSUFFICIENT_COVERAGE",
+  "confidence": "unknown — this repository contains files in a language with no structural extractor",
+  "next_action": { "read": ["handler.lua"], "question": "Do any of these files implement 'processOrder'?" } }
+```
+
+That's the entire trust model, and it's the only thing about Architect's
+internals you actually need to know as a user: every answer is one of
+exactly three things — **KNOWN** (a real answer, with evidence), **KNOWN
+ABSENT** (searched everywhere it can see, genuinely isn't there), or **I
+DON'T KNOW** (`INSUFFICIENT_COVERAGE` — a real blind spot, named
+honestly, never silently guessed past). Architect doesn't need to
+understand everything. It needs to always know the difference between what
+it knows and what it doesn't.
+
 ## Founding principles
 
 1. **The Architect never invents architectural facts.** Every answer carries
@@ -301,17 +320,34 @@ compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
 `CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
 against a project can never drop its history or decisions.
 
-## Laws
-
-14 active laws, each one a real wrong answer produced on a real repository,
-each with a permanent regression fixture (`tests/fixtures/law_NNN/`) so it
-can never silently recur. `conformance_registry_matches_suite` enforces the
-pairing both directions — a law without a covering test fails CI, and a test
-claiming a law the registry doesn't know fails too. `architect laws` prints
-the full specification: statement, the wrong answer that taught it, and
-which repository/session found it.
-
 ## Testing discipline
+
+This section is about how Architect is *developed*, not something you need
+to understand to use it. As a user, the three states above (KNOWN / KNOWN
+ABSENT / INSUFFICIENT_COVERAGE) are the entire interface — you never need
+to know about "law-015" to trust an answer, any more than you need to know
+which regression test a compiler runs to trust that it compiles your code
+correctly. The internal discipline exists so the *engine itself* keeps
+improving release over release without regressing; it was never meant to be
+a second knowledge system layered on top of the actual product.
+
+**Laws**: 15 active, each one a real wrong answer this engine actually gave
+on a real repository, each with a permanent regression fixture
+(`tests/fixtures/law_NNN/`) so it can never silently recur. A law states a
+timeless claim about what Architect is allowed to assert (`law-015`: "must
+not return a confident ABSENT when coverage is insufficient") — separate
+from *how* today's code happens to enforce that claim, which is expected to
+change over time without the law itself changing. `conformance_registry_matches_suite`
+enforces both directions — a law without a covering test fails CI, a test
+claiming a law the registry doesn't know fails too. Kept deliberately small:
+a law is minted only for a genuinely new invariant, not for every incident —
+an incident that's really another instance of an existing invariant gets a
+new regression fixture attached to that law, not a new law number. `laws/`
+is permanently walled off from the AI-extension protocol below — no
+proposal, from any user, on any install, can ever create or edit one; only
+a human maintainer, in a real release, can. If you believe you've found a
+genuine defect in Architect itself rather than a local coverage gap, file
+it: https://github.com/Neville777/Archietect/issues.
 
 Two suites, different guarantees:
 
