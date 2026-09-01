@@ -11,7 +11,31 @@ on:
       - "v*"
 
 jobs:
+  # Found the hard way, releasing v0.1.1: the git tag and Cargo.toml's own
+  # `version` are two independent things that must agree but were never
+  # checked against each other — Cargo.toml still said "0.1.0" when v0.1.1
+  # was tagged, so the binary (and its MCP serverInfo.version) silently
+  # reported the wrong version to everyone who ran it. Same failure shape as
+  # law-014 (two lists that must agree, aren't the same list, will
+  # eventually disagree) applied to release versioning — fail the whole
+  # release fast, before spending build minutes on three platforms, rather
+  # than publish a binary that lies about its own version.
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag must match Cargo.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"(.*)"/\1/')"
+          echo "tag=$TAG cargo.toml=$CARGO_VERSION"
+          if [ "$TAG" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag v$TAG does not match Cargo.toml version $CARGO_VERSION — bump Cargo.toml before tagging."
+            exit 1
+          fi
+
   build:
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
