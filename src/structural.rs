@@ -159,7 +159,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached architect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 8; // fix: Rails `resources :name` (symbol form) was never matched
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 9; // fix: .mjs/.cjs (real JS) were never scannable at all
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -436,7 +436,7 @@ pub const LANGUAGES: &[LanguageSpec] = &[
     },
     LanguageSpec {
         name: "TypeScript/JavaScript",
-        extensions: &["ts", "tsx", "js", "jsx"],
+        extensions: &["ts", "tsx", "js", "jsx", "mjs", "cjs"],
         extractor: extract_ts_js,
         symbol_support: "classes, interfaces, enums, exported functions, routes, events",
         frameworks: &["Express", "NestJS", "Next.js", "Nuxt (server/api)"],
@@ -565,12 +565,20 @@ pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[];
 /// present in this scan — the honest answer to "does Architect understand
 /// this repo," instead of letting a user discover the boundary one UNKNOWN
 /// concept query at a time.
-pub fn coverage_report(graph: &StructuralGraph) -> serde_json::Value {
+pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> serde_json::Value {
     let mut ext_counts: BTreeMap<String, usize> = BTreeMap::new();
     for rel in graph.file_facts.keys() {
         if let Some(ext) = std::path::Path::new(rel).extension().and_then(|x| x.to_str()) {
             *ext_counts.entry(ext.to_lowercase()).or_default() += 1;
         }
+    }
+    // Same fix as query::concept()'s INSUFFICIENT_COVERAGE path: a language
+    // in neither LANGUAGES nor KNOWN_UNSUPPORTED never entered file_facts at
+    // all, so it's otherwise invisible even to this report. Live walk,
+    // extension-only, no content reads.
+    let mut unclassified_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_rel, ext) in crate::scan::unclassified_files(std::path::Path::new(&idx.root), &idx.excludes, 5000) {
+        *unclassified_counts.entry(ext).or_default() += 1;
     }
 
     let supported: Vec<serde_json::Value> = LANGUAGES
@@ -588,18 +596,21 @@ pub fn coverage_report(graph: &StructuralGraph) -> serde_json::Value {
         })
         .collect();
 
-    let unsupported: Vec<serde_json::Value> = KNOWN_UNSUPPORTED
+    let mut unsupported: Vec<serde_json::Value> = KNOWN_UNSUPPORTED
         .iter()
         .filter_map(|(name, exts)| {
             let files: usize = exts.iter().filter_map(|e| ext_counts.get(*e)).sum();
             (files > 0).then(|| serde_json::json!({ "language": name, "files": files }))
         })
         .collect();
+    unsupported.extend(unclassified_counts.iter().map(|(ext, files)| {
+        serde_json::json!({ "language": format!(".{ext} (unclassified)"), "files": files })
+    }));
 
     serde_json::json!({
         "supported": supported,
         "present_but_unsupported": unsupported,
-        "note": "A file in an 'unsupported' language contributes no structural symbols or routes — a concept query for something implemented only there gets no STRUCTURAL evidence and will not guess from its filename alone. A 'supported' language's symbol_support/frameworks_recognized lists are exactly what is and isn't extracted — a framework not listed there (e.g. Django's urls.py) produces no Route even in a supported language.",
+        "note": "A file in an 'unsupported' language contributes no structural symbols or routes — a concept query for something implemented only there gets no STRUCTURAL evidence and will not guess from its filename alone (it returns INSUFFICIENT_COVERAGE instead). A 'supported' language's symbol_support/frameworks_recognized lists are exactly what is and isn't extracted — a framework not listed there (e.g. Django's urls.py) produces no Route even in a supported language. '(unclassified)' entries are extensions nobody has categorized as code OR as a known non-code format at all — possibly a real language Architect has simply never seen before.",
     })
 }
 

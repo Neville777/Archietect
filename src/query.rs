@@ -361,6 +361,14 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // cached or promoted to a verdict above UNKNOWN by anything in this
     // process. An AI client may investigate the listed files and report
     // findings back to a human; it cannot make this query return ACTIVE.
+    // Two distinct blind spots, both genuine: (a) a language on the
+    // KNOWN_UNSUPPORTED list — scanned, but deliberately has no extractor —
+    // found via the already-scanned file_facts; (b) a language NOBODY has
+    // ever classified at all, which never entered file_facts in the first
+    // place because scan.rs's walk excluded it before either pass ever saw
+    // it — found via a fresh, cheap (extension-only, no content reads) live
+    // walk. (b) is what actually caught a synthetic Lua file returning a
+    // confident ABSENT instead of this verdict.
     let mut unsupported_files: Vec<String> = graph
         .file_facts
         .keys()
@@ -378,6 +386,11 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         })
         .cloned()
         .collect();
+    unsupported_files.extend(
+        crate::scan::unclassified_files(root_path, &idx.excludes, 200)
+            .into_iter()
+            .map(|(rel, _ext)| rel),
+    );
     if !unsupported_files.is_empty() {
         unsupported_files.sort();
         unsupported_files.truncate(15);
@@ -541,7 +554,7 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "concepts_declared": idx.concepts.len(),
         "concepts_with_observed_usage": used,
         "declared_but_never_observed_in_use": dead,
-        "structural_coverage": crate::structural::coverage_report(graph),
+        "structural_coverage": crate::structural::coverage_report(idx, graph),
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Architect can actually see structurally.",
     })
 }
@@ -685,7 +698,7 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         "things_to_read": idx.decisions.iter().map(|d| json!({
             "id": d.id, "decision": d.decision,
         })).collect::<Vec<_>>(),
-        "structural_coverage": crate::structural::coverage_report(graph),
+        "structural_coverage": crate::structural::coverage_report(idx, graph),
         "counts": {
             "concepts": idx.concepts.len(),
             "files_scanned": idx.files_scanned,
@@ -733,7 +746,7 @@ pub fn tour(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
         "common_mistakes": mistakes,
         "decisions_to_read": idx.decisions.iter().map(|d| &d.id).collect::<Vec<_>>(),
         "estimated_reading_minutes": (words / 200).max(1),
-        "structural_coverage": crate::structural::coverage_report(graph),
+        "structural_coverage": crate::structural::coverage_report(idx, graph),
         "note": "Derived entirely from declarations, usage, aliases and decisions — no generated prose, nothing to hallucinate. 'probably_ignorable' means no observed use at the USED tier; confirm before deleting anything.",
     })
 }
@@ -1006,7 +1019,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
         },
         "recent_changes": crate::store::read_history(root, None, 5),
         "suggestions": suggestions,
-        "structural_coverage": crate::structural::coverage_report(graph),
+        "structural_coverage": crate::structural::coverage_report(idx, graph),
         "note": "No health score, deliberately: a composite nobody measured is an unmeasured number wearing a measured one's clothes. Every line above is a fact or derived from one.",
     })
 }

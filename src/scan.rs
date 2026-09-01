@@ -63,6 +63,64 @@ fn is_scannable_ext(ext: &str) -> bool {
         || structural::KNOWN_UNSUPPORTED.iter().any(|(_, exts)| exts.contains(&ext))
 }
 
+/// Extensions known NOT to be source code — the inverse of `is_scannable_ext`,
+/// used only to keep `unclassified_files` from reporting every image/lockfile/
+/// font in a repo as an architectural blind spot. Deliberately conservative:
+/// missing an entry here just means a harmless false positive in that
+/// report, never a missed real gap (unlike `is_scannable_ext` drifting,
+/// which law-014 exists to prevent, this list erring incomplete is safe by
+/// construction).
+const NON_CODE_EXTS: &[&str] = &[
+    "md", "markdown", "txt", "rst", "adoc", "json", "yml", "yaml", "toml", "ini",
+    "cfg", "conf", "lock", "lockb", "env", "editorconfig", "gitignore", "gitattributes",
+    "png", "jpg", "jpeg", "gif", "svg", "ico", "bmp", "webp", "avif",
+    "woff", "woff2", "ttf", "eot", "otf",
+    "css", "scss", "sass", "less", "html", "htm", "xml", "csv", "tsv",
+    "log", "map", "pdf", "zip", "tar", "gz", "7z", "rar",
+    "mp3", "mp4", "wav", "mov", "avi", "webm",
+    "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
+    "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
+    "db", "sqlite", "sqlite3", // architect.db itself, and other embedded DBs
+    "example", "local", // .env.example, .env.local — templates, not code
+    "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
+];
+
+/// Files that exist in this repo but are neither recognized as source
+/// (`is_scannable_ext`) nor as an obviously-non-code format — a genuine
+/// blind spot, not just an unremarkable asset. Live filesystem walk, not
+/// derived from the persisted index: unlike `ScannableFile`'s walk, this
+/// deliberately never reads file CONTENTS (only extensions), so it stays
+/// cheap enough to run at query time rather than needing to be cached.
+/// This is what makes `INSUFFICIENT_COVERAGE` (see query::concept) honest
+/// for a language nobody has ever classified at all, not just the — now
+/// empty — `structural::KNOWN_UNSUPPORTED` list: emptying that list when
+/// every previously-"known unsupported" language got a real extractor this
+/// session silently reopened exactly the false-ABSENT failure mode this
+/// mechanism exists to prevent, for anything classified in neither list.
+/// Found dogfooding a synthetic Lua file: it produced files_scanned=0 and a
+/// confident ABSENT, with zero indication anything was even missed.
+pub fn unclassified_files(root: &Path, excludes: &[String], limit: usize) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !skip_dir(e) && !skip_excluded(e, root, excludes))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if out.len() >= limit {
+            break;
+        }
+        let Some(ext) = entry.path().extension().and_then(|x| x.to_str()) else { continue };
+        let ext = ext.to_lowercase();
+        if is_scannable_ext(&ext) || NON_CODE_EXTS.contains(&ext.as_str()) {
+            continue;
+        }
+        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path()).display().to_string();
+        out.push((rel, ext));
+    }
+    out
+}
+
 /// One file the scan pipeline walked — schema and structural extraction
 /// both operate over the same inventory. Public: `structural::extract`
 /// takes a slice of these directly, so the file-walk step is not

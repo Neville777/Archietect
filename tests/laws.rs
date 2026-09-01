@@ -20,7 +20,7 @@ use std::path::PathBuf;
 const COVERED: &[&str] = &[
     "law-001", "law-002", "law-003", "law-004", "law-005",
     "law-006", "law-007", "law-008", "law-009", "law-010", "law-011", "law-012",
-    "law-013", "law-014",
+    "law-013", "law-014", "law-015",
 ];
 
 fn fixture(law: &str) -> architect::model::Index {
@@ -264,5 +264,31 @@ fn law_014_extractor_language_is_actually_scanned() {
     assert!(
         graph.symbols.values().any(|s| s.name == "computeChecksum"),
         "the Kotlin file was walked but its top-level function was not extracted"
+    );
+}
+
+#[test]
+fn law_015_unclassified_language_yields_insufficient_coverage() {
+    // Lua: not in structural::LANGUAGES, not in the (now-empty)
+    // structural::KNOWN_UNSUPPORTED table either — exactly the gap this
+    // law closes. `files_scanned` staying 0 here is CORRECT (Lua genuinely
+    // has no extractor, so the schema/structural passes rightly skip it);
+    // the law is about what `concept()` says in that situation, not about
+    // making Lua scannable.
+    let idx = fixture("law_015");
+    assert_eq!(
+        idx.files_scanned, 0,
+        "sanity check: this fixture's .lua file should not be walked by the schema/structural passes at all"
+    );
+    let r = query::concept(&idx, &Default::default(), "processOrder");
+    assert_eq!(
+        r["verdict"], "INSUFFICIENT_COVERAGE",
+        "a language nobody has classified at all must not produce a confident ABSENT, got: {}",
+        r
+    );
+    assert!(
+        r["next_action"]["read"].as_array().unwrap().iter().any(|f| f == "handler.lua"),
+        "next_action must point at the actual unclassified file, got: {}",
+        r
     );
 }
