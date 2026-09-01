@@ -13,6 +13,14 @@
 //! for the trust boundary that makes that safe. Every other endpoint here
 //! can serve any number of concurrent readers without coordination.
 //!
+//! Binding to 127.0.0.1 keeps remote attackers out, but not a malicious page
+//! open in the same browser as the operator — a plain `<img>` tag can fire a
+//! cross-origin GET with no confirmation. So the four write endpoints
+//! (`submit`/`test`/`accept`/`reject`) additionally require `&token=...`,
+//! printed once to stderr when `serve` starts; nothing else on the machine
+//! can guess it. Responses carry no `Access-Control-Allow-Origin` header —
+//! the embedded GUI at `/` is same-origin and needs none.
+//!
 //!   GET /concept?q=invoice[&root=/path]      GET /doctor
 //!   GET /intent?q=add+invoicing              GET /tour
 //!   GET /impact?q=payments                   GET /duplicates
@@ -80,10 +88,46 @@ fn params(url: &str) -> (String, std::collections::HashMap<String, String>) {
     (path.to_string(), map)
 }
 
+/// A fresh, unguessable-from-outside-the-process token, printed once at
+/// startup and required on every `/proposal/{submit,test,accept,reject}`
+/// request. Binding to 127.0.0.1 stops a remote attacker, but not a
+/// malicious page open in the operator's own browser: without this, that
+/// page could fire `<img src="http://127.0.0.1:PORT/proposal/accept?id=1">`
+/// and get a write applied to the working tree with zero interaction — GET
+/// requests need no CORS approval to be *sent*, only to have their response
+/// *read*. `RandomState` pulls its seed from the OS RNG the same way
+/// `HashMap`'s DoS-resistant hashing does; that's all the unpredictability
+/// this needs; it isn't protecting against an attacker who can already read
+/// this process's stdout/environment.
+fn generate_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut bytes = [0u8; 16];
+    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+        let mut h = RandomState::new().build_hasher();
+        h.write_usize(i);
+        h.write_u64(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0));
+        chunk.copy_from_slice(&h.finish().to_le_bytes()[..chunk.len()]);
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+const MUTATING_ENDPOINTS: &[&str] = &[
+    "/proposal/submit",
+    "/proposal/test",
+    "/proposal/accept",
+    "/proposal/reject",
+];
+
 pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
-    eprintln!("architect REST listening on http://127.0.0.1:{port} (read-only)");
+    let token = generate_token();
+    eprintln!("architect REST listening on http://127.0.0.1:{port} (read-only except /proposal/*)");
+    eprintln!("proposal-mutating requests (submit/test/accept/reject) require &token={token}");
 
     // The warm cache. Single-threaded loop, one request at a time — plain
     // HashMap, no lock needed.
@@ -95,6 +139,25 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 
     for req in server.incoming_requests() {
         let (path, p) = params(req.url());
+
+        if MUTATING_ENDPOINTS.contains(&path.as_str())
+            && p.get("token").map(|t| t.as_str()) != Some(token.as_str())
+        {
+            let body = json!({
+                "error": "missing or incorrect token — pass &token=<value printed when `architect serve` started>",
+            });
+            let response = tiny_http::Response::from_string(
+                serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+            )
+            .with_status_code(401)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+            let _ = req.respond(response);
+            continue;
+        }
+
         let root = root::resolve(
             p.get("root").map(PathBuf::from).or_else(|| default_root.clone()),
             &std::env::current_dir().unwrap_or_default(),
@@ -232,17 +295,13 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
         }
 
         let data = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
-        let response = tiny_http::Response::from_string(data)
-            .with_header(
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .unwrap(),
-            )
-            // future GUI is a browser client of this API — same-machine only
-            // (bound to 127.0.0.1), so permissive CORS is safe here
-            .with_header(
-                tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..])
-                    .unwrap(),
-            );
+        // No Access-Control-Allow-Origin header: the embedded GUI at "/" is
+        // same-origin and needs none; a page on any OTHER origin has no
+        // business reading these responses, and without this header the
+        // browser won't let it, regardless of what request it manages to send.
+        let response = tiny_http::Response::from_string(data).with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+        );
         let _ = req.respond(response);
     }
     Ok(())

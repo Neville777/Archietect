@@ -188,7 +188,17 @@ fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
     let files = touched_files(patch_text);
     anyhow::ensure!(!files.is_empty(), "patch does not appear to touch any files");
     for f in &files {
-        if f.starts_with('/') || f.split('/').any(|seg| seg == "..") {
+        let p = std::path::Path::new(f);
+        let escapes = p.is_absolute()
+            || p.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            });
+        if escapes {
             bail!("proposal touches a path outside the repository: '{f}'");
         }
         if FORBIDDEN_EXACT.contains(&f.as_str()) || FORBIDDEN_PREFIX.iter().any(|p| f.starts_with(p)) {
