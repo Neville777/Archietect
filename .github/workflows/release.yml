@@ -17,8 +17,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             artifact: architect-linux-x86_64
+            # NOT -gnu: found by actually installing the v0.1.0 release on
+            # a real machine (Ubuntu 22.04 LTS, glibc 2.35, still supported
+            # until 2027 and extremely widely deployed) — the -gnu build
+            # dynamically links against ubuntu-latest's glibc (24.04, 2.39)
+            # and refuses to even start anywhere older: "GLIBC_2.39 not
+            # found". musl statically links everything, including libc, so
+            # the binary runs on any x86_64 Linux kernel regardless of
+            # which glibc (if any) is installed. Standard fix for exactly
+            # this class of bug in Rust CLI distribution.
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: architect-macos-arm64
@@ -48,6 +57,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install musl linker
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - uses: Swatinem/rust-cache@v2
 
