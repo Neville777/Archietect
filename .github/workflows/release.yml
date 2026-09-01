@@ -22,9 +22,18 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: architect-macos-arm64
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: architect-macos-x86_64
+            # Cross-compiled from the same Apple Silicon runner as the
+            # arm64 build above, not built natively on an Intel runner.
+            # GitHub has been shrinking Intel macOS (macos-13) capacity
+            # hard enough that a job pinned to that label sat queued for
+            # 25+ minutes with no runner ever assigned, found the first
+            # time this workflow actually ran for a real tag. Cross-linking
+            # x86_64-apple-darwin from an arm64 host via Xcode's linker is
+            # standard, well-established practice — the resulting binary is
+            # a real x86_64 Mach-O, not an emulated/translated one.
           # Windows is deliberately not included here: the daemon
           # (`architect watch` via packaging/onboard.sh --daemon) only
           # knows systemd (Linux) and launchd (macOS) — see onboard.sh's
