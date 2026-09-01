@@ -159,7 +159,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached architect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 2;
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 7; // +GraphQL, Protocol Buffers/gRPC, Compojure/Yesod/Vapor routes
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -439,7 +439,14 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extensions: &["ts", "tsx", "js", "jsx"],
         extractor: extract_ts_js,
         symbol_support: "classes, interfaces, enums, exported functions, routes, events",
-        frameworks: &["Express", "NestJS"],
+        frameworks: &["Express", "NestJS", "Next.js", "Nuxt (server/api)"],
+    },
+    LanguageSpec {
+        name: "Vue",
+        extensions: &["vue"],
+        extractor: extract_vue,
+        symbol_support: "the SFC itself as a component (named by file), plus any exports in its <script> block",
+        frameworks: &["Nuxt (pages)"],
     },
     LanguageSpec {
         name: "Go",
@@ -487,8 +494,8 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         name: "Swift",
         extensions: &["swift"],
         extractor: extract_swift,
-        symbol_support: "classes, structs, protocols, top-level functions",
-        frameworks: &[],
+        symbol_support: "classes, structs, protocols, top-level functions, routes",
+        frameworks: &["Vapor"],
     },
     LanguageSpec {
         name: "Objective-C",
@@ -522,15 +529,29 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         name: "Haskell",
         extensions: &["hs"],
         extractor: extract_haskell,
-        symbol_support: "data/newtype declarations, typeclasses, top-level type signatures",
-        frameworks: &[],
+        symbol_support: "data/newtype declarations, typeclasses, top-level type signatures, routes",
+        frameworks: &["Yesod (parseRoutes quasi-quote only — Servant's type-level API DSL is not attempted, too unreliable to regex)"],
     },
     LanguageSpec {
         name: "Clojure",
         extensions: &["clj", "cljs"],
         extractor: extract_clojure,
-        symbol_support: "public defn, defrecord/deftype, defprotocol",
+        symbol_support: "public defn, defrecord/deftype, defprotocol, routes",
+        frameworks: &["Compojure"],
+    },
+    LanguageSpec {
+        name: "GraphQL",
+        extensions: &["graphql", "gql"],
+        extractor: extract_graphql,
+        symbol_support: "type/interface/enum/input definitions, query/mutation/subscription operations",
         frameworks: &[],
+    },
+    LanguageSpec {
+        name: "Protocol Buffers",
+        extensions: &["proto"],
+        extractor: extract_proto,
+        symbol_support: "message types, services, rpc methods (as routes)",
+        frameworks: &["gRPC"],
     },
 ];
 
@@ -673,6 +694,22 @@ fn extract_ts_js(
         symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
     }
 
+    // `export const authApi = { login: ..., logout: ... }` — an object-literal
+    // namespace, the standard pattern for grouping related API/config methods
+    // in TS/JS. Distinct from `fn_const_re` above (which requires `= (`, an
+    // arrow function): this requires `= {`, an object. Found missing by
+    // dogfooding a real Next.js/axios frontend — `authApi`/`dashboardApi`/
+    // `swarmApi`-style exports were completely invisible (verdict ABSENT)
+    // despite being exactly the kind of thing "does this API client already
+    // exist" should answer. Classed as Class: architecturally it's the same
+    // "named, importable unit of behavior" role a class plays here.
+    let const_object_re = Regex::new(
+        r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::\s*[\w<>\[\],\.\s]+)?=\s*\{"
+    ).unwrap();
+    for cap in const_object_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
     // NestJS / Express route decorators and method calls
     extract_ts_routes(rel, text, routes);
 
@@ -710,6 +747,201 @@ fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
             handler: "express-handler".to_string(),
             file: rel.to_string(),
         });
+    }
+
+    next_app_router_routes(rel, text, routes);
+    nuxt_server_api_route(rel, routes);
+    graphql_tagged_template_operations(rel, text, routes);
+}
+
+/// GraphQL operations embedded as `gql`...`` / `graphql`...`` tagged
+/// templates — the standard way Apollo/urql clients declare queries even
+/// with no schema layer in the same repo (the schema usually lives on a
+/// separate backend). Reported the same way a standalone `.graphql` file's
+/// operations are (see `extract_graphql`) — method = operation type,
+/// path = operation name.
+fn graphql_tagged_template_operations(rel: &str, text: &str, routes: &mut Vec<Route>) {
+    let tag_re = Regex::new(r"(?s)\b(?:gql|graphql)\s*`([^`]*)`").unwrap();
+    let op_re = Regex::new(r"\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    for tag in tag_re.captures_iter(text) {
+        for op in op_re.captures_iter(&tag[1]) {
+            routes.push(Route {
+                method: op[1].to_uppercase(),
+                path: op[2].to_string(),
+                handler: op[2].to_string(),
+                file: rel.to_string(),
+            });
+        }
+    }
+}
+
+/// Nuxt server routes: also file-based, but via a FILENAME suffix rather
+/// than a directory convention — `server/api/hello.get.ts` -> GET /api/hello,
+/// `server/api/echo.post.ts` -> POST /api/echo, `server/api/foo.ts` (no
+/// method suffix) -> Nuxt's `defineEventHandler` handles every method, so
+/// this reports "ANY" rather than guessing one. `server/routes/**` is the
+/// same convention for routes outside `/api`.
+fn nuxt_server_api_route(rel: &str, routes: &mut Vec<Route>) {
+    let marker = if rel.contains("server/api/") {
+        "server/api/"
+    } else if rel.contains("server/routes/") {
+        "server/routes/"
+    } else {
+        return;
+    };
+    let Some(after) = rel.split(marker).nth(1) else { return };
+    let stem = std::path::Path::new(after).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let dir = std::path::Path::new(after).parent().and_then(|p| p.to_str()).unwrap_or("");
+
+    let known = ["get", "post", "put", "delete", "patch", "head", "options"];
+    let (name, method) = match stem.rsplit_once('.') {
+        Some((n, suffix)) if known.contains(&suffix) => (n, suffix.to_uppercase()),
+        _ => (stem, "ANY".to_string()),
+    };
+
+    let mut path = format!("/{}", marker.trim_end_matches('/'));
+    if !dir.is_empty() {
+        path.push('/');
+        path.push_str(dir);
+    }
+    path.push('/');
+    // `[id]` -> `:id`, same convention as the App Router.
+    if let Some(param) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        path.push(':');
+        path.push_str(param);
+    } else {
+        path.push_str(name);
+    }
+
+    routes.push(Route { method, path, handler: stem.to_string(), file: rel.to_string() });
+}
+
+// ── Vue / Nuxt ────────────────────────────────────────────────────────────────
+
+fn extract_vue(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    // The file IS the component — a Vue SFC almost never exports an
+    // explicit name; identity is the filename itself (PascalCase), the same
+    // convention Vue's own devtools/ESLint/IDE tooling already uses.
+    // `index.vue` names nothing on its own (its directory does) — skipped.
+    if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+        if stem.to_lowercase() != "index" {
+            symbols.push(Symbol { name: to_pascal_case(stem), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: 1 });
+        }
+    }
+
+    // Nuxt pages: `pages/foo/[id].vue` -> GET /foo/:id, directory-based like
+    // the Next.js App Router, just with the route file itself instead of a
+    // `page.tsx` inside a directory.
+    if let Some(after) = rel.split("pages/").nth(1) {
+        let no_ext = after.trim_end_matches(".vue");
+        let mut path = String::new();
+        for seg in no_ext.split('/').filter(|s| !s.is_empty() && s.to_lowercase() != "index") {
+            path.push('/');
+            path.push_str(seg);
+        }
+        if path.is_empty() {
+            path.push('/');
+        }
+        // A bracket param can BE a whole segment (`[id]`) or be embedded
+        // inside one (`dynamic-[name]`, also valid Nuxt) — a substring
+        // replace across the whole path handles both the same way, rather
+        // than only matching when the bracket owns the entire segment.
+        let bracket_re = Regex::new(r"\[\.\.\.([A-Za-z0-9_]+)\]|\[([A-Za-z0-9_]+)\]").unwrap();
+        let path = bracket_re
+            .replace_all(&path, |c: &regex::Captures| {
+                c.get(1).map(|g| format!("*{}", g.as_str())).unwrap_or_else(|| format!(":{}", &c[2]))
+            })
+            .to_string();
+        routes.push(Route { method: "GET".to_string(), path, handler: "default".to_string(), file: rel.to_string() });
+    }
+
+    // <script>/<script setup> is ordinary TS/JS underneath. Reuse that
+    // extractor against the WHOLE file rather than slicing out just the
+    // script block — `^`-anchored patterns don't spuriously match inside
+    // <template>/<style>, and this way line numbers stay correct (they'd be
+    // wrong if computed against an extracted substring instead of the real
+    // file offsets).
+    let mut discard_routes = Vec::new();
+    extract_ts_js(rel, text, symbols, imports, &mut discard_routes);
+}
+
+fn to_pascal_case(s: &str) -> String {
+    s.split(|c: char| c == '-' || c == '_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// Next.js App Router: routing is FILE-BASED, not a decorator/DSL — the
+/// route comes from the file's own path, not its content. `app/foo/[id]/
+/// page.tsx` -> GET /foo/:id; `app/api/foo/route.ts` -> one Route per
+/// exported HTTP-method handler (`export async function GET/POST/...`).
+/// Route groups `(name)/` are stripped (they organize files, not URLs);
+/// `[x]` -> `:x`, `[...x]` -> `*`. Found missing by dogfooding a real
+/// Next.js frontend — `doctor` correctly SAID it only recognizes
+/// Express/NestJS, rather than silently guessing, but that made routes:0 a
+/// permanent fact for every Next.js App Router project rather than a gap
+/// worth closing.
+fn next_app_router_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
+    let Some(app_pos) = rel.find("app/") else { return };
+    if app_pos != 0 && rel.as_bytes().get(app_pos - 1) != Some(&b'/') {
+        return;
+    }
+    let after_app = &rel[app_pos + 4..];
+    let is_page = ["page.tsx", "page.ts", "page.jsx", "page.js"]
+        .iter()
+        .any(|f| after_app == *f || after_app.ends_with(&format!("/{f}")));
+    let is_route_handler = ["route.ts", "route.js"]
+        .iter()
+        .any(|f| after_app == *f || after_app.ends_with(&format!("/{f}")));
+    if !is_page && !is_route_handler {
+        return;
+    }
+
+    let dir = after_app.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let mut path = String::new();
+    for seg in dir.split('/').filter(|s| !s.is_empty()) {
+        if seg.starts_with('(') && seg.ends_with(')') {
+            continue; // route group — organizes files, invisible in the URL
+        }
+        if let Some(param) = seg.strip_prefix("[...").and_then(|s| s.strip_suffix(']')) {
+            let _ = param;
+            path.push_str("/*");
+        } else if let Some(param) = seg.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            path.push_str("/:");
+            path.push_str(param);
+        } else {
+            path.push('/');
+            path.push_str(seg);
+        }
+    }
+    if path.is_empty() {
+        path.push('/');
+    }
+
+    if is_page {
+        routes.push(Route { method: "GET".to_string(), path, handler: "default".to_string(), file: rel.to_string() });
+        return;
+    }
+    let method_re = Regex::new(r"(?m)^export\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(").unwrap();
+    let mut any = false;
+    for cap in method_re.captures_iter(text) {
+        any = true;
+        routes.push(Route { method: cap[1].to_string(), path: path.clone(), handler: cap[1].to_string(), file: rel.to_string() });
+    }
+    if !any {
+        routes.push(Route { method: "ANY".to_string(), path, handler: "unknown".to_string(), file: rel.to_string() });
     }
 }
 
@@ -1270,7 +1502,7 @@ fn extract_swift(
     text: &str,
     symbols: &mut Vec<Symbol>,
     imports: &mut Vec<Import>,
-    _routes: &mut Vec<Route>,
+    routes: &mut Vec<Route>,
 ) {
     // class / struct — top-level only (column 0, allowing access-modifier
     // prefixes). A method or nested type inside a class body is indented and
@@ -1310,6 +1542,17 @@ fn extract_swift(
     for cap in import_re.captures_iter(text) {
         imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
     }
+
+    // Vapor: app.get("path") { req in ... }, router.post("path", use: handler)
+    let vapor_re = Regex::new(r#"\b(?:app|router|routes)\.(get|post|put|delete|patch)\s*\(\s*"([^"]*)""#).unwrap();
+    for cap in vapor_re.captures_iter(text) {
+        routes.push(Route {
+            method: cap[1].to_string().to_uppercase(),
+            path: format!("/{}", cap[2].trim_start_matches('/')),
+            handler: "vapor-handler".to_string(),
+            file: rel.to_string(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1338,6 +1581,10 @@ public class Invoice {
 func formatCurrency(_ value: Double) -> String {
     return "$\(value)"
 }
+
+app.get("invoices") { req in
+    return "ok"
+}
 "#;
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
@@ -1348,6 +1595,7 @@ func formatCurrency(_ value: Double) -> String {
         assert!(symbols.iter().any(|s| s.name == "Money" && s.kind == SymbolKind::Class));
         assert!(symbols.iter().any(|s| s.name == "Payable" && s.kind == SymbolKind::Interface));
         assert!(symbols.iter().any(|s| s.name == "formatCurrency" && s.kind == SymbolKind::Function));
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/invoices"));
         assert!(
             !symbols.iter().any(|s| s.name == "total"),
             "indented method should not be extracted under the top-level-only rule"
@@ -1707,7 +1955,7 @@ fn extract_haskell(
     text: &str,
     symbols: &mut Vec<Symbol>,
     imports: &mut Vec<Import>,
-    _routes: &mut Vec<Route>,
+    routes: &mut Vec<Route>,
 ) {
     // data / newtype — Haskell has no classes in the OOP sense; a named
     // product/sum type declaration is its closest equivalent, so it's the
@@ -1739,6 +1987,40 @@ fn extract_haskell(
     for cap in import_re.captures_iter(text) {
         imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
     }
+
+    // Yesod: routes declared in a `[parseRoutes| ... |]` quasi-quote block,
+    // one per line: "/path NameR METHOD1 METHOD2" (no methods listed means
+    // the handler responds to all of them). Servant's competing approach
+    // (a type-level API DSL, e.g. `"users" :> Get '[JSON] [User]`) is NOT
+    // attempted — combinators can nest and span multiple type declarations
+    // in ways a regex can't reliably track, and a wrong route is worse than
+    // a missing one.
+    if let Some(block_start) = text.find("[parseRoutes|") {
+        let body_start = block_start + "[parseRoutes|".len();
+        if let Some(rel_end) = text[body_start..].find("|]") {
+            let block = &text[body_start..body_start + rel_end];
+            let line_re = Regex::new(r"(?m)^\s*(/\S*)\s+([A-Za-z][A-Za-z0-9_']*)(?:\s+(.*))?$").unwrap();
+            for cap in line_re.captures_iter(block) {
+                let path = cap[1].to_string();
+                let name = cap[2].to_string();
+                let methods: Vec<String> = cap
+                    .get(3)
+                    .map(|m| m.as_str().split_whitespace().map(|s| s.to_string()).collect())
+                    .unwrap_or_default();
+                let known: Vec<String> = methods
+                    .into_iter()
+                    .filter(|m| ["GET", "POST", "PUT", "DELETE", "PATCH"].contains(&m.as_str()))
+                    .collect();
+                if known.is_empty() {
+                    routes.push(Route { method: "ANY".to_string(), path, handler: name, file: rel.to_string() });
+                } else {
+                    for m in known {
+                        routes.push(Route { method: m, path: path.clone(), handler: name.clone(), file: rel.to_string() });
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1758,6 +2040,11 @@ class Describable a where
 area :: Shape -> Double
 area (Circle r) = pi * r * r
 area (Rectangle w h) = w * h
+
+mkYesod "App" [parseRoutes|
+/shapes ShapesR GET POST
+/shapes/#ShapeId ShapeR GET
+|]
 "#;
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
@@ -1768,6 +2055,9 @@ area (Rectangle w h) = w * h
         assert!(symbols.iter().any(|s| s.name == "Describable" && s.kind == SymbolKind::Interface));
         assert!(symbols.iter().any(|s| s.name == "area" && s.kind == SymbolKind::Function));
         assert!(imports.iter().any(|i| i.to_module == "Data.List"));
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes"));
+        assert!(routes.iter().any(|r| r.method == "POST" && r.path == "/shapes"));
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes/#ShapeId"));
     }
 }
 
@@ -1778,7 +2068,7 @@ fn extract_clojure(
     text: &str,
     symbols: &mut Vec<Symbol>,
     _imports: &mut Vec<Import>,
-    _routes: &mut Vec<Route>,
+    routes: &mut Vec<Route>,
 ) {
     // defn — public function only. `defn-` (private) is naturally excluded:
     // `defn\s+` cannot match the `-` that immediately follows `defn` in
@@ -1798,6 +2088,17 @@ fn extract_clojure(
     let protocol_re = Regex::new(r"\(defprotocol\s+([A-Za-z][A-Za-z0-9_\-]*)").unwrap();
     for cap in protocol_re.captures_iter(text) {
         symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
+    // Compojure: (GET "/path" [] ...), (POST "/path" [] ...), etc.
+    let route_re = Regex::new(r#"\((GET|POST|PUT|DELETE|PATCH|ANY|HEAD)\s+"([^"]+)""#).unwrap();
+    for cap in route_re.captures_iter(text) {
+        routes.push(Route {
+            method: cap[1].to_string(),
+            path: cap[2].to_string(),
+            handler: "compojure-handler".to_string(),
+            file: rel.to_string(),
+        });
     }
 }
 
@@ -1822,6 +2123,10 @@ mod clojure_tests {
 
 (defn- helper [x]
   (* x 2))
+
+(defroutes app-routes
+  (GET "/shapes" [] (list-shapes))
+  (POST "/shapes" [] (create-shape)))
 "#;
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
@@ -1835,5 +2140,190 @@ mod clojure_tests {
             !symbols.iter().any(|s| s.name == "helper"),
             "defn- is private and must not be extracted"
         );
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes"));
+        assert!(routes.iter().any(|r| r.method == "POST" && r.path == "/shapes"));
+    }
+}
+
+// ── GraphQL ───────────────────────────────────────────────────────────────────
+
+fn extract_graphql(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    _imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    // type Foo { ... } / input Foo { ... } / enum Foo { ... }
+    let type_re = Regex::new(r"(?m)^(?:type|input|enum)\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+    for cap in type_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
+    let interface_re = Regex::new(r"(?m)^interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+    for cap in interface_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
+    // Named operations: `query GetUser { ... }`, `mutation CreateUser { ... }`,
+    // `subscription OnMessage { ... }` — reported as a Route (method =
+    // operation type, path = operation name) so "does a GetUser query
+    // already exist" is answerable the same way an HTTP route is.
+    let op_re = Regex::new(r"(?m)^\s*(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    for cap in op_re.captures_iter(text) {
+        routes.push(Route {
+            method: cap[1].to_string().to_uppercase(),
+            path: cap[2].to_string(),
+            handler: cap[2].to_string(),
+            file: rel.to_string(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod graphql_tests {
+    use super::*;
+
+    #[test]
+    fn extract_graphql_finds_types_and_operations() {
+        let src = r#"
+type User {
+  id: ID!
+  name: String!
+}
+
+interface Node {
+  id: ID!
+}
+
+query GetUser {
+  user(id: "1") {
+    name
+  }
+}
+
+mutation CreateUser {
+  createUser(name: "x") {
+    id
+  }
+}
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_graphql("schema.graphql", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(symbols.iter().any(|s| s.name == "User" && s.kind == SymbolKind::Class));
+        assert!(symbols.iter().any(|s| s.name == "Node" && s.kind == SymbolKind::Interface));
+        assert!(routes.iter().any(|r| r.method == "QUERY" && r.path == "GetUser"));
+        assert!(routes.iter().any(|r| r.method == "MUTATION" && r.path == "CreateUser"));
+    }
+
+    #[test]
+    fn extract_ts_js_finds_gql_tagged_template_operations() {
+        let src = r#"
+import { gql } from '@apollo/client';
+
+export const GET_USER = gql`
+  query GetUser($id: ID!) {
+    user(id: $id) { name }
+  }
+`;
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/queries.ts", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(routes.iter().any(|r| r.method == "QUERY" && r.path == "GetUser"));
+    }
+}
+
+// ── Protocol Buffers / gRPC ──────────────────────────────────────────────────
+
+fn extract_proto(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    let message_re = Regex::new(r"(?m)^message\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+    for cap in message_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
+    // Services and their rpc methods: rpc methods only belong to the
+    // service they're textually inside, so each service's body is sliced
+    // out (up to the next `service` declaration, or EOF) before its rpc
+    // methods are matched — a flat file-wide rpc regex would silently
+    // attribute every rpc everywhere to whichever service happened to be
+    // named, which is wrong the moment a .proto file declares more than one.
+    let service_re = Regex::new(r"(?m)^service\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{").unwrap();
+    let services: Vec<(String, usize, usize)> = service_re
+        .captures_iter(text)
+        .map(|c| (c[1].to_string(), c.get(0).unwrap().start(), c.get(0).unwrap().end()))
+        .collect();
+    let rpc_re = Regex::new(r"rpc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
+    for (i, (name, start, body_start)) in services.iter().enumerate() {
+        symbols.push(Symbol { name: name.clone(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, *start) });
+        let body_end = services.get(i + 1).map(|(_, s, _)| *s).unwrap_or(text.len());
+        for cap in rpc_re.captures_iter(&text[*body_start..body_end]) {
+            routes.push(Route {
+                method: "RPC".to_string(),
+                path: format!("/{name}/{}", &cap[1]),
+                handler: cap[1].to_string(),
+                file: rel.to_string(),
+            });
+        }
+    }
+
+    let import_re = Regex::new(r#"import\s+"([^"]+)""#).unwrap();
+    for cap in import_re.captures_iter(text) {
+        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+    }
+}
+
+#[cfg(test)]
+mod proto_tests {
+    use super::*;
+
+    #[test]
+    fn extract_proto_finds_messages_and_scopes_rpc_to_its_own_service() {
+        let src = r#"
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+message User {
+  string id = 1;
+  string name = 2;
+}
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc CreateUser(CreateUserRequest) returns (User);
+}
+
+service AdminService {
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
+}
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_proto("user.proto", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(symbols.iter().any(|s| s.name == "User" && s.kind == SymbolKind::Class));
+        assert!(symbols.iter().any(|s| s.name == "UserService" && s.kind == SymbolKind::Class));
+        assert!(symbols.iter().any(|s| s.name == "AdminService" && s.kind == SymbolKind::Class));
+        assert!(routes.iter().any(|r| r.path == "/UserService/GetUser"));
+        assert!(routes.iter().any(|r| r.path == "/UserService/CreateUser"));
+        assert!(routes.iter().any(|r| r.path == "/AdminService/DeleteUser"));
+        assert!(
+            !routes.iter().any(|r| r.path == "/AdminService/GetUser"),
+            "rpc method leaked across service boundaries"
+        );
+        assert!(imports.iter().any(|i| i.to_module == "google/protobuf/empty.proto"));
     }
 }

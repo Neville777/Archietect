@@ -5,9 +5,13 @@
 //! and anything HTTP-shaped become clients of the same deterministic answers
 //! — GitHub Desktop is a client of git, never a fork of it.
 //!
-//! Read-only by design: every endpoint is a query; nothing here writes
-//! architect.db. The daemon remains the single writer, so REST can serve any
-//! number of concurrent readers without coordination.
+//! Read-only by design, with one deliberate exception: every endpoint is a
+//! query and nothing here EVER writes architect.db (the daemon remains the
+//! single writer for that) — except `/proposal/*`, which writes only under
+//! .architect/proposals/ or, for `accept`, the working tree itself
+//! (uncommitted, never `git commit`). See src/proposal.rs's own module doc
+//! for the trust boundary that makes that safe. Every other endpoint here
+//! can serve any number of concurrent readers without coordination.
 //!
 //!   GET /concept?q=invoice[&root=/path]      GET /doctor
 //!   GET /intent?q=add+invoicing              GET /tour
@@ -146,11 +150,65 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             p.get("diff").map(|s| s.as_str()).unwrap_or(""),
                             p.get("strict").map(|s| s == "true").unwrap_or(false),
                         ),
+                        // AI-extension protocol. The one exception to this
+                        // module's read-only design (see the header comment)
+                        // — `test`/`accept`/`reject` do write, but only ever
+                        // under .architect/proposals/ or, for `accept`, the
+                        // working tree itself, uncommitted; never architect.db.
+                        // `patch` here is a query param like everything else
+                        // in this file ("identifiers and short text, not
+                        // arbitrary payloads" — see `decode()` above): fine
+                        // for a small patch, but a large diff should go
+                        // through the CLI or the MCP tool instead.
+                        "/proposal/submit" => {
+                            let kind_str = p.get("kind").map(|s| s.as_str()).unwrap_or("");
+                            match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
+                                Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
+                                Ok(kind) => {
+                                    let tmp = std::env::temp_dir().join(format!("architect-rest-proposal-{}.diff", std::process::id()));
+                                    match std::fs::write(&tmp, p.get("patch").map(|s| s.as_str()).unwrap_or("")) {
+                                        Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
+                                        Ok(()) => {
+                                            let out = crate::proposal::submit(
+                                                &root, kind,
+                                                p.get("title").map(|s| s.as_str()).unwrap_or(""),
+                                                p.get("description").map(|s| s.as_str()).unwrap_or(""),
+                                                p.get("lang").map(|s| s.as_str()),
+                                                p.get("preview_repo").map(|s| s.as_str()),
+                                                "ai",
+                                                &tmp,
+                                            );
+                                            let _ = std::fs::remove_file(&tmp);
+                                            match out { Ok(v) => v, Err(e) => json!({ "error": e.to_string() }) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "/proposal/list" => crate::proposal::list(&root),
+                        "/proposal/inspect" => match crate::proposal::inspect(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
+                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
+                        },
+                        "/proposal/test" => match crate::proposal::test(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
+                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
+                        },
+                        "/proposal/accept" => match crate::proposal::accept(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
+                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
+                        },
+                        "/proposal/reject" => match crate::proposal::reject(
+                            &root,
+                            p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
+                            p.get("purge").map(|s| s == "true").unwrap_or(false),
+                        ) {
+                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
+                        },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
-                                          "/history", "/ci", "/laws"],
+                                          "/history", "/ci", "/laws",
+                                          "/proposal/submit", "/proposal/list", "/proposal/inspect",
+                                          "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),
                     }
                 };

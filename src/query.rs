@@ -209,8 +209,64 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         .values()
         .filter(|s| same_word(&s.name, term) || names_concept(&s.name, term))
         .collect();
-    structural_hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.name.cmp(&b.name)));
+    // law-004's lesson applied to this tier too: an EXACT name match must
+    // outrank a same-token-family match, never lose to it on alphabetical
+    // luck. Found dogfooding a real frontend — querying 'dashboardApi' (a
+    // real `export const dashboardApi = {...}`) returned the unrelated
+    // 'DashboardPage' function instead, purely because "DashboardPage"
+    // sorted first alphabetically among the token-overlap candidates.
+    structural_hits.sort_by(|a, b| {
+        let exact_a = same_word(&a.name, term);
+        let exact_b = same_word(&b.name, term);
+        exact_b.cmp(&exact_a).then(a.file.cmp(&b.file)).then(a.name.cmp(&b.name))
+    });
+    // A route can exist with NO symbol sharing its name at all — e.g. a
+    // gRPC `rpc SayHello(...)` has no standalone "SayHello" symbol, only a
+    // Route entry. Without this, querying the route's own handler name hit
+    // a bare ABSENT purely because the trigger above only ever looked at
+    // `graph.symbols`. Found dogfooding a real .proto file.
+    if structural_hits.is_empty() {
+        let route_hits: Vec<&crate::structural::Route> = graph
+            .routes
+            .iter()
+            .filter(|r| same_word(&r.handler, term) || names_concept(&r.handler, term))
+            .take(10)
+            .collect();
+        if let Some(canon) = route_hits.first().map(|r| r.handler.clone()) {
+            return json!({
+                "concept": term,
+                "verdict": "STRUCTURAL",
+                "canonical": canon,
+                "evidence": route_hits.iter().map(|r| Evidence {
+                    tier: Tier::Declared,
+                    what: format!("{} {} route declared in {}", r.method, r.path, r.file),
+                }).collect::<Vec<_>>(),
+                "routes": route_hits.iter().map(|r| json!({
+                    "method": r.method, "path": r.path, "handler": r.handler, "file": r.file,
+                })).collect::<Vec<_>>(),
+                "confidence": "high — found in source as a real route handler, not a declared data/schema model",
+                "recommendation": format!("'{term}' exists in source as a route/RPC handler but is not a schema/storage concept. Schema-concept ranking does not apply."),
+            });
+        }
+    }
+
     if let Some(canon) = structural_hits.first().map(|s| s.name.clone()) {
+        // Cross-reference routes: this tier used to only ever look at
+        // `graph.symbols`, never `graph.routes` — so a real route handler
+        // (e.g. a Next.js page component) would resolve as a plain
+        // Function/Class with no hint that a route even exists. Two ways a
+        // route counts as relevant: it's declared in the SAME FILE as a
+        // matched symbol (the strong link — e.g. `DashboardPage` and
+        // `GET /dashboard` are the same `page.tsx`), or the term itself
+        // matches the route's handler name directly.
+        let hit_files: std::collections::HashSet<&str> =
+            structural_hits.iter().map(|s| s.file.as_str()).collect();
+        let linked_routes: Vec<&crate::structural::Route> = graph
+            .routes
+            .iter()
+            .filter(|r| hit_files.contains(r.file.as_str()) || same_word(&r.handler, term) || names_concept(&r.handler, term))
+            .take(10)
+            .collect();
         return json!({
             "concept": term,
             "verdict": "STRUCTURAL",
@@ -219,6 +275,9 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
                 tier: Tier::Declared,
                 what: format!("{:?} declared in {}:{}", s.kind, s.file, s.line),
             }).collect::<Vec<_>>(),
+            "routes": linked_routes.iter().map(|r| json!({
+                "method": r.method, "path": r.path, "handler": r.handler, "file": r.file,
+            })).collect::<Vec<_>>(),
             // Read fresh from disk at query time — not persisted, not cached,
             // just the file's own text. Same determinism guarantee as every
             // other evidence field; it just saves the caller a round trip.

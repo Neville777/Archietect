@@ -111,6 +111,57 @@ fn tool_defs() -> Value {
                 "strict": { "type": "boolean", "description": "Also fail on name-collision warnings, not only storage violations." },
                 "root": root_prop
             }, "required": ["diff"] }
+        },
+        {
+            "name": "proposal_submit",
+            "description": "AI-EXTENSION PROTOCOL, step 1 of 3. Register a new proposal (a unified diff) as pending — writes only under .architect/proposals/, never touches the real working tree. An extractor proposal may only touch src/structural.rs, tests/fixtures/**, validation/**; a decision/alias proposal may only touch architect.toml. Call `proposal_test` next.",
+            "inputSchema": { "type": "object", "properties": {
+                "kind": { "type": "string", "enum": ["extractor", "decision", "alias"] },
+                "title": { "type": "string" },
+                "description": { "type": "string" },
+                "lang": { "type": "string", "description": "Language name, for an extractor proposal." },
+                "preview_repo": { "type": "string", "description": "A real repo (path) to preview an extractor against — informational only." },
+                "patch": { "type": "string", "description": "The unified diff (git diff format) text." },
+                "root": root_prop
+            }, "required": ["kind", "title", "patch"] }
+        },
+        {
+            "name": "proposal_list",
+            "description": "AI-EXTENSION PROTOCOL. List all proposals and their status (pending/passed/failed/accepted/rejected).",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "proposal_inspect",
+            "description": "AI-EXTENSION PROTOCOL. Show one proposal's metadata, patch text, and last test result.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "number" },
+                "root": root_prop
+            }, "required": ["id"] }
+        },
+        {
+            "name": "proposal_test",
+            "description": "AI-EXTENSION PROTOCOL, step 2 of 3. Apply the patch in an ISOLATED git worktree and run the real regression suite against it (laws + invariants for an extractor; invariants::check for a decision/alias). Never touches the real working tree or architect.db. This is the only thing that can turn a proposal 'passed' — nothing here writes a fact.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "number" },
+                "root": root_prop
+            }, "required": ["id"] }
+        },
+        {
+            "name": "proposal_accept",
+            "description": "AI-EXTENSION PROTOCOL, step 3 of 3 — HUMAN-GATED. Applies a proposal to the REAL working tree, UNCOMMITTED, but only if: status is 'passed', the patch is byte-identical to what was tested, and the repository HEAD has not moved since. Never runs `git commit`. Prefer running this from the CLI yourself rather than calling it as a tool — accepting your own AI's proposal without a human actually looking at the diff first defeats the point of the gate.",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "number" },
+                "root": root_prop
+            }, "required": ["id"] }
+        },
+        {
+            "name": "proposal_reject",
+            "description": "AI-EXTENSION PROTOCOL. Mark a proposal rejected (kept for audit trail unless purge is set).",
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "number" },
+                "purge": { "type": "boolean", "description": "Delete the proposal's files instead of just marking it rejected." },
+                "root": root_prop
+            }, "required": ["id"] }
         }
     ])
 }
@@ -192,6 +243,52 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 "note": "Append-only architectural timeline, newest first, written only by the daemon or `architect ci`.",
                             }),
                             "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
+                            "proposal_submit" => {
+                                let kind_str = args["kind"].as_str().unwrap_or("");
+                                match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
+                                    Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
+                                    Ok(kind) => {
+                                        let patch_text = args["patch"].as_str().unwrap_or("");
+                                        let tmp = std::env::temp_dir().join(format!("architect-mcp-proposal-{}.diff", std::process::id()));
+                                        match std::fs::write(&tmp, patch_text) {
+                                            Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
+                                            Ok(()) => {
+                                                let out = crate::proposal::submit(
+                                                    &root, kind,
+                                                    args["title"].as_str().unwrap_or(""),
+                                                    args.get("description").and_then(|d| d.as_str()).unwrap_or(""),
+                                                    args.get("lang").and_then(|l| l.as_str()),
+                                                    args.get("preview_repo").and_then(|p| p.as_str()),
+                                                    "ai",
+                                                    &tmp,
+                                                );
+                                                let _ = std::fs::remove_file(&tmp);
+                                                match out {
+                                                    Ok(v) => v,
+                                                    Err(e) => json!({ "error": e.to_string() }),
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "proposal_list" => crate::proposal::list(&root),
+                            "proposal_inspect" => match crate::proposal::inspect(&root, args["id"].as_u64().unwrap_or(0)) {
+                                Ok(v) => v,
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            "proposal_test" => match crate::proposal::test(&root, args["id"].as_u64().unwrap_or(0)) {
+                                Ok(v) => v,
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            "proposal_accept" => match crate::proposal::accept(&root, args["id"].as_u64().unwrap_or(0)) {
+                                Ok(v) => v,
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            "proposal_reject" => match crate::proposal::reject(&root, args["id"].as_u64().unwrap_or(0), args.get("purge").and_then(|p| p.as_bool()).unwrap_or(false)) {
+                                Ok(v) => v,
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
                             other => json!({ "error": format!("unknown tool {other}") }),
                         };
                         cache.insert(root, (idx, graph));

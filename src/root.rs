@@ -7,6 +7,7 @@
 //! One public entry point. Everything else — CLI, REST, MCP, watch — calls
 //! `root::resolve(explicit)` and nothing else.
 
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 /// STRONG markers identify a repository root UNAMBIGUOUSLY (architect's own
@@ -31,7 +32,13 @@ const WEAK_MARKERS: &[&str] = &[
 pub fn resolve(explicit: Option<PathBuf>, start: &Path) -> anyhow::Result<PathBuf> {
     if let Some(r) = explicit {
         anyhow::ensure!(r.exists(), "root does not exist: {}", r.display());
-        return Ok(r);
+        // Canonicalize: an explicit relative `--root` (e.g. ".") used to
+        // leak as-is into every downstream path join. Harmless for most
+        // commands, but `proposal test` spawns `git apply` with its cwd set
+        // to an isolated worktree — a still-relative patch path then
+        // resolved against the WRONG directory and failed with "no such
+        // file," found by dogfooding the proposal protocol itself.
+        return r.canonicalize().with_context(|| format!("resolving root: {}", r.display()));
     }
     let mut weak_hit: Option<PathBuf> = None;
     let mut dir = start.to_path_buf();
