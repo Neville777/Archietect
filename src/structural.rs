@@ -159,7 +159,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached architect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 7; // +GraphQL, Protocol Buffers/gRPC, Compojure/Yesod/Vapor routes
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 8; // fix: Rails `resources :name` (symbol form) was never matched
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1299,6 +1299,50 @@ fn extract_rb(
             handler: "rails-route".to_string(),
             file: rel.to_string(),
         });
+    }
+
+    // The far more common real-world form: `resources :articles` /
+    // `resource :user` with a bare Ruby SYMBOL, not a quoted string — the
+    // regex above only ever matched the string form, so an entirely
+    // idiomatic routes.rb (this is how the Rails guides themselves write
+    // every example) produced zero routes. Found dogfooding a real Rails
+    // app. Doesn't try to enumerate the individual CRUD sub-actions
+    // `resources` generates (index/show/create/...) or honor `only:`/
+    // `except:` filters — reported as one "RESOURCES" entry per declared
+    // resource, enough to answer "does a route family for this already
+    // exist" without the added complexity of getting the filters wrong.
+    let resource_re = Regex::new(r"(?m)^\s*resources?\s+:(\w+)").unwrap();
+    for cap in resource_re.captures_iter(text) {
+        routes.push(Route {
+            method: "RESOURCES".to_string(),
+            path: format!("/{}", &cap[1]),
+            handler: "rails-resource".to_string(),
+            file: rel.to_string(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod rb_tests {
+    use super::*;
+
+    #[test]
+    fn extract_rb_finds_symbol_form_resources() {
+        let src = r#"
+Rails.application.routes.draw do
+  resources :articles, only: [:index, :show]
+  resource :user, only: [:show, :update]
+  get '/health', to: 'health#check'
+end
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_rb("config/routes.rb", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/articles"));
+        assert!(routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/user"));
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/health"));
     }
 }
 

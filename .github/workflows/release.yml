@@ -1,0 +1,77 @@
+name: Release
+
+# Builds and attaches dependency-free binaries to a GitHub Release whenever
+# a version tag (v0.1.0, v1.2.3, ...) is pushed. Never runs on an ordinary
+# push/PR — see ci.yml for that. Nothing here creates a tag on its own;
+# cutting the first release is a decision for a human to make, not this
+# workflow.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: architect-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: architect-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: architect-macos-x86_64
+          # Windows is deliberately not included here: the daemon
+          # (`architect watch` via packaging/onboard.sh --daemon) only
+          # knows systemd (Linux) and launchd (macOS) — see onboard.sh's
+          # own `case "$(uname)"` — and the plain CLI binary has never
+          # actually been built or run on Windows by anyone in this
+          # project's history. Adding it to this matrix would ship an
+          # artifact nobody has verified, not just one with a known gap.
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/architect" "dist/${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p out
+          find dist -type f -exec cp {} out/ \;
+          ls -la out/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

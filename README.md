@@ -318,20 +318,21 @@ Two suites, different guarantees:
 - `tests/laws.rs` — tiny synthetic fixtures, one per law: *the specific bug
   that taught us this rule cannot recur.*
 - `tests/invariants.rs` — real cloned open-source repositories (chatwoot,
-  lobe-chat, umami, Saleor, BookStack, dub, analytics, redash for the schema
-  layer; ASP.NET Core, C, Dart, and Scala corpora for structural-only
-  languages with no schema extractor): *the class of bug this invariant
-  defines cannot occur in any scanned corpus, not just the one that found
-  it.*
+  lobe-chat, umami, Saleor, BookStack, dub, analytics, redash, Rails' and
+  NestJS's own RealWorld ("Conduit") implementations for the schema layer;
+  ASP.NET Core, C, Dart, Scala, Nuxt's own devtools monorepo, and gRPC's own
+  canonical examples for structural-only checks — routes included, not just
+  symbols): *the class of bug this invariant defines cannot occur in any
+  scanned corpus, not just the one that found it.*
 
 Every new language/framework extractor gets exercised against real code
 before being trusted, not just a unit test — a synthetic snippet passing
 was once not enough to catch an extractor that was completely unreachable
-through the real scan pipeline. Not everything verified this way has a
-*permanent, committed* regression test yet (NestJS, Rails, Nuxt, and gRPC's
-own canonical examples were dogfooded live during development but aren't
-wired into `tests/invariants.rs` as of this writing) — that gap is itself
-tracked honestly here rather than implied to be closed.
+through the real scan pipeline, and a schema-layer real-repo check passing
+was once not enough either (Rails' idiomatic `resources :articles` — a bare
+Ruby symbol — was never matched by a route regex that only ever looked for
+a quoted string, found the same way: by actually dogfooding a real
+routes.rb, not by the unit test that already existed).
 
 ## Provenance
 
