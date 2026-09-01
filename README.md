@@ -113,8 +113,18 @@ it knows and what it doesn't.
 
 ## Getting started
 
-Requires Rust (`cargo build --release` — the binary is dependency-free
-after that, no runtime, no API key).
+**Fastest — download a prebuilt binary**, no Rust toolchain needed: grab
+`architect-linux-x86_64` / `architect-macos-arm64` / `architect-macos-x86_64`
+from [Releases](https://github.com/Neville777/Archietect/releases/latest),
+`chmod +x` it, put it on your `PATH` as `architect`. Then, once per project:
+
+```bash
+architect init --root /path/to/your-project
+claude mcp add architect -- "$(which architect)" mcp   # once, ever — every project reuses this
+```
+
+**Or build from source** (needed either way if you want `packaging/onboard.sh`'s
+one-command flow, the systemd/launchd daemon install, or to run the test suite):
 
 ```bash
 git clone <this repo> architect && cd architect
