@@ -370,6 +370,20 @@ pub fn test(root: &Path, id: u64) -> Result<Value> {
         bail!("git worktree add failed: {}", String::from_utf8_lossy(&add.stderr));
     }
 
+    // `git worktree add` only carries tracked content — the real-corpus
+    // validation/ directory is gitignored (854MB of cloned third-party
+    // repos, deliberately not committed), so `cargo test --test invariants`
+    // would otherwise fail every single extractor proposal with "corpus
+    // repo missing", regardless of the patch. Symlink it in read-only reuse
+    // rather than copying: tests only read from it.
+    let real_validation = root.join("validation");
+    if real_validation.is_dir() {
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&real_validation, worktree.join("validation"));
+        #[cfg(not(unix))]
+        let _ = std::fs::create_dir_all(worktree.join("validation"));
+    }
+
     let outcome = run_in_worktree(&worktree, &patch_file, &meta);
 
     let _ = Command::new("git")

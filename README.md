@@ -89,7 +89,37 @@ architect laws                          the language specification, from laws/*.
 architect watch   --root DIR [--subscribe C]   daemon: observe → notify, never act
 architect history --root DIR [CONCEPT]  the architectural timeline (what Git can't say)
 architect mcp     [--root DIR]          MCP server: every AI tool becomes a client
+architect proposal submit/list/inspect/test/accept/reject   the AI-extension protocol (below)
 ```
+
+## The proposal protocol: how the AI extends Architect
+
+The only door through which a change — a new structural extractor, or a new
+`architect.toml` decision/alias — can reach the repository, and it never
+opens on its own. An AI proposes work, never evidence: `Tier::Inferred` does
+not exist, and this protocol is the reason it doesn't need to.
+
+```
+architect proposal submit --kind extractor|decision|alias \
+    --title "..." --patch some.diff      # inert patch, nothing applied yet
+architect proposal test <id>             # applies it in an isolated git
+                                          # worktree and runs it through the
+                                          # SAME laws + invariants suite —
+                                          # the real working tree is never
+                                          # touched
+architect proposal accept <id>           # only if: status == passed, the
+                                          # patch is byte-identical to what
+                                          # was tested, AND the repository
+                                          # HEAD hasn't moved since — then
+                                          # applies to the real working tree,
+                                          # UNCOMMITTED. Architect never runs
+                                          # `git commit`.
+```
+
+`check_scope()` hard-blocks any patch that touches the validation machinery
+itself (`laws.rs`, `tests/laws.rs`, `tests/invariants.rs`, `store.rs`,
+`model.rs`, `proposal.rs`, `Cargo.*`, `.github/`) or strays outside its
+kind's allow-list — a proposal cannot weaken the suite it's judged by.
 
 ## The per-project ontology: architect.toml
 
