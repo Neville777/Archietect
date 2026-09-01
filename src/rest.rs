@@ -88,6 +88,10 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     // The warm cache. Single-threaded loop, one request at a time — plain
     // HashMap, no lock needed.
     let mut cache: HashMap<PathBuf, (Index, StructuralGraph)> = HashMap::new();
+    // See `crate::exe_mtime`'s doc comment — same staleness detection as the
+    // MCP server, for the same reason: this is a long-running process that
+    // can outlive many rebuilds of its own binary.
+    let started_mtime = crate::exe_mtime();
 
     for req in server.incoming_requests() {
         let (path, p) = params(req.url());
@@ -108,7 +112,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             continue;
         }
 
-        let body: Value = match (path.as_str(), root) {
+        let mut body: Value = match (path.as_str(), root) {
             ("/laws", _) => laws::registry_json(),
             (_, None) => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
             (_, Some(root)) if !root.exists() => {
@@ -216,6 +220,16 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                 result
             }
         };
+
+        if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
+            if now != started {
+                if let Value::Object(ref mut map) = body {
+                    map.insert("_stale_binary_warning".to_string(), json!(
+                        "This REST server process has been running since before the architect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart the `architect serve` process to pick up the current build."
+                    ));
+                }
+            }
+        }
 
         let data = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
         let response = tiny_http::Response::from_string(data)

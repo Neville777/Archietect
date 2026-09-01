@@ -169,6 +169,12 @@ fn tool_defs() -> Value {
 pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    // Snapshot once at startup — see `crate::exe_mtime`'s doc comment. This
+    // is a stdio server that can live for hours across many rebuilds of the
+    // very binary it's running; checked on every tool call because the
+    // failure mode this guards is "already stale mid-session," not just
+    // "started stale."
+    let started_mtime = crate::exe_mtime();
     // Warm cache across the whole MCP session, same fix and same reasoning
     // as rest.rs: an agent composing one architectural answer easily makes
     // five tool calls (concept, owner, impact, decisions via plan) in a row.
@@ -223,7 +229,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             None => (None, None),
                         };
                         let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
-                        let out = match name {
+                        let mut out = match name {
                             "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
                             "impact" => query::impact(&idx, &graph, args["term"].as_str().unwrap_or("")),
@@ -292,6 +298,15 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             other => json!({ "error": format!("unknown tool {other}") }),
                         };
                         cache.insert(root, (idx, graph));
+                        if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
+                            if now != started {
+                                if let Value::Object(ref mut map) = out {
+                                    map.insert("_stale_binary_warning".to_string(), json!(
+                                        "This MCP server process has been running since before the architect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart this session (or otherwise force your MCP client to respawn the 'architect' server) to pick up the current build."
+                                    ));
+                                }
+                            }
+                        }
                         Ok(json!({
                             "content": [ { "type": "text", "text": serde_json::to_string_pretty(&out)? } ],
                             "isError": false

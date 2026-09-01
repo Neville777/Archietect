@@ -297,6 +297,11 @@ fn print_event(ev: &Event, subscribe: Option<&str>) {
 
 pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
     let sub = subscribe.as_deref();
+    // See `crate::exe_mtime`'s doc comment — the daemon is the longest-lived
+    // process in this whole system (started at login, runs for weeks), so
+    // it's the most likely of all of them to end up silently serving a
+    // rebuilt-out-from-under-it binary.
+    let started_mtime = crate::exe_mtime();
     // initial build — the daemon starts knowing.
     let (mut current, mut current_graph) = scan::scan(&root);
     store::save(&current, &current_graph, &root)?;
@@ -340,6 +345,15 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         // …then debounce: absorb the burst (editors write several events per
         // save) and rescan once when the tree goes quiet.
         while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+
+        if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
+            if now != started {
+                println!("{}", json!({
+                    "ts_ms": now_ms(), "kind": "stale_binary_warning", "concept": "",
+                    "detail": "This daemon has been running since before the architect binary on disk was last rebuilt — it is rescanning with OLD extractor code. Restart it (systemctl --user restart architectd@<escaped-path>, or re-run `architect watch`) to pick up the current build.",
+                }));
+            }
+        }
 
         let (next, next_graph) = scan::scan_with_prior(&root, Some(current.clone()), Some(current_graph.clone()));
         let mut events = diff_findings(&current, &next);
