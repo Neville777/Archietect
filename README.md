@@ -362,12 +362,6 @@ trust that it compiles your code correctly. This section documents how
 Architect is *developed*, so it keeps improving release over release
 without regressing.
 
-## Provenance
-
-Built inside an autonomous coding-agent project after a recurring failure
-mode: "build X" → later → "X already existed." The fix was to make checking
-a capability, then a law, then an always-running daemon.
-
 ## License
 
 [Business Source License 1.1](LICENSE) — source-available, not permissive
