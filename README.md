@@ -36,16 +36,18 @@ $ architect concept doctor
   "canonical": "doctor",
   "confidence": "high — found in source as a real symbol, not a declared data/schema model",
   "evidence": [
-    { "tier": "Declared", "what": "Function declared in src/query.rs:662" }
+    { "tier": "Declared", "what": "Function declared in src/query.rs:677" }
   ],
   "source": [{
-    "file": "src/query.rs", "line": 662,
-    "excerpt": "661: /// Repository summary for someone who just cloned it.\n662: pub fn doctor(idx: &Index, ...) -> Value {\n663:     // Domains = where declarations LIVE ..."
+    "file": "src/query.rs", "line": 677,
+    "excerpt": "675: \n676: /// Repository summary for someone who just cloned it.\n677: pub fn doctor(idx: &Index, ...) -> Value {\n678:     // Domains = where declarations LIVE ..."
   }],
   "routes": [],
   "recommendation": "'doctor' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply."
 }
 ```
+(the exact line number above will drift as this file is edited — re-run it
+yourself any time; that's the point, it's live, not a fixture)
 
 That's Architect answering a question about its own source — real file, real
 line, real code excerpt, read fresh off disk at query time. Ask about
@@ -65,7 +67,7 @@ instead of guessing — a third state, distinct from both of the above:
 $ architect concept processOrder
 { "verdict": "INSUFFICIENT_COVERAGE",
   "confidence": "unknown — this repository contains files in a language with no structural extractor",
-  "next_action": { "read": ["handler.lua"], "question": "Do any of these files implement 'processOrder'?" } }
+  "next_action": { "read": ["handler.lua"], "question": "Do any of these files implement or represent 'processOrder'?" } }
 ```
 
 That's the entire trust model, and it's the only thing about Architect's

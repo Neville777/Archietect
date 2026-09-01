@@ -81,8 +81,14 @@ const NON_CODE_EXTS: &[&str] = &[
     "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
     "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
     "db", "sqlite", "sqlite3", // architect.db itself, and other embedded DBs
-    "example", "local", // .env.example, .env.local — templates, not code
+    "example", "local", "development", "template", // .env.example/.local/.development — not code
     "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
+    "service", "plist", "unit", // systemd/launchd unit files — config, not code
+    "1", "man", "rdoc", "tex", // man pages, RDoc, LaTeX — documentation formats
+    "doc", "docx", "epub", "pptx", "xlsx", // office/ebook document formats
+    "dbml", "jsonl", "patch", "snap", // schema-adjacent/data/diff/test-snapshot formats
+    "desktop", "ru", // Linux .desktop shortcuts, Rack's config.ru — config, not code
+    "mdx", // overwhelmingly prose (docs/blog) in real-world use, like .md
 ];
 
 /// Files that exist in this repo but are neither recognized as source

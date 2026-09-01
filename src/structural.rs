@@ -159,7 +159,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached architect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 9; // fix: .mjs/.cjs (real JS) were never scannable at all
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 10; // fix: .mts/.cts (real TS module variants) were never scannable
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -436,7 +436,7 @@ pub const LANGUAGES: &[LanguageSpec] = &[
     },
     LanguageSpec {
         name: "TypeScript/JavaScript",
-        extensions: &["ts", "tsx", "js", "jsx", "mjs", "cjs"],
+        extensions: &["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"],
         extractor: extract_ts_js,
         symbol_support: "classes, interfaces, enums, exported functions, routes, events",
         frameworks: &["Express", "NestJS", "Next.js", "Nuxt (server/api)"],
