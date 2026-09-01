@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd user LaunchAgent template for the architect daemon — the macOS
+  equivalent of packaging/architectd.service (a systemd user-scope unit).
+  Unlike a systemd template unit (architectd@.service, instantiated per
+  project via the %I specifier at systemctl user-scope enable/now
+  architectd@escaped-path), launchd has no built-in instance templating:
+  each watched project needs its own fully-substituted plist, installed
+  under its own unique Label/filename. onboard.sh generates one of these
+  per project from this template by replacing the placeholders below:
+
+    __LABEL__         reverse-DNS style unique id, e.g.
+                       com.architect.watch.<sanitized-project-path>
+    __ARCHITECT_BIN__ absolute path to the architect binary
+                       (target/release/architect)
+    __PROJECT_ROOT__  absolute path to the project being watched
+    __LOG_DIR__       directory for daemon stdout/stderr logs
+                       (~/Library/Logs/architect)
+
+  Install (done by onboard.sh's Darwin daemon-install branch; shown here
+  for reference / manual use):
+
+    mkdir -p ~/Library/Logs/architect
+    # substitute placeholders, then:
+    cp com.architect.watch.<project>.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) \
+        ~/Library/LaunchAgents/com.architect.watch.<project>.plist
+
+  The daemon is the ONLY writer to architect.db; CLI/MCP/REST are readers.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__ARCHITECT_BIN__</string>
+        <string>watch</string>
+        <string>--root</string>
+        <string>__PROJECT_ROOT__</string>
+    </array>
+
+    <!-- Equivalent of systemd's Restart=on-failure: relaunch only when the
+         process exits non-zero, not on a clean exit. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Start at login/load, like the systemd unit's WantedBy=default.target. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Equivalent of systemd's Nice=10: a low-priority background agent,
+         not interactive/user-facing work. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/__LABEL__.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/__LABEL__.err.log</string>
+</dict>
+</plist>

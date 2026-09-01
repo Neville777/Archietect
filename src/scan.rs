@@ -29,6 +29,7 @@
 //! each minted phantom concepts that defeated the guard).
 
 use crate::model::{Concept, DeclFragment, FileFacts, Index};
+use crate::structural::{self, StructuralGraph};
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use std::collections::BTreeMap;
@@ -43,10 +44,35 @@ const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
 ];
-const SRC_EXTS: &[&str] = &[
-    "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "rb", "php", "ex", "exs", "prisma", "sql",
-];
 const MAX_FILE_BYTES: u64 = 2_000_000;
+/// Schema-declaration formats structural.rs has no reason to know about —
+/// not "code" in the symbols/routes sense, so they live outside
+/// `structural::LANGUAGES`, but the schema extractors above still need them
+/// walked.
+const SCHEMA_ONLY_EXTS: &[&str] = &["prisma", "sql"];
+
+/// LAW-014: the file-walk's scannable-extension filter is DERIVED from
+/// `structural::LANGUAGES`/`structural::KNOWN_UNSUPPORTED` — never a second
+/// hand-maintained list. A hand-maintained SRC_EXTS here once drifted from
+/// the extractor registry (Kotlin was added to LANGUAGES but not to
+/// SRC_EXTS, so every .kt file was silently unreachable through the real
+/// scan path despite its extractor compiling and its unit test passing).
+fn is_scannable_ext(ext: &str) -> bool {
+    SCHEMA_ONLY_EXTS.contains(&ext)
+        || structural::LANGUAGES.iter().any(|l| l.extensions.contains(&ext))
+        || structural::KNOWN_UNSUPPORTED.iter().any(|(_, exts)| exts.contains(&ext))
+}
+
+/// One file the scan pipeline walked — schema and structural extraction
+/// both operate over the same inventory. Public: `structural::extract`
+/// takes a slice of these directly, so the file-walk step is not
+/// duplicated between the schema pass and the structural pass.
+pub struct ScannableFile {
+    pub path: std::path::PathBuf,
+    pub rel: String,
+    pub size: u64,
+    pub mtime_ms: i64,
+}
 
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir()
@@ -79,11 +105,16 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn scan(root: &Path) -> Index {
-    scan_with_prior(root, crate::store::load_raw(root))
+pub fn scan(root: &Path) -> (Index, StructuralGraph) {
+    let (schema_prior, graph_prior) = crate::store::load_raw(root);
+    scan_with_prior(root, schema_prior, graph_prior)
 }
 
-pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
+pub fn scan_with_prior(
+    root: &Path,
+    prior: Option<Index>,
+    graph_prior: Option<StructuralGraph>,
+) -> (Index, StructuralGraph) {
     let prior = prior.filter(|p| p.extractor_version == EXTRACTOR_VERSION);
     let mut idx = Index {
         root: root.display().to_string(),
@@ -145,13 +176,7 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
     idx.excludes = excludes.clone();
 
     // ── file inventory with metadata ────────────────────────────────────────
-    struct F {
-        path: std::path::PathBuf,
-        rel: String,
-        size: u64,
-        mtime_ms: i64,
-    }
-    let files: Vec<F> = WalkDir::new(root)
+    let files: Vec<ScannableFile> = WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| !skip_dir(e) && !skip_excluded(e, root, &excludes))
         .filter_map(|e| e.ok())
@@ -160,7 +185,7 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
             e.path()
                 .extension()
                 .and_then(|x| x.to_str())
-                .map(|x| SRC_EXTS.contains(&x))
+                .map(is_scannable_ext)
                 .unwrap_or(false)
         })
         .filter_map(|e| {
@@ -175,14 +200,14 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
             let rel = e.path().strip_prefix(root).unwrap_or(e.path()).display().to_string();
-            Some(F { path: e.into_path(), rel, size: m.len(), mtime_ms })
+            Some(ScannableFile { path: e.into_path(), rel, size: m.len(), mtime_ms })
         })
         .collect();
     idx.files_scanned = files.len();
 
     let prior_facts: BTreeMap<String, FileFacts> =
         prior.as_ref().map(|p| p.file_facts.clone()).unwrap_or_default();
-    let unchanged = |f: &F| {
+    let unchanged = |f: &ScannableFile| {
         prior_facts
             .get(&f.rel)
             .map(|pf| pf.size == f.size && pf.mtime_ms == f.mtime_ms)
@@ -482,7 +507,15 @@ pub fn scan_with_prior(root: &Path, prior: Option<Index>) -> Index {
         c.usage.sort();
         c.usage.dedup();
     }
-    idx
+
+    // ── structural graph: independent of the schema pass (see structural.rs
+    // module doc — no concepts_sig-style invalidation here, just per-file
+    // size/mtime/extractor_version caching), linked to concepts once both
+    // are assembled.
+    let mut graph = structural::extract(root, &files, graph_prior.as_ref());
+    structural::link_to_concepts(&mut graph, &idx.concepts);
+
+    (idx, graph)
 }
 
 // ── per-file declaration extraction (pure) ───────────────────────────────────

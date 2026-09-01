@@ -104,7 +104,7 @@ pub fn bump_arch_version(root: &Path) -> Result<i64> {
     Ok(next)
 }
 
-pub fn save(idx: &Index, root: &Path) -> Result<std::path::PathBuf> {
+pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path) -> Result<std::path::PathBuf> {
     let db_path = root.join("architect.db");
     let conn = Connection::open(&db_path)?;
     conn.execute_batch(
@@ -114,6 +114,10 @@ pub fn save(idx: &Index, root: &Path) -> Result<std::path::PathBuf> {
     conn.execute(
         "INSERT OR REPLACE INTO idx (k, doc) VALUES ('index', ?1)",
         [serde_json::to_string(idx)?],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO idx (k, doc) VALUES ('structural', ?1)",
+        [serde_json::to_string(graph)?],
     )?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (k, v) VALUES ('written_ms', ?1)",
@@ -126,20 +130,27 @@ pub fn save(idx: &Index, root: &Path) -> Result<std::path::PathBuf> {
 /// incremental scanner makes that call per file (size+mtime+extractor
 /// version), which replaced the old whole-index invalidation: one touched
 /// file used to throw away everything.
-pub fn load_raw(root: &Path) -> Option<Index> {
+pub fn load_raw(root: &Path) -> (Option<Index>, Option<crate::structural::StructuralGraph>) {
     let db_path = root.join("architect.db");
     if !db_path.exists() {
-        return None;
+        return (None, None);
     }
-    let conn = Connection::open_with_flags(
+    let conn = match Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
-    let doc: String = conn
-        .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get(0))
-        .ok()?;
-    serde_json::from_str(&doc).ok()
+    ) {
+        Ok(c) => c,
+        Err(_) => return (None, None),
+    };
+    let idx: Option<Index> = conn
+        .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|doc| serde_json::from_str(&doc).ok());
+    let graph: Option<crate::structural::StructuralGraph> = conn
+        .query_row("SELECT doc FROM idx WHERE k='structural'", [], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|doc| serde_json::from_str(&doc).ok());
+    (idx, graph)
 }
 
 fn chrono_ms() -> i64 {

@@ -81,8 +81,36 @@ fn tool_defs() -> Value {
         },
         {
             "name": "status",
-            "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, and concepts declared but never observed in use — with an honest note about what the scan cannot see.",
+            "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, concepts declared but never observed in use, and structural_coverage (which languages/frameworks in THIS repo Architect can actually see) — with an honest note about what the scan cannot see.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "doctor",
+            "description": "Repository summary for someone who just cloned it: domains, top concepts, recent architectural changes, decisions to read, and structural coverage. The onboarding view.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "tour",
+            "description": "Onboarding tour: important concepts, ignorable ones, and the mistakes the ontology already knows people will make (every declared alias and every rejected decision is a 'don't build X' waiting to happen) — zero generated prose.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "history",
+            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `architect ci`.",
+            "inputSchema": { "type": "object", "properties": {
+                "concept": { "type": "string", "description": "Optional — filter to events touching this concept." },
+                "limit": { "type": "number", "description": "Max events to return (default 50)." },
+                "root": root_prop
+            } }
+        },
+        {
+            "name": "ci",
+            "description": "CI gate: check a diff/patch text for CREATE TABLE statements that duplicate an existing concept. Read-only — unlike `architect ci` on the command line, this tool call does NOT record the outcome to history (recording happens only at the actual commit-time call site).",
+            "inputSchema": { "type": "object", "properties": {
+                "diff": { "type": "string", "description": "The diff or patch text to check." },
+                "strict": { "type": "boolean", "description": "Also fail on name-collision warnings, not only storage violations." },
+                "root": root_prop
+            }, "required": ["diff"] }
         }
     ])
 }
@@ -96,7 +124,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // Without this, each one was a full cold scan — five times the cost for
     // one question. stdin is read one line at a time, sequentially, so a
     // plain HashMap needs no lock here either.
-    let mut cache: std::collections::HashMap<PathBuf, crate::model::Index> = std::collections::HashMap::new();
+    let mut cache: std::collections::HashMap<PathBuf, (crate::model::Index, crate::structural::StructuralGraph)> = std::collections::HashMap::new();
 
     for line in stdin.lock().lines() {
         let line = line?;
@@ -138,19 +166,35 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         Err((-32602i64, format!("root does not exist: {}", root.display())))
                     }
                     Some(root) => {
-                        let idx = scan::scan_with_prior(&root, cache.remove(&root));
+                        let prior = cache.remove(&root);
+                        let (schema_prior, graph_prior) = match prior {
+                            Some((s, g)) => (Some(s), Some(g)),
+                            None => (None, None),
+                        };
+                        let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
                         let out = match name {
-                            "concept" => query::concept(&idx, args["term"].as_str().unwrap_or("")),
+                            "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
-                            "impact" => query::impact(&idx, args["term"].as_str().unwrap_or("")),
+                            "impact" => query::impact(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "guard" => query::guard(&idx, args["sql"].as_str().unwrap_or("")),
-                            "plan" => query::plan(&idx, args["text"].as_str().unwrap_or("")),
+                            "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
-                            "status" => query::status(&idx),
+                            "status" => query::status(&idx, &graph),
+                            "doctor" => query::doctor(&idx, &graph, &root),
+                            "tour" => query::tour(&idx, &graph),
+                            "history" => json!({
+                                "events": crate::store::read_history(
+                                    &root,
+                                    args.get("concept").and_then(|c| c.as_str()),
+                                    args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize,
+                                ),
+                                "note": "Append-only architectural timeline, newest first, written only by the daemon or `architect ci`.",
+                            }),
+                            "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
                             other => json!({ "error": format!("unknown tool {other}") }),
                         };
-                        cache.insert(root, idx);
+                        cache.insert(root, (idx, graph));
                         Ok(json!({
                             "content": [ { "type": "text", "text": serde_json::to_string_pretty(&out)? } ],
                             "isError": false

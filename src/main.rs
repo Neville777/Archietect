@@ -18,7 +18,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use architect::{mcp, model, query, rest, root, scan, store, watch};
+use architect::{mcp, model, proposal, query, rest, root, scan, store, watch};
 
 #[derive(Parser)]
 #[command(name = "architect", version, about)]
@@ -94,9 +94,59 @@ enum Cmd {
     },
     /// Serve the index over MCP (stdio) — makes every AI coding tool a client
     Mcp,
+    /// AI-proposed extractor/decision/alias changes: submit a patch, test it
+    /// against the existing laws + invariants suite in an isolated git
+    /// worktree, and only then apply it to the working tree — uncommitted.
+    /// AI proposes work, never evidence; a human always runs `accept`.
+    #[command(subcommand)]
+    Proposal(ProposalCmd),
 }
 
-fn index_for(root: &PathBuf) -> model::Index {
+#[derive(Subcommand)]
+enum ProposalCmd {
+    /// Register a new proposal (a patch) as pending — writes nothing outside
+    /// .architect/proposals/, does not touch the working tree
+    Submit {
+        #[arg(long, value_enum)]
+        kind: proposal::Kind,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Language name, for an extractor proposal
+        #[arg(long)]
+        lang: Option<String>,
+        /// A real repo to preview an extractor against (informational only)
+        #[arg(long)]
+        preview_repo: Option<String>,
+        /// Who/what authored this patch — "ai", "human", a tool name...
+        #[arg(long, default_value = "human")]
+        source: String,
+        /// Path to a unified diff (git diff format)
+        #[arg(long)]
+        patch: PathBuf,
+    },
+    /// List all proposals and their status
+    List,
+    /// Show a proposal's metadata, patch, and last test result
+    Inspect { id: u64 },
+    /// Apply the patch in an isolated git worktree and run the existing
+    /// regression suite against it — laws + invariants for an extractor,
+    /// invariants::check for a decision/alias. Never touches the real
+    /// working tree or architect.db.
+    Test { id: u64 },
+    /// Apply a passed, unmodified-since-test proposal to the real working
+    /// tree — uncommitted. Never runs `git commit`.
+    Accept { id: u64 },
+    /// Mark a proposal rejected (kept for audit trail unless --purge)
+    Reject {
+        id: u64,
+        #[arg(long)]
+        purge: bool,
+    },
+}
+
+fn index_for(root: &PathBuf) -> (model::Index, architect::structural::StructuralGraph) {
     // Incremental: reuses per-file facts from architect.db where unchanged,
     // honours the schema-invalidates-usage dependency rule. Queries stay
     // read-only; only `init` (and the daemon) persist.
@@ -134,14 +184,27 @@ fn print_glance(g: &serde_json::Value) {
     println!("\n(architect --json for machine output; subcommands are always JSON)");
 }
 
+/// `println!` panics on a write error, including the ordinary case of stdout
+/// closing early (`architect concept Foo | head`). Every other well-behaved
+/// CLI (grep, cat, jq) exits quietly on SIGPIPE instead of printing a Rust
+/// backtrace; restoring the default disposition here gets the same behavior.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+}
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() -> anyhow::Result<()> {
+    reset_sigpipe();
     let cli = Cli::parse();
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
 
     // bare `architect` = the glance — the git-status of architecture
     let Some(cmd) = cli.cmd else {
-        let out = query::glance(&index_for(&root), &root);
+        let (idx, graph) = index_for(&root);
+        let out = query::glance(&idx, &graph, &root);
         if cli.json {
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
@@ -152,25 +215,27 @@ fn main() -> anyhow::Result<()> {
 
     let out = match cmd {
         Cmd::Init => {
-            let idx = scan::scan(&root);
-            let path = store::save(&idx, &root)?;
+            let (idx, graph) = scan::scan(&root);
+            let path = store::save(&idx, &graph, &root)?;
             serde_json::json!({
                 "indexed": path.display().to_string(),
                 "files_scanned": idx.files_scanned,
                 "concepts": idx.concepts.len(),
+                "symbols": graph.symbols.len(),
+                "routes": graph.routes.len(),
                 "declaration_files": idx.declaration_files,
             })
         }
-        Cmd::Status => query::status(&index_for(&root)),
-        Cmd::Concept { term } => query::concept(&index_for(&root), &term),
-        Cmd::Intent { text } => query::intent(&index_for(&root), &text.join(" ")),
-        Cmd::Plan { text } => query::plan(&index_for(&root), &text.join(" ")),
-        Cmd::Impact { term } => query::impact(&index_for(&root), &term),
-        Cmd::Guard { sql } => query::guard(&index_for(&root), &sql),
-        Cmd::Doctor => query::doctor(&index_for(&root), &root),
-        Cmd::Tour => query::tour(&index_for(&root)),
-        Cmd::Duplicates => query::duplicates(&index_for(&root)),
-        Cmd::Owner { term } => query::owner(&index_for(&root), &term),
+        Cmd::Status => { let (idx, g) = index_for(&root); query::status(&idx, &g) }
+        Cmd::Concept { term } => { let (idx, g) = index_for(&root); query::concept(&idx, &g, &term) }
+        Cmd::Intent { text } => { let (idx, _g) = index_for(&root); query::intent(&idx, &text.join(" ")) }
+        Cmd::Plan { text } => { let (idx, g) = index_for(&root); query::plan(&idx, &g, &text.join(" ")) }
+        Cmd::Impact { term } => { let (idx, g) = index_for(&root); query::impact(&idx, &g, &term) }
+        Cmd::Guard { sql } => { let (idx, _g) = index_for(&root); query::guard(&idx, &sql) }
+        Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
+        Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
+        Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
+        Cmd::Owner { term } => { let (idx, _g) = index_for(&root); query::owner(&idx, &term) }
         Cmd::History { concept, limit } => serde_json::json!({
             "root": root.display().to_string(),
             "concept": concept,
@@ -180,7 +245,8 @@ fn main() -> anyhow::Result<()> {
         Cmd::Ci { strict } => {
             let mut diff = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
-            let out = query::ci(&index_for(&root), &diff, strict);
+            let (idx, _g) = index_for(&root);
+            let out = query::ci(&idx, &diff, strict);
             println!("{}", serde_json::to_string_pretty(&out)?);
 
             // Record the outcome. query::ci() itself stays read-only — REST
@@ -229,6 +295,31 @@ fn main() -> anyhow::Result<()> {
             mcp::serve(Some(root))?;
             return Ok(());
         }
+        Cmd::Proposal(pcmd) => match pcmd {
+            ProposalCmd::Submit { kind, title, description, lang, preview_repo, source, patch } => proposal::submit(
+                &root,
+                kind,
+                &title,
+                &description,
+                lang.as_deref(),
+                preview_repo.as_deref(),
+                &source,
+                &patch,
+            )?,
+            ProposalCmd::List => proposal::list(&root),
+            ProposalCmd::Inspect { id } => proposal::inspect(&root, id)?,
+            ProposalCmd::Test { id } => {
+                let out = proposal::test(&root, id)?;
+                let passed = out["result"]["passed"] == true;
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                if !passed {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            ProposalCmd::Accept { id } => proposal::accept(&root, id)?,
+            ProposalCmd::Reject { id, purge } => proposal::reject(&root, id, purge)?,
+        },
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())

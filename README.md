@@ -52,6 +52,29 @@ Architect.**
    a concept count going DOWN (204 → 198): six phantom concepts eliminated.
    The engine celebrates stopping believing lies, not believing more things.
 
+## Memory model
+
+This is a trust guarantee, not an implementation detail — projects never
+share architectural memory, and no per-project state ever leaves that
+project's own directory:
+
+```
+Architect core (compiled into the binary)
+  └── laws/*.toml — universal rules about how the engine matches and ranks,
+      the same for every project, never copied anywhere
+
+Each project — <root>/architect.db (one SQLite file)
+  ├── architecture state (concepts, structural graph)
+  ├── decisions + aliases (mirrored from that project's own architect.toml)
+  └── immutable event history (append-only)
+```
+
+A developer's `~/titan/architect.db` and another developer's
+`~/payments/architect.db` are independent memories governed by the same
+compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
+`CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
+against a project can never drop its history or decisions.
+
 ## Commands
 
 ```

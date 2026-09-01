@@ -1,3 +1,4 @@
 /target
 architect.db
 validation/
+.architect/

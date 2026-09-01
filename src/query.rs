@@ -14,12 +14,35 @@
 
 use crate::model::{names_concept, same_word, Evidence, Index, Tier};
 use crate::scoring;
+use crate::structural::{routes_for_concept, structural_dependents, symbols_for_concept, StructuralGraph};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+/// A few lines of real source around a declaration, read fresh from disk.
+/// Deterministic (it's the file's own bytes) — not inference, just saving
+/// the caller a Read/grep round trip for something Architect already knows
+/// the exact location of.
+fn source_snippet(root: &str, file: &str, line: usize, context: usize) -> Option<String> {
+    let text = std::fs::read_to_string(std::path::Path::new(root).join(file)).ok()?;
+    let lines: Vec<&str> = text.lines().collect();
+    if line == 0 || line > lines.len() {
+        return None;
+    }
+    let start = line.saturating_sub(1).saturating_sub(context);
+    let end = (line - 1 + context + 1).min(lines.len());
+    Some(
+        lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, l)| format!("{}: {}", start + i + 1, l))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// Build the answer card for a concept KNOWN to exist by exact name — no
 /// searching, no ranking. Used by alias resolution (law-010).
-fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
+fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) -> Value {
     let c = &idx.concepts[name];
     let mut evidence: Vec<Evidence> = c
         .declared_in
@@ -31,6 +54,8 @@ fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
         what: format!("{k} access in {f}"),
     }));
     let used = !c.usage.is_empty();
+    let symbols = symbols_for_concept(graph, name);
+    let routes = routes_for_concept(graph, name);
     json!({
         "concept": term,
         "verdict": if used { "ACTIVE" } else { "DECLARED_ONLY" },
@@ -43,6 +68,12 @@ fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
         "first_seen_ms": c.first_seen_ms,
         "last_verified_ms": c.last_verified_ms,
         "evidence": evidence,
+        "structural_symbols": symbols.iter().take(10).map(|s| json!({
+            "name": s.name, "kind": format!("{:?}", s.kind), "file": s.file, "line": s.line,
+        })).collect::<Vec<_>>(),
+        "structural_routes": routes.iter().take(10).map(|r| json!({
+            "method": r.method, "path": r.path, "handler": r.handler, "file": r.file,
+        })).collect::<Vec<_>>(),
         "confidence": if used { "high" } else { "medium — declared but no observed access; may be scaffolding" },
         "recommendation": format!("'{term}' already exists as '{name}'. Extend it; do not create a second implementation."),
     })
@@ -57,16 +88,16 @@ fn concept_card(idx: &Index, name: &str, term: &str) -> Value {
 /// runs at all (law-011), rather than only as a fallback when name search
 /// comes up empty — the ordering that let GameTheoryEngine silently defeat
 /// the declared theory=causal_hypotheses alias on TITAN.
-fn resolve_alias(idx: &Index, term: &str, alias_key: &str, target: &str) -> Value {
+fn resolve_alias(idx: &Index, graph: &StructuralGraph, term: &str, alias_key: &str, target: &str) -> Value {
     // LAW-010: an alias target is an EXACT concept name, not a search term.
     // Feeding it back through term matching broke on any multi-token target
     // — TITAN declares theory = "causal_hypotheses" and got UNKNOWN, because
     // no single token of the target matches the whole target. Exact lookup
     // first; term search only as fallback.
     let mut r = if idx.concepts.contains_key(target) {
-        concept_card(idx, target, target)
+        concept_card(idx, graph, target, target)
     } else {
-        concept(idx, target)
+        concept(idx, graph, target)
     };
     if r["canonical"].is_null() {
         // A declared alias pointing at nothing is itself a finding.
@@ -91,7 +122,7 @@ fn resolve_alias(idx: &Index, term: &str, alias_key: &str, target: &str) -> Valu
     r
 }
 
-pub fn concept(idx: &Index, term: &str) -> Value {
+pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     let term = term.trim();
 
     // LAW-011: declared ontology is checked BEFORE name-token search, full
@@ -110,7 +141,7 @@ pub fn concept(idx: &Index, term: &str) -> Value {
         .iter()
         .find(|(k, _)| same_word(k, term) || names_concept(k, term))
     {
-        return resolve_alias(idx, term, alias_key, target);
+        return resolve_alias(idx, graph, term, alias_key, target);
     }
 
     let mut declared: Vec<&String> = idx
@@ -163,6 +194,41 @@ pub fn concept(idx: &Index, term: &str) -> Value {
             } else {
                 format!("'{term}' is declared as '{canon}' but nothing observably uses it. Confirm whether it is scaffolding before extending OR replacing.")
             },
+        });
+    }
+
+    // Structural tier: no data/schema concept matched, but the term may
+    // still be a real symbol — a function, class, or route that legitimately
+    // isn't a storage model (a CLI command, a service, a handler). Checked
+    // before the NAMED (filename-only) tier below because an actual symbol
+    // match is stronger evidence than a bare filename resemblance. This is
+    // what lets `architect concept doctor` (a plain Rust function, not a
+    // table) answer with where it's declared instead of a bare ABSENT.
+    let mut structural_hits: Vec<&crate::structural::Symbol> = graph
+        .symbols
+        .values()
+        .filter(|s| same_word(&s.name, term) || names_concept(&s.name, term))
+        .collect();
+    structural_hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.name.cmp(&b.name)));
+    if let Some(canon) = structural_hits.first().map(|s| s.name.clone()) {
+        return json!({
+            "concept": term,
+            "verdict": "STRUCTURAL",
+            "canonical": canon,
+            "evidence": structural_hits.iter().take(10).map(|s| Evidence {
+                tier: Tier::Declared,
+                what: format!("{:?} declared in {}:{}", s.kind, s.file, s.line),
+            }).collect::<Vec<_>>(),
+            // Read fresh from disk at query time — not persisted, not cached,
+            // just the file's own text. Same determinism guarantee as every
+            // other evidence field; it just saves the caller a round trip.
+            "source": structural_hits.iter().take(3).filter_map(|s| {
+                source_snippet(&idx.root, &s.file, s.line, 2).map(|excerpt| json!({
+                    "file": s.file, "line": s.line, "excerpt": excerpt,
+                }))
+            }).collect::<Vec<_>>(),
+            "confidence": "high — found in source as a real symbol, not a declared data/schema model",
+            "recommendation": format!("'{term}' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply."),
         });
     }
 
@@ -220,8 +286,59 @@ pub fn concept(idx: &Index, term: &str) -> Value {
             }).collect::<Vec<_>>(),
             "confidence": "low — name resemblance is not an architectural fact",
             "recommendation": "Needs human confirmation. Similarly named files exist but no schema declares this concept — inspect them before building anything.",
+            "next_action": {
+                "type": "ai_investigation",
+                "read": named,
+                "question": format!("Do any of these files implement or represent '{term}'?"),
+                "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
+                "escalation": "If this reflects a structural pattern rather than a one-off, propose an extractor or decision via `architect proposal submit` instead of a one-off finding.",
+            },
         });
     }
+    // Before declaring ABSENT: is part of this repo in a language Architect
+    // has no structural extractor for at all? If so, "no evidence found" does
+    // not mean "confirmed absent" — it means "this repo has a blind spot."
+    // Handed back as a structured, provisional gap — NOT a fact, and never
+    // cached or promoted to a verdict above UNKNOWN by anything in this
+    // process. An AI client may investigate the listed files and report
+    // findings back to a human; it cannot make this query return ACTIVE.
+    let mut unsupported_files: Vec<String> = graph
+        .file_facts
+        .keys()
+        .filter(|rel| {
+            std::path::Path::new(rel)
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|ext| {
+                    let ext = ext.to_lowercase();
+                    crate::structural::KNOWN_UNSUPPORTED
+                        .iter()
+                        .any(|(_, exts)| exts.contains(&ext.as_str()))
+                })
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    if !unsupported_files.is_empty() {
+        unsupported_files.sort();
+        unsupported_files.truncate(15);
+        return json!({
+            "concept": term,
+            "verdict": "INSUFFICIENT_COVERAGE",
+            "canonical": null,
+            "evidence": [],
+            "confidence": "unknown — this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
+            "recommendation": format!("No declared, structural, or named evidence for '{term}' — but Architect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action."),
+            "next_action": {
+                "type": "ai_investigation",
+                "read": unsupported_files,
+                "question": format!("Do any of these files implement or represent '{term}'?"),
+                "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
+                "escalation": "If this language has no structural extractor at all, propose one via `architect proposal submit --kind extractor` — it will be validated against the existing laws + invariants suite before anyone applies it.",
+            },
+        });
+    }
+
     json!({
         "concept": term,
         "verdict": "ABSENT",
@@ -255,8 +372,11 @@ pub fn intent(idx: &Index, text: &str) -> Value {
     let mut extend = Vec::new();
     let mut create = Vec::new();
     let mut needs_confirmation = Vec::new();
+    // Pass an empty structural graph — intent only needs schema-layer facts.
+    // Structural enrichment is available on concept() directly when needed.
+    let empty_graph = StructuralGraph::default();
     for t in &terms {
-        let r = concept(idx, t);
+        let r = concept(idx, &empty_graph, t);
         match r["verdict"].as_str().unwrap_or("") {
             "ACTIVE" | "DECLARED_ONLY" => extend.push(json!({
                 "concept": t,
@@ -301,12 +421,12 @@ pub fn intent(idx: &Index, text: &str) -> Value {
     })
 }
 
-pub fn impact(idx: &Index, term: &str) -> Value {
+pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // law-010 generalized: exact key first (see owner())
     let r = if idx.concepts.contains_key(term) {
-        concept_card(idx, term, term)
+        concept_card(idx, graph, term, term)
     } else {
-        concept(idx, term)
+        concept(idx, graph, term)
     };
     let Some(canon) = r["canonical"].as_str().map(String::from) else {
         return json!({
@@ -325,22 +445,26 @@ pub fn impact(idx: &Index, term: &str) -> Value {
         .filter(|(_, other)| other.relations.iter().any(|r| r == &canon))
         .map(|(n, _)| n)
         .collect();
+    let structural_dependents = structural_dependents(graph, &canon, 3);
     json!({
         "target": canon,
-        "severity": if files.len() > 8 || dependents.len() > 3 {
+        "severity": if files.len() > 8 || dependents.len() > 3 || structural_dependents.len() > 5 {
             "HIGH — widely used and other models declare relations to it"
-        } else if !files.is_empty() || !dependents.is_empty() {
+        } else if !files.is_empty() || !dependents.is_empty() || !structural_dependents.is_empty() {
             "MODERATE — several touchpoints"
         } else {
             "NONE OBSERVED — declared but nothing seen touching it"
         },
         "used_by_files": files.iter().take(20).collect::<Vec<_>>(),
         "declared_dependents": dependents,
-        "evidence_note": "used_by = observed ORM/SQL access (USED tier); dependents = schema-declared relations (DECLARED tier).",
+        "structural_dependents": structural_dependents.iter().take(20).map(|d| json!({
+            "file": d.file, "depth": d.depth, "via_symbols": d.via_symbols,
+        })).collect::<Vec<_>>(),
+        "evidence_note": "used_by = observed ORM/SQL access (USED tier); dependents = schema-declared relations (DECLARED tier); structural_dependents = files that import an owner of this concept, via the structural graph (transitive, capped at depth 3).",
     })
 }
 
-pub fn status(idx: &Index) -> Value {
+pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
     let used = idx.concepts.values().filter(|c| !c.usage.is_empty()).count();
     let dead: Vec<&String> = idx
         .concepts
@@ -358,7 +482,8 @@ pub fn status(idx: &Index) -> Value {
         "concepts_declared": idx.concepts.len(),
         "concepts_with_observed_usage": used,
         "declared_but_never_observed_in_use": dead,
-        "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death.",
+        "structural_coverage": crate::structural::coverage_report(graph),
+        "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Architect can actually see structurally.",
     })
 }
 
@@ -396,7 +521,7 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             .next()
             .unwrap_or(t)
             .to_string();
-        let r = concept(idx, &head);
+        let r = concept(idx, &StructuralGraph::default(), &head);
         let verdict = r["verdict"].as_str().unwrap_or("ABSENT");
         let canonical = r["canonical"].as_str().unwrap_or("").to_string();
         // The ONLY exemption is re-declaring the canonical's own storage table,
@@ -475,7 +600,7 @@ fn top_segment(path: &str) -> String {
 }
 
 /// Repository summary for someone who just cloned it.
-pub fn doctor(idx: &Index, root: &std::path::Path) -> Value {
+pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &std::path::Path) -> Value {
     // Domains = where declarations LIVE (top-level directories) — derived from
     // the tree's own organisation, not from a curated list.
     let mut domains: std::collections::BTreeMap<String, usize> = Default::default();
@@ -501,6 +626,7 @@ pub fn doctor(idx: &Index, root: &std::path::Path) -> Value {
         "things_to_read": idx.decisions.iter().map(|d| json!({
             "id": d.id, "decision": d.decision,
         })).collect::<Vec<_>>(),
+        "structural_coverage": crate::structural::coverage_report(graph),
         "counts": {
             "concepts": idx.concepts.len(),
             "files_scanned": idx.files_scanned,
@@ -514,7 +640,7 @@ pub fn doctor(idx: &Index, root: &std::path::Path) -> Value {
 /// The onboarding tour. Common mistakes come from the ontology itself: every
 /// alias is a "don't create X" waiting to happen, and every decision's
 /// rejected list is literally what the next person is about to propose.
-pub fn tour(idx: &Index) -> Value {
+pub fn tour(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
     let mut top: Vec<(&String, usize)> =
         idx.concepts.iter().map(|(n, c)| (n, c.usage.len())).collect();
     top.sort_by(|a, b| b.1.cmp(&a.1));
@@ -548,6 +674,7 @@ pub fn tour(idx: &Index) -> Value {
         "common_mistakes": mistakes,
         "decisions_to_read": idx.decisions.iter().map(|d| &d.id).collect::<Vec<_>>(),
         "estimated_reading_minutes": (words / 200).max(1),
+        "structural_coverage": crate::structural::coverage_report(graph),
         "note": "Derived entirely from declarations, usage, aliases and decisions — no generated prose, nothing to hallucinate. 'probably_ignorable' means no observed use at the USED tier; confirm before deleting anything.",
     })
 }
@@ -621,9 +748,9 @@ pub fn owner(idx: &Index, term: &str) -> Value {
     // search term. plan() passed canonical names back through term search
     // and multi-token names matched nothing — the alias bug's twin.
     let r = if idx.concepts.contains_key(term) {
-        concept_card(idx, term, term)
+        concept_card(idx, &StructuralGraph::default(), term, term)
     } else {
-        concept(idx, term)
+        concept(idx, &StructuralGraph::default(), term)
     };
     let Some(canon) = r["canonical"].as_str().map(String::from) else {
         return json!({ "target": term, "owner": null, "detail": r });
@@ -705,7 +832,9 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
             continue; // extending an existing concept is the GOAL, not a finding
         }
         for tok in crate::model::name_tokens(name) {
-            if tok.len() < 4 {
+            // LAW-013: a shared generic architectural-role word (executor,
+            // manager, handler, ...) is never by itself collision evidence.
+            if tok.len() < 4 || crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str()) {
                 continue;
             }
             if let Some(existing) = idx.concepts.keys().find(|c| names_concept(c, &tok)) {
@@ -737,7 +866,7 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
 /// a composite score nobody measured is an unmeasured number wearing a
 /// measured one's clothes, and it would teach readers to distrust the real
 /// numbers beside it. Facts and derived suggestions only.
-pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
+pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> Value {
     let db = root.join("architect.db");
     let dup = duplicates(idx);
     let needs_alias = dup["likely_same_concept_needs_alias"].as_array().map(|a| a.len()).unwrap_or(0);
@@ -768,7 +897,9 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
     let mut fam: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for (name, _) in idx.concepts.iter().filter(|(_, c)| c.table.is_some()) {
         for tok in crate::model::name_tokens(name) {
-            if tok.len() >= 5 {
+            // LAW-013: same generic-role-word exemption as the CI guard and
+            // the watch daemon's diff — a shared role word never counts.
+            if tok.len() >= 5 && !crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str()) {
                 fam.entry(tok.to_lowercase()).or_default().push(name.clone());
             }
         }
@@ -816,6 +947,7 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
         },
         "recent_changes": crate::store::read_history(root, None, 5),
         "suggestions": suggestions,
+        "structural_coverage": crate::structural::coverage_report(graph),
         "note": "No health score, deliberately: a composite nobody measured is an unmeasured number wearing a measured one's clothes. Every line above is a fact or derived from one.",
     })
 }
@@ -826,13 +958,13 @@ pub fn glance(idx: &Index, root: &std::path::Path) -> Value {
 /// no AI, no heuristics beyond the queries it composes — it exists because an
 /// agent that needs five tool calls to assemble context will sometimes skip
 /// two of them, and the skipped ones are always the ones that mattered.
-pub fn plan(idx: &Index, text: &str) -> Value {
+pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     let it = intent(idx, text);
     let mut planned = Vec::new();
     for e in it["extend"].as_array().cloned().unwrap_or_default().iter().take(3) {
         let Some(canon) = e["canonical"].as_str() else { continue };
         let own = owner(idx, canon);
-        let imp = impact(idx, canon);
+        let imp = impact(idx, graph, canon);
         // governing decisions: any declared decision linking this concept
         let decisions: Vec<Value> = idx
             .decisions

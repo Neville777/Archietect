@@ -12,7 +12,7 @@
 //! law in the registry must be covered here, so a law cannot exist
 //! unenforced — a law without its test is a wish, and the wish now fails CI.
 
-use architect::{laws, query, scan};
+use architect::{laws, query, scan, watch};
 use std::path::PathBuf;
 
 /// Laws covered by this harness. The conformance test cross-checks this
@@ -20,6 +20,7 @@ use std::path::PathBuf;
 const COVERED: &[&str] = &[
     "law-001", "law-002", "law-003", "law-004", "law-005",
     "law-006", "law-007", "law-008", "law-009", "law-010", "law-011", "law-012",
+    "law-013", "law-014",
 ];
 
 fn fixture(law: &str) -> architect::model::Index {
@@ -27,7 +28,18 @@ fn fixture(law: &str) -> architect::model::Index {
         .join("tests/fixtures")
         .join(law);
     assert!(root.exists(), "fixture directory missing: {}", root.display());
-    scan::scan_with_prior(&root, None)
+    scan::scan_with_prior(&root, None, None).0
+}
+
+/// Same as `fixture`, for laws whose test needs a before/after PAIR (a diff),
+/// not a single snapshot — `tests/fixtures/law_NNN/<sub>/`.
+fn fixture_sub(law: &str, sub: &str) -> architect::model::Index {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(law)
+        .join(sub);
+    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    scan::scan_with_prior(&root, None, None).0
 }
 
 #[test]
@@ -54,7 +66,7 @@ fn conformance_registry_matches_suite() {
 #[test]
 fn law_001_word_boundary() {
     let idx = fixture("law_001");
-    let r = query::concept(&idx, "story");
+    let r = query::concept(&idx, &Default::default(), "story");
     assert_eq!(r["canonical"], "story");
     let competing: Vec<String> = r["competing"]
         .as_array()
@@ -90,7 +102,7 @@ fn law_003_comment_prose() {
 #[test]
 fn law_004_exact_over_token() {
     let idx = fixture("law_004");
-    let r = query::concept(&idx, "website");
+    let r = query::concept(&idx, &Default::default(), "website");
     assert_eq!(
         r["canonical"], "Website",
         "usage-heavy token match outranked the exact name"
@@ -113,7 +125,7 @@ fn law_005_same_table_merge() {
 #[test]
 fn law_006_table_true() {
     let idx = fixture("law_006");
-    let r = query::concept(&idx, "item");
+    let r = query::concept(&idx, &Default::default(), "item");
     assert_eq!(r["canonical"], "Item");
     assert_eq!(r["table"], "item", "SQLModel default table name rule");
 }
@@ -121,7 +133,7 @@ fn law_006_table_true() {
 #[test]
 fn law_007_orm_over_sql() {
     let idx = fixture("law_007");
-    let r = query::concept(&idx, "query");
+    let r = query::concept(&idx, &Default::default(), "query");
     assert_eq!(
         r["canonical"], "Query",
         "sql-string concept outranked the ORM declaration"
@@ -141,7 +153,7 @@ fn law_008_follower_required() {
 #[test]
 fn law_009_alias_resolution() {
     let idx = fixture("law_009");
-    let r = query::concept(&idx, "episode");
+    let r = query::concept(&idx, &Default::default(), "episode");
     assert_eq!(r["canonical"], "stories", "alias resolution failed");
     assert_eq!(r["resolved_via"], "alias");
     let g = query::guard(&idx, "CREATE TABLE episodes (id BIGSERIAL);");
@@ -156,7 +168,7 @@ fn law_009_alias_resolution() {
 #[test]
 fn law_010_alias_exact_target() {
     let idx = fixture("law_010");
-    let r = query::concept(&idx, "theory");
+    let r = query::concept(&idx, &Default::default(), "theory");
     assert_eq!(
         r["canonical"], "causal_hypotheses",
         "multi-token alias target must resolve by exact name, got: {}",
@@ -177,7 +189,7 @@ fn law_011_ontology_before_name_search() {
         idx.concepts.contains_key("GameTheoryEngine"),
         "fixture must actually produce the colliding concept, or this test proves nothing"
     );
-    let r = query::concept(&idx, "theory");
+    let r = query::concept(&idx, &Default::default(), "theory");
     assert_eq!(
         r["canonical"], "causal_hypotheses",
         "declared ontology was defeated by an unrelated name-token match, got: {}",
@@ -197,10 +209,60 @@ fn law_012_whole_name_matches_self() {
         idx.concepts.contains_key("ScoreBreakdown"),
         "fixture must actually produce the multi-token concept, or this test proves nothing"
     );
-    let r = query::concept(&idx, "ScoreBreakdown");
+    let r = query::concept(&idx, &Default::default(), "ScoreBreakdown");
     assert_eq!(
         r["canonical"], "ScoreBreakdown",
         "querying a concept's own exact name returned {} instead of finding it — a false ABSENT on the literal spelling",
         r["verdict"]
+    );
+}
+
+#[test]
+fn law_013_generic_role_token_is_not_collision_evidence() {
+    // Found dogfooding the watch daemon against TITAN: a brand-new SQL table
+    // `executor_gaps` was flagged as colliding with an unrelated pre-existing
+    // struct `BinanceExecutor` — different crate, different subsystem — via
+    // the single shared token "executor". A generic architectural-role word
+    // must not, by itself, trigger a duplicate_concept_risk finding.
+    let old = fixture_sub("law_013", "old");
+    let new = fixture_sub("law_013", "new");
+    assert!(
+        new.concepts.contains_key("executor_gaps"),
+        "fixture must actually produce the new concept, or this test proves nothing"
+    );
+    assert!(
+        old.concepts.contains_key("BinanceExecutor") && new.concepts.contains_key("BinanceExecutor"),
+        "fixture must carry the unrelated pre-existing concept through both snapshots, or this test proves nothing"
+    );
+    let events = watch::diff_findings(&old, &new);
+    assert!(
+        events.iter().any(|(_, kind, concept, _)| kind == "concept_appeared" && concept == "executor_gaps"),
+        "the new concept must still be reported as appeared — this law removes a FALSE collision, not the real observation"
+    );
+    let collision = events.iter().find(|(_, kind, concept, _)| kind == "duplicate_concept_risk" && concept == "executor_gaps");
+    assert!(
+        collision.is_none(),
+        "executor_gaps was flagged as colliding with an unrelated concept via a generic role token: {:?}",
+        collision
+    );
+}
+
+#[test]
+fn law_014_extractor_language_is_actually_scanned() {
+    // Deliberately does NOT use the `fixture()` helper — that only returns
+    // the schema Index, and this law is specifically about the FILE-WALK
+    // step (scan::scan_with_prior's own extension filter), not about
+    // anything query.rs does afterward. A regression here must exercise the
+    // real scan entry point, the same one the CLI/REST/MCP all call.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/law_014");
+    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    let (idx, graph) = scan::scan_with_prior(&root, None, None);
+    assert_eq!(
+        idx.files_scanned, 1,
+        "a .kt file present in the extractor registry was not even walked — scan.rs's file filter has drifted from structural::LANGUAGES again"
+    );
+    assert!(
+        graph.symbols.values().any(|s| s.name == "computeChecksum"),
+        "the Kotlin file was walked but its top-level function was not extracted"
     );
 }

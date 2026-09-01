@@ -107,7 +107,22 @@ fn relevant(path: &Path) -> bool {
     true
 }
 
-type Event = (i64, String, String, serde_json::Value); // ts, kind, concept, detail
+pub type Event = (i64, String, String, serde_json::Value); // ts, kind, concept, detail
+
+/// LAW-013: a shared GENERIC architectural-role word is never, by itself,
+/// evidence of a duplicate concept — same_word()/names_concept() still match
+/// on it for direct lookup, but the collision-detection loops below (and
+/// the CI guard, and the storage-family grouping in query::glance) must
+/// skip it as a collision trigger. Found dogfooding the watch daemon: a
+/// brand-new `executor_gaps` table was flagged as colliding with an
+/// unrelated `BinanceExecutor` struct via the single shared token
+/// "executor" — a role, not a domain concept.
+pub const GENERIC_ROLE_TOKENS: &[&str] = &[
+    "executor", "manager", "handler", "service", "controller", "factory", "builder",
+    "adapter", "provider", "client", "worker", "engine", "repository", "store",
+    "registry", "gateway", "middleware", "config", "result", "response", "request",
+    "context", "state",
+];
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -122,7 +137,7 @@ fn event(out: &mut Vec<Event>, kind: &str, concept: &str, detail: serde_json::Va
 
 /// Diff two indexes into level-3 findings. Deterministic; observations,
 /// never actions — the daemon records and reports, it does not plan.
-fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
+pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     let mut out = Vec::new();
 
     // ── RENAMES first: a removed + an appeared concept sharing IDENTITY
@@ -173,6 +188,9 @@ fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
         // duplicate risk: any token of the new name resolving to an EXISTING
         // concept or declared alias is the moment of infection.
         for tok in crate::model::name_tokens(name) {
+            if GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str()) {
+                continue;
+            }
             let hit = old
                 .concepts
                 .keys()
@@ -280,8 +298,8 @@ fn print_event(ev: &Event, subscribe: Option<&str>) {
 pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
     let sub = subscribe.as_deref();
     // initial build — the daemon starts knowing.
-    let mut current = scan::scan(&root);
-    store::save(&current, &root)?;
+    let (mut current, mut current_graph) = scan::scan(&root);
+    store::save(&current, &current_graph, &root)?;
     println!("{}", json!({
         "ts_ms": now_ms(), "kind": "watching", "concept": "",
         "detail": {
@@ -323,7 +341,7 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         // save) and rescan once when the tree goes quiet.
         while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
 
-        let next = scan::scan_with_prior(&root, Some(current.clone()));
+        let (next, next_graph) = scan::scan_with_prior(&root, Some(current.clone()), Some(current_graph.clone()));
         let mut events = diff_findings(&current, &next);
         // ARCHITECTURE VERSION: a monotonic number that advances only when
         // the concept set changes — migration numbering for architectural
@@ -341,7 +359,7 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
                 })));
             }
         }
-        store::save(&next, &root)?;
+        store::save(&next, &next_graph, &root)?;
         // persist the timeline (append-only), THEN stream it — history that
         // exists only in a terminal scrollback is not history.
         let rows: Vec<(i64, String, String, String)> = events
@@ -353,6 +371,7 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
             print_event(ev, sub);
         }
         current = next;
+        current_graph = next_graph;
     }
     Ok(())
 }

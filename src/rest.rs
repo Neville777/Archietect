@@ -14,6 +14,7 @@
 //!   GET /impact?q=payments                   GET /duplicates
 //!   GET /owner?q=invoice                     GET /status
 //!   GET /guard?sql=CREATE+TABLE+...          GET /laws
+//!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
 //!   GET /history[?q=concept][&limit=50]
 //!
 //! `root` may come per-request or from --root at startup, same contract as
@@ -42,7 +43,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::{laws, model::Index, query, root, scan, store};
+use crate::{laws, model::Index, query, root, scan, store, structural::StructuralGraph};
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
 /// tiny: this API serves identifiers and short text, not arbitrary payloads.
@@ -82,7 +83,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 
     // The warm cache. Single-threaded loop, one request at a time — plain
     // HashMap, no lock needed.
-    let mut cache: HashMap<PathBuf, Index> = HashMap::new();
+    let mut cache: HashMap<PathBuf, (Index, StructuralGraph)> = HashMap::new();
 
     for req in server.incoming_requests() {
         let (path, p) = params(req.url());
@@ -114,18 +115,24 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                 // last result for this root — not a fresh cold scan every
                 // time. Refreshed and re-stored before dispatch, so every
                 // endpoint below reads the same warm index.
-                let idx = scan::scan_with_prior(&root, cache.remove(&root));
+                let prior = cache.remove(&root);
+                let (schema_prior, graph_prior) = match prior {
+                    Some((s, g)) => (Some(s), Some(g)),
+                    None => (None, None),
+                };
+                let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
                 let result = {
                     let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
                     match ep {
-                        "/concept" => query::concept(&idx, q),
+                        "/concept" => query::concept(&idx, &graph, q),
                         "/intent" => query::intent(&idx, q),
-                        "/impact" => query::impact(&idx, q),
+                        "/impact" => query::impact(&idx, &graph, q),
                         "/owner" => query::owner(&idx, q),
                         "/guard" => query::guard(&idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
-                        "/status" => query::status(&idx),
-                        "/doctor" => query::doctor(&idx, &root),
-                        "/tour" => query::tour(&idx),
+                        "/plan" => query::plan(&idx, &graph, q),
+                        "/status" => query::status(&idx, &graph),
+                        "/doctor" => query::doctor(&idx, &graph, &root),
+                        "/tour" => query::tour(&idx, &graph),
                         "/duplicates" => query::duplicates(&idx),
                         "/history" => json!({
                             "events": store::read_history(
@@ -134,15 +141,20 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                 p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
                             )
                         }),
+                        "/ci" => query::ci(
+                            &idx,
+                            p.get("diff").map(|s| s.as_str()).unwrap_or(""),
+                            p.get("strict").map(|s| s == "true").unwrap_or(false),
+                        ),
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
-                            "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard",
+                            "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
-                                          "/history", "/laws"],
+                                          "/history", "/ci", "/laws"],
                         }),
                     }
                 };
-                cache.insert(root, idx);
+                cache.insert(root, (idx, graph));
                 result
             }
         };

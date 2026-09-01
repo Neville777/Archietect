@@ -1,0 +1,76 @@
+name: CI
+
+# No established branch-naming convention exists yet in this repo (there is
+# currently only `master` and no git remote at all) — so trigger on push to
+# any branch, plus any pull_request, rather than hardcoding `main`/`master`.
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Compile checks first so a build break fails fast, before we spend
+      # time running anything.
+      - name: cargo build (debug, for the test profile)
+        run: cargo build --verbose
+
+      - name: cargo build --release
+        run: cargo build --release --verbose
+
+      # tests/laws.rs: fast (~0.4s), self-contained, needs nothing external.
+      # Always run.
+      - name: Run law tests (tests/laws.rs)
+        run: cargo test --test laws --verbose
+
+      # Unit tests embedded in src/ (e.g. root::tests, structural::cs_tests).
+      # Also self-contained.
+      - name: Run library unit tests
+        run: cargo test --lib --verbose
+
+      # tests/invariants.rs scans real cloned open-source repos that live in
+      # validation/*  (chatwoot, saleor, etc.). That directory is listed in
+      # .gitignore and is intentionally NOT committed to the repo — cloning
+      # ~9 external corpora (some large) on every CI run is a cost/minutes
+      # decision outside this workflow's scope to make unilaterally.
+      #
+      # Rather than hardcode "always skip," check whether validation/ exists
+      # in the checkout. Today it never will on a fresh clone, so this step
+      # is a no-op — but if someone later decides to commit the corpus (or
+      # add a prior step that fetches it), invariants coverage activates
+      # here automatically with no further changes to this workflow.
+      - name: Run invariant tests (tests/invariants.rs) if corpus is present
+        run: |
+          if [ -d "validation" ] && [ -n "$(ls -A validation 2>/dev/null)" ]; then
+            echo "validation/ corpus present — running invariant tests"
+            cargo test --test invariants --verbose
+          else
+            echo "validation/ corpus not present in this checkout (it is .gitignore'd and not committed) — skipping tests/invariants.rs"
+          fi
+
+  # cargo fmt --check and cargo clippy are intentionally NOT part of the
+  # required gate yet: as of the commit that introduced this workflow,
+  # `cargo fmt --check` reports pre-existing formatting diffs (e.g.
+  # src/invariants.rs, src/laws.rs, src/lib.rs, src/mcp.rs) and
+  # `cargo clippy --release` reports ~11 pre-existing warnings (mostly in
+  # src/structural.rs: type_complexity, regex_creation_in_loops, etc.),
+  # none introduced by this change. Turning either on now would make CI red
+  # on day one for reasons outside this task's scope. Once those are
+  # cleaned up, add jobs here running `cargo fmt --check` and
+  # `cargo clippy --release -- -D warnings`.
