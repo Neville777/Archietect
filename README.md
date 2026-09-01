@@ -2,15 +2,17 @@
 
 **The persistent architectural brain of a software project.**
 
-Not an AI tool. Not code search. Not a linter. A deterministic engine that
-maintains a living record of what a project's concepts ARE — what exists,
-what is canonical, who uses it, why it is shaped this way, and how all of
-that has changed over time. AI agents, editors, CI, and humans are all
-clients of the same continuously maintained state, instead of each
+[![CI](https://github.com/Neville777/Archietect/actions/workflows/ci.yml/badge.svg)](https://github.com/Neville777/Archietect/actions/workflows/ci.yml)
+[![License: BSL 1.1](https://img.shields.io/badge/license-BSL--1.1-blue)](LICENSE)
+[![Rust 2021](https://img.shields.io/badge/rust-2021-orange)](Cargo.toml)
+
+A deterministic engine that maintains a living record of what a project's
+concepts ARE — what exists, what is canonical, who uses it, why it is shaped
+this way, and how that has changed over time. AI agents, editors, CI, and
+humans all query the same continuously maintained state instead of each
 reconstructing a partial, inconsistent understanding per session.
 
-The inversion is the whole invention: **Architect does not use AI. AI uses
-Architect.**
+**Architect does not use AI. AI uses Architect.**
 
 ```
               Human
@@ -26,7 +28,7 @@ Architect.**
     source code · schemas · ADRs
 ```
 
-## See it work
+## Demo
 
 ```
 $ architect concept doctor
@@ -46,13 +48,13 @@ $ architect concept doctor
   "recommendation": "'doctor' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply."
 }
 ```
-(the exact line number above will drift as this file is edited — re-run it
-yourself any time; that's the point, it's live, not a fixture)
+(the line number above will drift as this file is edited — re-run it
+yourself any time; it's live, not a fixture)
 
-That's Architect answering a question about its own source — real file, real
-line, real code excerpt, read fresh off disk at query time. Ask about
-something that genuinely doesn't exist and it says so, with the same
-confidence, instead of guessing:
+Real file, real line, real code excerpt, read fresh off disk at query time —
+that's Architect answering a question about its own source. Ask about
+something that doesn't exist and it says so, at the same confidence, instead
+of guessing:
 
 ```
 $ architect concept PaymentRefundService
@@ -60,8 +62,8 @@ $ architect concept PaymentRefundService
   "recommendation": "Genuinely new for this project. Building it is justified." }
 ```
 
-And when part of a repo is in a language Architect genuinely can't see into, it says so
-instead of guessing — a third state, distinct from both of the above:
+And when a repo contains a language Architect can't see into, it names that
+gap instead of guessing past it:
 
 ```
 $ architect concept processOrder
@@ -70,120 +72,36 @@ $ architect concept processOrder
   "next_action": { "read": ["handler.lua"], "question": "Do any of these files implement or represent 'processOrder'?" } }
 ```
 
-That's the entire trust model, and it's the only thing about Architect's
-internals you actually need to know as a user: every answer is one of
-exactly three things — **KNOWN** (a real answer, with evidence), **KNOWN
-ABSENT** (searched everywhere it can see, genuinely isn't there), or **I
-DON'T KNOW** (`INSUFFICIENT_COVERAGE` — a real blind spot, named
-honestly, never silently guessed past). Architect doesn't need to
-understand everything. It needs to always know the difference between what
-it knows and what it doesn't.
+Every answer is one of exactly three things — **KNOWN** (a real answer, with
+evidence), **KNOWN ABSENT** (searched everywhere it can see, genuinely isn't
+there), or **INSUFFICIENT_COVERAGE** (a real blind spot, named honestly,
+never silently guessed past). That's the entire trust model.
 
-## Founding principles
+## Features
 
-1. **The Architect never invents architectural facts.** Every answer carries
-   evidence, tiered by strength: `DECLARED` (the project's own schema asserts
-   it) > `USED` (code observably touches it) > `NAMED` (resemblance only —
-   verdict UNKNOWN, needs human confirmation). A confident answer built on
-   weak evidence is worse than grep, because it looks like knowledge.
-2. **The Architect never modifies code. Ever.** It says *this is wrong, here
-   is why, here is the evidence* — and stops. Its authority comes from being
-   the source of truth, not from being another actor making changes. The
-   guard rejects; it never rewrites. Even the one mechanism that DOES touch
-   the working tree (the proposal protocol, below) never invents an
-   answer — it applies a patch a human explicitly accepted, uncommitted.
-3. **No AI inside, no API key, no network.** The core is offline and
-   deterministic, like git. Intelligence belongs in the clients.
-4. **Laws, not heuristics.** Every wrong answer on a real repository becomes
-   a law (`laws/*.toml`) with a permanent fixture (`tests/fixtures/law_NNN/`)
-   enforced by `cargo test`. Laws are amended, never edited away — semantics
-   are versioned. A law without its regression test is a wish, and the wish
-   fails CI.
-5. **History is append-only.** The daemon records architectural events
-   (concepts appearing, renaming, losing storage; aliases and decisions
-   changing; version bumps). History that can be rewritten is not history;
-   subscription filters shape the stream, never the record.
-6. **Fewer believed concepts can be better.** The proudest metric so far is
-   a concept count going DOWN (204 → 198): six phantom concepts eliminated.
-   The engine celebrates stopping believing lies, not believing more things.
-7. **Absence of evidence is disclosed, never hidden.** If part of a repo is
-   in a language Architect can't see into, it says `INSUFFICIENT_COVERAGE`
-   instead of a false `ABSENT` — and hands back exactly which files a human
-   or an AI would need to read to actually check.
+- **Evidence-tiered, never invented** — every answer is ranked `DECLARED`
+  (the project's own schema asserts it) > `USED` (code observably touches
+  it) > `NAMED` (name resemblance only — verdict `UNKNOWN`, needs a human).
+- **Read-only against your code** — Architect flags problems with evidence
+  and stops; it never edits your working tree. The one exception (the
+  proposal protocol, below) applies a patch a human explicitly accepted,
+  uncommitted.
+- **Fully offline and deterministic** — no AI inside, no API key, no
+  network call. Intelligence stays in the client (Claude, GPT, Cursor, Zed).
+- **Regression-tested against real repositories**, not just synthetic
+  fixtures — see [Testing](#testing).
+- **Append-only architectural history** — concept, alias, and decision
+  changes are recorded as they happen and never rewritten.
+- **Explicit blind spots** — a language with no structural extractor returns
+  `INSUFFICIENT_COVERAGE`, never a false `ABSENT`, and names exactly which
+  files a human or AI should read to check.
+- **Three transports, one engine** — CLI, REST, and MCP all call the same
+  query functions; no business logic lives in any one transport.
 
-## Getting started
-
-**Fastest — download a prebuilt binary**, no Rust toolchain needed: grab
-`architect-linux-x86_64` / `architect-macos-arm64` / `architect-macos-x86_64`
-from [Releases](https://github.com/Neville777/Archietect/releases/latest),
-`chmod +x` it, put it on your `PATH` as `architect`. Then, once per project:
-
-```bash
-architect init --root /path/to/your-project
-claude mcp add architect -- "$(which architect)" mcp   # once, ever — every project reuses this
-```
-
-**Or build from source** (needed either way if you want `packaging/onboard.sh`'s
-one-command flow, the systemd/launchd daemon install, or to run the test suite):
-
-```bash
-git clone <this repo> architect && cd architect
-cargo build --release
-
-# once per project you want Architect to understand:
-packaging/onboard.sh /path/to/your-project
-```
-
-That one script builds (if needed), indexes the project, registers the MCP
-server **globally** — one registration, every onboarded project on the
-machine becomes queryable by any MCP-speaking AI tool — and ends with a
-readiness report (real output, a tiny two-file FastAPI+Prisma project):
-
-```
-╭──────────────────────────────────────────╮
-│            ARCHITECT READY                 │
-╰──────────────────────────────────────────╯
-
-Architecture
-  Files      2
-  Symbols    1
-  Routes     1
-  Concepts   1
-  Laws       14
-
-Structural coverage (what Architect can actually see in THIS repo)
-  Python  (1 files) — classes, top-level functions, routes
-
-Integrations
-  ✓ CLI
-  ✓ MCP
-  ○ Watch daemon
-```
-
-`packaging/onboard.sh --daemon` additionally installs an always-on watcher
-(systemd `--user` on Linux, `launchd` on macOS) so the index stays warm and
-architectural events get recorded to history as they happen, instead of
-being recomputed cold on every query.
-
-From inside any onboarded project — no `--root` needed, it walks upward
-looking for `architect.db`, the same way git finds `.git`:
-
-```bash
-architect                    # git-status-style glance
-architect status             # what's declared, used, and — per coverage — visible at all
-architect concept <name>     # does X exist, where, what's the evidence
-architect impact <name>      # what breaks if X changes
-architect duplicates         # suspected redundant concepts, before you add a new one
-```
+**Tech stack:** Rust, SQLite (`rusqlite`, bundled — no external DB to run),
+regex-based structural/schema extraction, `tiny_http` for REST, stdio for MCP.
 
 ## Structural coverage
-
-Two layers see different things. The **schema layer** recognizes storage
-declarations directly — Prisma, Drizzle, TypeORM, Sequelize/Mongoose,
-Django, SQLAlchemy, pydantic/SQLModel, Rails/ActiveRecord, Eloquent, JPA,
-GORM, Ecto, and raw `CREATE TABLE` from any source. The **structural layer**
-sees code shape — classes, functions, routes — even when nothing is a data
-model at all:
 
 | Language | Symbols | Frameworks (routes) |
 |---|---|---|
@@ -207,20 +125,124 @@ model at all:
 | GraphQL | types/interfaces/enums/inputs, named operations | — |
 | Protocol Buffers | messages, services, rpc methods (as routes) | gRPC |
 
-Coverage is reported **per repository, not as a global claim** —
-`architect status`/`doctor`/`tour` all include exactly which languages and
-frameworks were actually found in *this* codebase, so "why did this return
-`ABSENT`" is never a mystery. A language with no extractor at all doesn't
-get guessed at either: `INSUFFICIENT_COVERAGE` names the blind spot and
-lists the files a human (or an AI, provisionally — see below) should
-actually go read.
+The **schema layer** additionally recognizes storage declarations directly —
+Prisma, Drizzle, TypeORM, Sequelize/Mongoose, Django, SQLAlchemy,
+pydantic/SQLModel, Rails/ActiveRecord, Eloquent, JPA, GORM, Ecto, and raw
+`CREATE TABLE` from any source.
 
-Deliberately not attempted anywhere: a real parser (everything here is
-regex — an MVP tradeoff, not a hidden limitation) and any route DSL too
-combinator-heavy to track reliably (Servant's type-level API, Akka HTTP's
-in-code routing) — a wrong route is worse than a missing one.
+Coverage is reported **per repository**: `architect status`/`doctor`/`tour`
+list exactly which languages and frameworks were found in *this* codebase,
+so an `ABSENT` result is never a mystery. A language with no extractor at
+all isn't guessed at either — `INSUFFICIENT_COVERAGE` names the gap and
+lists the files worth reading.
 
-## Clients: the same engine, three transports
+Not attempted: a real parser (everything here is regex — an MVP tradeoff)
+and route DSLs too combinator-heavy to track reliably (Servant's type-level
+API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
+
+## Prerequisites
+
+- No Rust toolchain needed if using a prebuilt binary (below).
+- Building from source needs a stable Rust toolchain (`cargo build --release`).
+- Linux daemon mode needs `systemd --user`; macOS daemon mode needs `launchd`
+  (both installed via `packaging/onboard.sh --daemon`). Not available on
+  Windows — the plain CLI/REST/MCP binary works anywhere.
+
+## Installation
+
+**Option A — prebuilt binary**, no Rust toolchain needed:
+
+```bash
+# download architect-linux-x86_64 / architect-macos-arm64 / architect-macos-x86_64
+# from https://github.com/Neville777/Archietect/releases/latest
+chmod +x architect-*
+mv architect-* /usr/local/bin/architect
+
+# once per project:
+architect init --root /path/to/your-project
+claude mcp add architect -- "$(which architect)" mcp   # once, ever — every project reuses this
+```
+
+**Option B — build from source** (needed for `packaging/onboard.sh`'s
+one-command flow, the systemd/launchd daemon install, or running the test
+suite):
+
+```bash
+git clone git@github.com:Neville777/Archietect.git architect && cd architect
+cargo build --release
+
+# once per project you want Architect to understand:
+packaging/onboard.sh /path/to/your-project
+```
+
+`onboard.sh` builds (if needed), indexes the project, registers the MCP
+server **globally** — one registration, every onboarded project on the
+machine becomes queryable by any MCP-speaking AI tool — and ends with a
+readiness report (real output, a two-file FastAPI+Prisma project):
+
+```
+╭──────────────────────────────────────────╮
+│            ARCHITECT READY                 │
+╰──────────────────────────────────────────╯
+
+Architecture
+  Files      2
+  Symbols    1
+  Routes     1
+  Concepts   1
+  Laws       14
+
+Structural coverage (what Architect can actually see in THIS repo)
+  Python  (1 files) — classes, top-level functions, routes
+
+Integrations
+  ✓ CLI
+  ✓ MCP
+  ○ Watch daemon
+```
+
+Add `--daemon` to also install an always-on watcher (systemd `--user` on
+Linux, `launchd` on macOS) so the index stays warm and architectural events
+are recorded to history as they happen, instead of being recomputed cold on
+every query.
+
+## Usage
+
+From inside any onboarded project — no `--root` needed, it walks upward
+looking for `architect.db`, the same way git finds `.git`:
+
+```bash
+architect                    # git-status-style glance
+architect status             # what's declared, used, and — per coverage — visible at all
+architect concept <name>     # does X exist, where, what's the evidence
+architect impact <name>      # what breaks if X changes
+architect duplicates         # suspected redundant concepts, before you add a new one
+```
+
+Full command reference:
+
+| Command | Purpose |
+|---|---|
+| `architect init --root DIR` | build/refresh `architect.db` |
+| `architect status --root DIR` | what's declared, used, and structurally visible |
+| `architect concept --root DIR TERM` | does `TERM` exist? canonical? evidence? |
+| `architect intent --root DIR "GOAL"` | smallest correct change: EXTEND vs CREATE |
+| `architect plan --root DIR "GOAL"` | one-call composition of concept+owner+impact+decisions |
+| `architect impact --root DIR TERM` | what is affected if `TERM` changes |
+| `architect owner --root DIR TERM` | which directory owns `TERM`'s declaration |
+| `architect guard --root DIR "SQL"` | rejects `CREATE TABLE` duplicating a concept |
+| `architect doctor --root DIR` | repository summary for someone who just cloned it |
+| `architect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
+| `architect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
+| `architect history --root DIR [TERM]` | the architectural timeline (what git can't say) |
+| `architect ci` | pipe a diff in, get an exit code out |
+| `architect laws` | the language specification, from `laws/*.toml` |
+| `architect watch --root DIR` | daemon: observe → notify, never act |
+| `architect serve --port 7373` | REST API (127.0.0.1, read-only except `/proposal/*`) |
+| `architect mcp` | MCP server over stdio |
+| `architect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
+
+### Clients: the same engine, three transports
 
 | | Use | Command |
 |---|---|---|
@@ -228,69 +250,12 @@ in-code routing) — a wrong route is worse than a missing one.
 | REST | GUI, dashboards, anything HTTP-shaped | `architect serve --port 7373` (127.0.0.1 only) |
 | MCP | every AI coding tool | `architect mcp` (stdio) |
 
-No business logic lives in any transport — REST and MCP are thin adapters
-over the exact same query functions the CLI calls. Long-running server/
-daemon processes (MCP, REST, `watch`) each detect if the binary on disk has
-been rebuilt out from under them since they started, and surface a
-`_stale_binary_warning` instead of silently answering from stale, in-memory
-code — the fix in that case is simply restarting the process/session.
+Long-running processes (MCP, REST, `watch`) detect if the binary on disk has
+been rebuilt out from under them since they started, and return a
+`_stale_binary_warning` instead of silently answering from stale in-memory
+code — restart the process/session to clear it.
 
-## Commands
-
-```
-architect init      --root DIR          build/refresh architect.db
-architect status    --root DIR          what's declared, used, and structurally visible
-architect concept   --root DIR TERM     does TERM exist? canonical? evidence?
-architect intent    --root DIR "GOAL"   smallest correct change: EXTEND vs CREATE
-architect plan      --root DIR "GOAL"   one-call composition of concept+owner+impact+decisions
-architect impact    --root DIR TERM     what is affected if TERM changes
-architect owner     --root DIR TERM     which directory owns TERM's declaration
-architect guard     --root DIR "SQL"    THE LAW: rejects CREATE TABLE duplicating a concept
-architect doctor    --root DIR          repository summary for someone who just cloned it
-architect tour      --root DIR          onboarding: what matters, what's ignorable, past mistakes
-architect duplicates --root DIR         suspected redundant concepts — risk, not proof
-architect history   --root DIR [TERM]   the architectural timeline (what git can't say)
-architect ci                            pipe a diff in, get an exit code out
-architect laws                          the language specification, from laws/*.toml
-architect watch     --root DIR          daemon: observe → notify, never act
-architect serve     --port 7373         REST API (127.0.0.1, read-only except /proposal/*)
-architect mcp                           MCP server over stdio
-architect proposal  submit|list|inspect|test|accept|reject   the AI-extension protocol
-```
-
-## The proposal protocol: how an AI extends Architect
-
-The only door through which a change — a new structural extractor, or a new
-`architect.toml` decision/alias — can reach the repository, and it never
-opens on its own. An AI proposes work, never evidence: `Tier::Inferred` does
-not exist, and this protocol is the reason it doesn't need to.
-
-```
-architect proposal submit --kind extractor|decision|alias \
-    --title "..." --patch some.diff      # inert patch, nothing applied yet
-architect proposal test <id>             # applies it in an isolated git
-                                          # worktree and runs it through the
-                                          # SAME laws + invariants suite —
-                                          # the real working tree is never
-                                          # touched
-architect proposal accept <id>           # only if: status == passed, the
-                                          # patch is byte-identical to what
-                                          # was tested, AND the repository
-                                          # HEAD hasn't moved since — then
-                                          # applies to the real working tree,
-                                          # UNCOMMITTED. Architect never runs
-                                          # `git commit`.
-```
-
-`check_scope()` hard-blocks any patch that touches the validation machinery
-itself (`laws.rs`, `tests/laws.rs`, `tests/invariants.rs`, `store.rs`,
-`model.rs`, `proposal.rs`, `Cargo.*`, `.github/`) or strays outside its
-kind's allow-list — a proposal cannot weaken the suite it's judged by.
-Reachable over the CLI, REST (`/proposal/*`), and MCP
-(`proposal_submit`/`proposal_test`/...) — the same trust boundary regardless
-of which client is holding the pen.
-
-## The per-project ontology: architect.toml
+### The per-project ontology: `architect.toml`
 
 ```toml
 [aliases]
@@ -305,15 +270,14 @@ rejected = ["separate episodes table"]   # ← what the next person will propose
 links = ["episode", "stories"]
 ```
 
-The guard cites the governing decision when it rejects — "this table already
-exists" states a fact; the decision states the reasoning, which is what stops
-the same proposal returning next month under a different name.
+`architect guard` cites the governing decision when it rejects — "this table
+already exists" states a fact; the decision states the reasoning, which is
+what stops the same proposal returning next month under a different name.
 
-## Memory model
+### Memory model
 
-This is a trust guarantee, not an implementation detail — projects never
-share architectural memory, and no per-project state ever leaves that
-project's own directory:
+Projects never share architectural memory, and no per-project state ever
+leaves that project's own directory:
 
 ```
 Architect core (compiled into the binary)
@@ -326,68 +290,83 @@ Each project — <root>/architect.db (one SQLite file)
   └── immutable event history (append-only)
 ```
 
-A developer's `~/titan/architect.db` and another developer's
+A developer's `~/storefront/architect.db` and another developer's
 `~/payments/architect.db` are independent memories governed by the same
 compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
 `CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
 against a project can never drop its history or decisions.
 
-## Testing discipline
+## Contributing: the proposal protocol
 
-This section is about how Architect is *developed*, not something you need
-to understand to use it. As a user, the three states above (KNOWN / KNOWN
-ABSENT / INSUFFICIENT_COVERAGE) are the entire interface — you never need
-to know about "law-015" to trust an answer, any more than you need to know
-which regression test a compiler runs to trust that it compiles your code
-correctly. The internal discipline exists so the *engine itself* keeps
-improving release over release without regressing; it was never meant to be
-a second knowledge system layered on top of the actual product.
+The only door through which a change — a new structural extractor, or a new
+`architect.toml` decision/alias — can reach a repository, and it never opens
+on its own. An AI proposes work, never evidence: `Tier::Inferred` does not
+exist.
 
-**Laws**: 15 active, each one a real wrong answer this engine actually gave
-on a real repository, each with a permanent regression fixture
-(`tests/fixtures/law_NNN/`) so it can never silently recur. A law states a
-timeless claim about what Architect is allowed to assert (`law-015`: "must
-not return a confident ABSENT when coverage is insufficient") — separate
-from *how* today's code happens to enforce that claim, which is expected to
-change over time without the law itself changing. `conformance_registry_matches_suite`
-enforces both directions — a law without a covering test fails CI, a test
-claiming a law the registry doesn't know fails too. Kept deliberately small:
-a law is minted only for a genuinely new invariant, not for every incident —
-an incident that's really another instance of an existing invariant gets a
-new regression fixture attached to that law, not a new law number. `laws/`
-is permanently walled off from the AI-extension protocol below — no
-proposal, from any user, on any install, can ever create or edit one; only
-a human maintainer, in a real release, can. If you believe you've found a
-genuine defect in Architect itself rather than a local coverage gap, file
-it: https://github.com/Neville777/Archietect/issues.
+```bash
+architect proposal submit --kind extractor|decision|alias \
+    --title "..." --patch some.diff      # inert patch, nothing applied yet
+architect proposal test <id>             # applies it in an isolated git worktree
+                                          # and runs it through the SAME laws +
+                                          # invariants suite — the real
+                                          # working tree is never touched
+architect proposal accept <id>           # only if: status == passed, the patch
+                                          # is byte-identical to what was
+                                          # tested, AND the repository HEAD
+                                          # hasn't moved since — then applies to
+                                          # the real working tree, UNCOMMITTED.
+                                          # Architect never runs `git commit`.
+```
+
+`check_scope()` hard-blocks any patch that touches the validation machinery
+itself (`laws.rs`, `tests/laws.rs`, `tests/invariants.rs`, `store.rs`,
+`model.rs`, `proposal.rs`, `Cargo.*`, `.github/`) or strays outside its
+kind's allow-list — a proposal cannot weaken the suite it's judged by.
+Reachable over CLI, REST (`/proposal/*`), and MCP
+(`proposal_submit`/`proposal_test`/...) — the same trust boundary regardless
+of which client is holding the pen.
+
+`laws/` is walled off from this protocol entirely — no proposal, from any
+user, on any install, can create or edit a law; only a human maintainer, in
+a real release, can. Found a genuine defect in Architect itself (not a
+local coverage gap)? File it: https://github.com/Neville777/Archietect/issues.
+
+## Testing
 
 Two suites, different guarantees:
 
-- `tests/laws.rs` — tiny synthetic fixtures, one per law: *the specific bug
-  that taught us this rule cannot recur.*
+- `tests/laws.rs` — one synthetic fixture per law, each tied to a specific
+  bug this engine previously produced on a real repository.
 - `tests/invariants.rs` — real cloned open-source repositories (chatwoot,
   lobe-chat, umami, Saleor, BookStack, dub, analytics, redash, Rails' and
   NestJS's own RealWorld ("Conduit") implementations for the schema layer;
   ASP.NET Core, C, Dart, Scala, Nuxt's own devtools monorepo, and gRPC's own
-  canonical examples for structural-only checks — routes included, not just
-  symbols): *the class of bug this invariant defines cannot occur in any
-  scanned corpus, not just the one that found it.*
+  canonical examples for structural-only checks, routes included) — proves
+  the bug class can't occur in any scanned corpus, not just the repo that
+  first surfaced it.
 
-Every new language/framework extractor gets exercised against real code
-before being trusted, not just a unit test — a synthetic snippet passing
-was once not enough to catch an extractor that was completely unreachable
-through the real scan pipeline, and a schema-layer real-repo check passing
-was once not enough either (Rails' idiomatic `resources :articles` — a bare
-Ruby symbol — was never matched by a route regex that only ever looked for
-a quoted string, found the same way: by actually dogfooding a real
-routes.rb, not by the unit test that already existed).
+**Laws:** 15 active. A law states a timeless claim about what Architect is
+allowed to assert — e.g. `law-015`: "must not return a confident `ABSENT`
+when coverage is insufficient" — separate from *how* today's code enforces
+that claim, which can change without the law itself changing.
+`conformance_registry_matches_suite` enforces both directions: a law without
+a covering test fails CI, and a test claiming a law the registry doesn't
+know fails too. New laws are minted only for genuinely new invariants; an
+incident that's really another instance of an existing invariant gets a new
+regression fixture attached to that law instead.
+
+As a user, none of this is required reading — the three verdict states
+(KNOWN / KNOWN ABSENT / INSUFFICIENT_COVERAGE) are the entire interface, the
+same way you don't need to know which regression test a compiler runs to
+trust that it compiles your code correctly. This section documents how
+Architect is *developed*, so it keeps improving release over release
+without regressing.
 
 ## Provenance
 
-Born inside TITAN (an autonomous agent system) after a repeated failure:
-"build X" → thirty minutes later → "X already existed." The fix was never
-to remember to check; it was to make checking a capability, then a law, then
-an always-running daemon. TITAN is now the first client.
+Built inside an autonomous coding-agent project after a recurring failure
+mode: "build X" → later → "X already existed." The fix was to make checking
+a capability, then a law, then an always-running daemon.
 
 ## License
 
