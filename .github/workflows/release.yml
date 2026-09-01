@@ -34,7 +34,7 @@ jobs:
           # artifact nobody has verified, not just one with a known gap.
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
