@@ -25,6 +25,16 @@ pub enum Tier {
     Declared,
     Used,
     Named,
+    /// Verified live, right now — not a static declaration. First meaningful
+    /// use: git_domain.rs's current-branch fact (`.git/HEAD` names the
+    /// branch git is ACTUALLY on this instant, not merely a historical
+    /// record). See SYSTEM_MEMORY.md's structured-domain evidence
+    /// vocabulary (DECLARED > USED > OBSERVED > NAMED). An OBSERVED fact is
+    /// only ever as true as the moment it was read; nothing in this
+    /// codebase attaches a staleness/TTL to it yet (a real gap the design
+    /// doc calls out under "every fact has an as-of time") — don't treat an
+    /// OBSERVED evidence string as durable the way DECLARED is.
+    Observed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

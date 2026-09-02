@@ -5,6 +5,7 @@
 //! a third. Everything here is deterministic and offline — AI tools consume
 //! this through MCP, they are never a component of it.
 
+pub mod git_domain;
 pub mod invariants;
 pub mod laws;
 pub mod mcp;
