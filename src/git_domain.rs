@@ -3,9 +3,12 @@
 //! 3 of the rollout ("First non-code domain as a proof of the
 //! generalization... git").
 //!
-//! Deliberately NOT wired into any existing CLI/REST/MCP command in this
-//! phase — see this module's own doc below and the phase-3 report for why
-//! that's a separate decision, not an accidental omission.
+//! Still not wired into any existing CLI/REST/MCP command — that remains a
+//! separate decision, not an accidental omission (see the phase-3 report).
+//! What HAS changed since phase 3: this domain is now gated by
+//! `permissions::PermissionConfig` (`scan_if_allowed`, below) — phase 3
+//! shipped before that permission model existed, so `scan` originally ran
+//! unconditionally.
 //!
 //! Reads `.git/HEAD` and `.git/config` directly rather than shelling out to
 //! `git` — both are small, stable, well-known plaintext formats, and this
@@ -20,13 +23,28 @@ use crate::resource::{Identity, Location, Resource};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// The gated entry point: checks `permissions::domain_allowed(cfg, "git")`
+/// before delegating to `scan` below. This is the function any future
+/// caller (CLI/REST/MCP) should use — `scan` itself remains the raw,
+/// ungated primitive this module's own tests exercise directly. Retrofits
+/// phase 3's git domain, which shipped before the permission model existed
+/// and ran with no gate at all — see SYSTEM_MEMORY.md's "Memory boundaries"
+/// section, which calls this retrofit out explicitly by name.
+pub fn scan_if_allowed(cfg: &crate::permissions::PermissionConfig, root: &Path) -> Vec<Resource> {
+    if !crate::permissions::domain_allowed(cfg, "git") {
+        return Vec::new();
+    }
+    scan(root)
+}
+
 /// Every `Resource` this extractor can produce for the repo at `root`, or an
 /// empty vec if `root` isn't a git repository (no `.git` directory) — this
 /// extractor's `detect()` equivalent, inlined rather than implementing the
 /// full `Extractor` trait sketch from SYSTEM_MEMORY.md, since that trait
 /// isn't defined anywhere in this codebase yet (this phase proves ONE domain
 /// fits the Resource shape; wiring a shared trait across domains is later
-/// work, not this phase's job).
+/// work, not this phase's job). UNGATED — see `scan_if_allowed` above for
+/// the permission-checked entry point real callers should use instead.
 pub fn scan(root: &Path) -> Vec<Resource> {
     let git_dir = root.join(".git");
     if !git_dir.is_dir() {
@@ -198,5 +216,29 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         assert!(scan(&tmp).is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn scan_if_allowed_blocks_when_git_domain_disabled() {
+        let global = std::env::temp_dir()
+            .join(format!("archietect-git-domain-test-disabled-{}.toml", std::process::id()));
+        std::fs::write(&global, "[domains]\ngit = \"disabled\"\n").unwrap();
+        let cfg = crate::permissions::load(&global, &this_repo_root()).unwrap();
+
+        assert!(
+            scan_if_allowed(&cfg, &this_repo_root()).is_empty(),
+            "an explicitly disabled git domain must yield no resources, even in a real git repo"
+        );
+        let _ = std::fs::remove_file(&global);
+    }
+
+    #[test]
+    fn scan_if_allowed_permits_when_git_domain_enabled_by_default() {
+        use crate::permissions::PermissionConfig;
+        let cfg = PermissionConfig::default(); // no config anywhere -> git defaults enabled
+        assert!(
+            !scan_if_allowed(&cfg, &this_repo_root()).is_empty(),
+            "git defaults enabled with zero config present, so this repo's own resources must appear"
+        );
     }
 }

@@ -106,6 +106,11 @@ enum Cmd {
     /// which stay exclusively in that project's own archietect.db.
     #[command(subcommand)]
     System(SystemCmd),
+    /// Inspect the resolved domain permission state: what's enabled, where
+    /// that decision came from (project config / global config / default),
+    /// and the hardcoded denial list nothing can override. See
+    /// SYSTEM_MEMORY.md's "Memory boundaries are the default" section.
+    Permissions,
 }
 
 #[derive(Subcommand)]
@@ -362,6 +367,11 @@ fn main() -> anyhow::Result<()> {
                     })
                 }
             }
+        }
+        Cmd::Permissions => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            archietect::permissions::report(&cfg)
         }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);

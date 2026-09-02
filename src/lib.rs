@@ -10,6 +10,7 @@ pub mod invariants;
 pub mod laws;
 pub mod mcp;
 pub mod model;
+pub mod permissions;
 pub mod proposal;
 pub mod query;
 pub mod resource;
