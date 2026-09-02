@@ -1,4 +1,4 @@
-# law-004 — part of Architect's language specification.
+# law-004 — part of Archietect's language specification.
 # Laws are amended, not edited: a superseded law gets status = "superseded"
 # and a supersedes pointer from its successor — semantics are versioned.
 

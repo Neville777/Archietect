@@ -1,6 +1,6 @@
 # Validation ledger — every wrong answer becomes a law
 
-> The machine-readable registry is `src/laws.rs` (`architect laws`); the
+> The machine-readable registry is `src/laws.rs` (`archietect laws`); the
 > enforcement arm is `tests/laws.rs` — one self-contained fixture per law,
 > run by `cargo test`. This file is the narrative; those are the spec.
 > A law without its regression test is a wish.

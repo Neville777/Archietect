@@ -1,4 +1,4 @@
-//! architect — an architectural memory engine.
+//! archietect — an architectural memory engine.
 //!
 //! Answers, for any codebase: does this concept already exist, which
 //! implementation is canonical, what is the evidence, and what is the
@@ -10,18 +10,18 @@
 //!
 //! `--root` is an OPTIONAL override on every command. Without it, the root is
 //! discovered by walking upward from the current directory looking for
-//! project markers (architect.db first — like .git, once you've init'd, the
+//! project markers (archietect.db first — like .git, once you've init'd, the
 //! repo is self-identifying). Resolved ONCE, before dispatch, and passed to
 //! every handler: one resolver, zero per-command drift. Nobody types
-//! `git status --repo .`; nobody should type `architect doctor --root .`.
+//! `git status --repo .`; nobody should type `archietect doctor --root .`.
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use architect::{mcp, model, proposal, query, rest, root, scan, store, watch};
+use archietect::{mcp, model, proposal, query, rest, root, scan, store, watch};
 
 #[derive(Parser)]
-#[command(name = "architect", version, about)]
+#[command(name = "archietect", version, about)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -37,7 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Scan the repository and persist the index (architect.db)
+    /// Scan the repository and persist the index (archietect.db)
     Init,
     /// Summary of what the index knows — and what it admits it cannot see
     Status,
@@ -69,7 +69,7 @@ enum Cmd {
         limit: usize,
     },
     /// CI gate: pipe a diff in, get an exit code out.
-    /// `git diff main... | architect ci`
+    /// `git diff main... | archietect ci`
     Ci {
         /// Also fail on name-collision warnings, not only storage violations
         #[arg(long)]
@@ -78,7 +78,7 @@ enum Cmd {
     /// The law registry: every rule the engine obeys, with the wrong answer
     /// that taught it and the regression test that enforces it forever
     Laws,
-    /// Daemon mode: watch the tree, keep architect.db warm, emit unprompted
+    /// Daemon mode: watch the tree, keep archietect.db warm, emit unprompted
     /// findings as JSON lines. Observation and notification — never action.
     Watch {
         /// Only STREAM events touching this concept (all events are still
@@ -105,7 +105,7 @@ enum Cmd {
 #[derive(Subcommand)]
 enum ProposalCmd {
     /// Register a new proposal (a patch) as pending — writes nothing outside
-    /// .architect/proposals/, does not touch the working tree
+    /// .archietect/proposals/, does not touch the working tree
     Submit {
         #[arg(long, value_enum)]
         kind: proposal::Kind,
@@ -133,7 +133,7 @@ enum ProposalCmd {
     /// Apply the patch in an isolated git worktree and run the existing
     /// regression suite against it — laws + invariants for an extractor,
     /// invariants::check for a decision/alias. Never touches the real
-    /// working tree or architect.db.
+    /// working tree or archietect.db.
     Test { id: u64 },
     /// Apply a passed, unmodified-since-test proposal to the real working
     /// tree — uncommitted. Never runs `git commit`.
@@ -146,8 +146,8 @@ enum ProposalCmd {
     },
 }
 
-fn index_for(root: &PathBuf) -> (model::Index, architect::structural::StructuralGraph) {
-    // Incremental: reuses per-file facts from architect.db where unchanged,
+fn index_for(root: &PathBuf) -> (model::Index, archietect::structural::StructuralGraph) {
+    // Incremental: reuses per-file facts from archietect.db where unchanged,
     // honours the schema-invalidates-usage dependency rule. Queries stay
     // read-only; only `init` (and the daemon) persist.
     scan::scan(root)
@@ -181,11 +181,11 @@ fn print_glance(g: &serde_json::Value) {
             println!("  • {}", x.as_str().unwrap_or(""));
         }
     }
-    println!("\n(architect --json for machine output; subcommands are always JSON)");
+    println!("\n(archietect --json for machine output; subcommands are always JSON)");
 }
 
 /// `println!` panics on a write error, including the ordinary case of stdout
-/// closing early (`architect concept Foo | head`). Every other well-behaved
+/// closing early (`archietect concept Foo | head`). Every other well-behaved
 /// CLI (grep, cat, jq) exits quietly on SIGPIPE instead of printing a Rust
 /// backtrace; restoring the default disposition here gets the same behavior.
 #[cfg(unix)]
@@ -201,7 +201,7 @@ fn main() -> anyhow::Result<()> {
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
 
-    // bare `architect` = the glance — the git-status of architecture
+    // bare `archietect` = the glance — the git-status of architecture
     let Some(cmd) = cli.cmd else {
         let (idx, graph) = index_for(&root);
         let out = query::glance(&idx, &graph, &root);
@@ -255,7 +255,7 @@ fn main() -> anyhow::Result<()> {
             // ONE call site, which is the actual commit-time decision point
             // (the pre-commit hook). Closes the concrete gap found
             // 2026-08-06: a real duplicate was prevented through this exact
-            // path and `architect history` had no way to say so.
+            // path and `archietect history` had no way to say so.
             let pass = out["pass"] == true;
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -280,7 +280,7 @@ fn main() -> anyhow::Result<()> {
             }
             return Ok(());
         }
-        Cmd::Laws => architect::laws::registry_json(),
+        Cmd::Laws => archietect::laws::registry_json(),
         Cmd::Watch { subscribe } => {
             watch::run(root, subscribe)?;
             return Ok(());

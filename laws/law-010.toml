@@ -1,4 +1,4 @@
-# law-010 — part of Architect's language specification.
+# law-010 — part of Archietect's language specification.
 
 id = "law-010"
 title = "An alias target is an exact concept name, not a search term"

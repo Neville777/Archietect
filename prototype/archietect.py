@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""architect — an architectural memory engine. v0 prototype.
+"""archietect — an architectural memory engine. v0 prototype.
 
 Answers, for any codebase: "does this concept already exist, what is canonical,
 what is the evidence, and what is the smallest correct change?"
 
 THE NON-NEGOTIABLE PRINCIPLE
 ----------------------------
-The Architect never invents architectural facts. Every answer carries its
+The Archietect never invents architectural facts. Every answer carries its
 evidence, and every piece of evidence is labelled with its STRENGTH:
 
     DECLARED  — read from a schema declaration (schema.prisma, models.py,
@@ -382,7 +382,7 @@ def q_scan_summary(proj: Project) -> dict:
 
 def main():
     if len(sys.argv) < 3:
-        print("usage: architect.py <scan|concept|intent|impact> --root DIR [query]")
+        print("usage: archietect.py <scan|concept|intent|impact> --root DIR [query]")
         sys.exit(1)
     cmd = sys.argv[1]
     args = sys.argv[2:]

@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 
 /// A few lines of real source around a declaration, read fresh from disk.
 /// Deterministic (it's the file's own bytes) — not inference, just saving
-/// the caller a Read/grep round trip for something Architect already knows
+/// the caller a Read/grep round trip for something Archietect already knows
 /// the exact location of.
 fn source_snippet(root: &str, file: &str, line: usize, context: usize) -> Option<String> {
     let text = std::fs::read_to_string(std::path::Path::new(root).join(file)).ok()?;
@@ -79,7 +79,7 @@ fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) ->
     })
 }
 
-/// Resolve a declared alias (architect.toml [aliases]) to its canonical
+/// Resolve a declared alias (archietect.toml [aliases]) to its canonical
 /// concept card. This is what a name search can never see: "episode" has no
 /// table named for it, but the project itself declares episode = stories.
 /// DECLARED tier, because the declaration file says so — not an inference.
@@ -106,9 +106,9 @@ fn resolve_alias(idx: &Index, graph: &StructuralGraph, term: &str, alias_key: &s
             "verdict": "UNKNOWN",
             "canonical": null,
             "evidence": [Evidence { tier: Tier::Declared,
-                what: format!("architect.toml declares '{alias_key}' = '{target}', but '{target}' is not a declared concept — the ontology file is stale or wrong") }],
+                what: format!("archietect.toml declares '{alias_key}' = '{target}', but '{target}' is not a declared concept — the ontology file is stale or wrong") }],
             "confidence": "low — declaration exists but points at nothing",
-            "recommendation": "Fix architect.toml: the alias target does not exist in the scanned declarations.",
+            "recommendation": "Fix archietect.toml: the alias target does not exist in the scanned declarations.",
         });
     }
     r["concept"] = json!(term);
@@ -116,7 +116,7 @@ fn resolve_alias(idx: &Index, graph: &StructuralGraph, term: &str, alias_key: &s
     if let Some(ev) = r["evidence"].as_array_mut() {
         ev.insert(0, serde_json::to_value(Evidence {
             tier: Tier::Declared,
-            what: format!("architect.toml declares '{alias_key}' = '{target}' — the project's own ontology, not an inference"),
+            what: format!("archietect.toml declares '{alias_key}' = '{target}' — the project's own ontology, not an inference"),
         }).unwrap());
     }
     r
@@ -131,7 +131,7 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // but the control flow here used to reach alias resolution only when
     // `declared` (name-token matches) came back EMPTY. That silently
     // defeated the ontology whenever an UNRELATED concept happened to share
-    // a token with an alias key. Caught live on TITAN: architect.toml
+    // a token with an alias key. Caught live on TITAN: archietect.toml
     // declares theory = "causal_hypotheses", but crates/titan_evolution
     // independently declares GameTheoryEngine — a real struct that
     // token-matches "theory" — and the old order let it win outright,
@@ -202,7 +202,7 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // isn't a storage model (a CLI command, a service, a handler). Checked
     // before the NAMED (filename-only) tier below because an actual symbol
     // match is stronger evidence than a bare filename resemblance. This is
-    // what lets `architect concept doctor` (a plain Rust function, not a
+    // what lets `archietect concept doctor` (a plain Rust function, not a
     // table) answer with where it's declared instead of a bare ABSENT.
     let mut structural_hits: Vec<&crate::structural::Symbol> = graph
         .symbols
@@ -349,13 +349,13 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
                 "type": "ai_investigation",
                 "read": named,
                 "question": format!("Do any of these files implement or represent '{term}'?"),
-                "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
-                "escalation": "If this reflects a structural pattern rather than a one-off, propose an extractor or decision via `architect proposal submit` instead of a one-off finding.",
-                "if_universal_defect": "That proposal path is for LOCAL fixes (this project's own architect.toml, or a new extractor only you run). If instead the actual problem looks like a defect in Architect's own matching/ranking logic — something that would misfire on any codebase, not just this one — a local fix can't correct that. Report it instead: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+                "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
+                "escalation": "If this reflects a structural pattern rather than a one-off, propose an extractor or decision via `archietect proposal submit` instead of a one-off finding.",
+                "if_universal_defect": "That proposal path is for LOCAL fixes (this project's own archietect.toml, or a new extractor only you run). If instead the actual problem looks like a defect in Archietect's own matching/ranking logic — something that would misfire on any codebase, not just this one — a local fix can't correct that. Report it instead: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
             },
         });
     }
-    // Before declaring ABSENT: is part of this repo in a language Architect
+    // Before declaring ABSENT: is part of this repo in a language Archietect
     // has no structural extractor for at all? If so, "no evidence found" does
     // not mean "confirmed absent" — it means "this repo has a blind spot."
     // Handed back as a structured, provisional gap — NOT a fact, and never
@@ -401,14 +401,14 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             "canonical": null,
             "evidence": [],
             "confidence": "unknown — this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
-            "recommendation": format!("No declared, structural, or named evidence for '{term}' — but Architect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action."),
+            "recommendation": format!("No declared, structural, or named evidence for '{term}' — but Archietect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action."),
             "next_action": {
                 "type": "ai_investigation",
                 "read": unsupported_files,
                 "question": format!("Do any of these files implement or represent '{term}'?"),
-                "note": "Any finding from reading these files is provisional. It is not an Architect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
-                "escalation": "If this language has no structural extractor at all, propose one via `architect proposal submit --kind extractor` — it will be validated against the existing laws + invariants suite before anyone applies it.",
-                "if_universal_defect": "That's for a missing extractor — a coverage gap, fixable locally. If instead this looks like a defect in Architect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+                "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict — that only happens if a human adds an extractor, an alias, or a decision.",
+                "escalation": "If this language has no structural extractor at all, propose one via `archietect proposal submit --kind extractor` — it will be validated against the existing laws + invariants suite before anyone applies it.",
+                "if_universal_defect": "That's for a missing extractor — a coverage gap, fixable locally. If instead this looks like a defect in Archietect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
             },
         });
     }
@@ -557,7 +557,7 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "concepts_with_observed_usage": used,
         "declared_but_never_observed_in_use": dead,
         "structural_coverage": crate::structural::coverage_report(idx, graph),
-        "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Architect can actually see structurally.",
+        "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Archietect can actually see structurally.",
     })
 }
 
@@ -759,7 +759,7 @@ pub fn duplicates(idx: &Index) -> Value {
     // Restricted to STORAGE-bearing concepts. Found by dogfooding on TITAN
     // (3,838 concepts once the rust pub-struct extractor landed): this loop
     // is O(n^2) name-token comparisons, and over the full concept set that
-    // was 23 SECONDS for one call — bare `architect` (which calls this)
+    // was 23 SECONDS for one call — bare `archietect` (which calls this)
     // would be unusably slow on any large Rust codebase, the opposite of
     // the git-status instant-glance this tool exists to be. It was also
     // pure noise: "AIAllocationSuggestion vs RustcSuggestion" sharing the
@@ -810,7 +810,7 @@ pub fn duplicates(idx: &Index) -> Value {
     json!({
         "suspected_duplicates": pairs,
         "likely_same_concept_needs_alias": needs_alias,
-        "note": "suspected_duplicates: name-token overlap is evidence of RISK, not proof — related concepts legitimately share vocabulary (Article/ArticleComment); the pairs worth investigating are the ones that surprise you. likely_same_concept_needs_alias: an ORM model beside an sql-tier table sharing its name is probably ONE concept the merge law cannot fold without a declared table name — declare the mapping in architect.toml [aliases] to link them.",
+        "note": "suspected_duplicates: name-token overlap is evidence of RISK, not proof — related concepts legitimately share vocabulary (Article/ArticleComment); the pairs worth investigating are the ones that surprise you. likely_same_concept_needs_alias: an ORM model beside an sql-tier table sharing its name is probably ONE concept the merge law cannot fold without a declared table name — declare the mapping in archietect.toml [aliases] to link them.",
     })
 }
 
@@ -869,7 +869,7 @@ pub fn owner(idx: &Index, term: &str) -> Value {
 
 /// CI gate: check a unified diff's ADDED lines for architecture violations.
 ///
-/// `git diff main... | architect ci --root .` — fails the pipeline when a
+/// `git diff main... | archietect ci --root .` — fails the pipeline when a
 /// patch introduces storage for a concept that already has a canonical
 /// implementation. Two severities, honestly separated:
 ///
@@ -917,7 +917,7 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
                     "new_declaration": name,
                     "collides_with": existing,
                     "via_token": tok,
-                    "advice": format!("'{existing}' may already cover this — run `architect concept {tok}` before merging"),
+                    "advice": format!("'{existing}' may already cover this — run `archietect concept {tok}` before merging"),
                 }));
                 break;
             }
@@ -934,14 +934,14 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
     })
 }
 
-/// The glance — bare `architect`, the git-status of architecture. A pure
+/// The glance — bare `archietect`, the git-status of architecture. A pure
 /// COMPOSITION of existing queries (freshness, drift, ontology, timeline)
 /// plus suggestions DERIVED from the facts. Deliberately no "health: 92/100":
 /// a composite score nobody measured is an unmeasured number wearing a
 /// measured one's clothes, and it would teach readers to distrust the real
 /// numbers beside it. Facts and derived suggestions only.
 pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> Value {
-    let db = root.join("architect.db");
+    let db = root.join("archietect.db");
     let dup = duplicates(idx);
     let needs_alias = dup["likely_same_concept_needs_alias"].as_array().map(|a| a.len()).unwrap_or(0);
 
@@ -996,11 +996,11 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
     }
     if needs_alias > 0 {
         suggestions.push(format!(
-            "{needs_alias} model↔table pair(s) look like ONE concept the merge law cannot fold — declare the mapping in architect.toml [aliases]"
+            "{needs_alias} model↔table pair(s) look like ONE concept the merge law cannot fold — declare the mapping in archietect.toml [aliases]"
         ));
     }
     for k in &stale {
-        suggestions.push(format!("Fix stale alias '{k}' in architect.toml — it points at a concept that no longer exists"));
+        suggestions.push(format!("Fix stale alias '{k}' in archietect.toml — it points at a concept that no longer exists"));
     }
 
     // No persisted index is normal on a first run, not an error — the scan
@@ -1017,7 +1017,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
             "declared_decisions": idx.decisions.len(),
         },
         "onboarding": if persisted { Value::Null } else {
-            json!("Run `architect init` to persist this index (instant lookups, no rescan), or `architect watch` to keep it continuously warm and start recording architectural history.")
+            json!("Run `archietect init` to persist this index (instant lookups, no rescan), or `archietect watch` to keep it continuously warm and start recording architectural history.")
         },
         "recent_changes": crate::store::read_history(root, None, 5),
         "suggestions": suggestions,
@@ -1026,7 +1026,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
     })
 }
 
-/// `architect plan` — the agent's one-call architectural plan. PURE
+/// `archietect plan` — the agent's one-call architectural plan. PURE
 /// COMPOSITION: intent resolution, then per-concept owner, impact, governing
 /// decisions and duplicate risks, stitched into one answer. No new semantics,
 /// no AI, no heuristics beyond the queries it composes — it exists because an
@@ -1071,7 +1071,7 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
         "conflicts": if planned.is_empty() && create.is_empty() {
             json!("nothing recognised — vocabulary may differ from the project's")
         } else {
-            json!("none detected at plan time — run `architect guard` on the actual patch before applying")
+            json!("none detected at plan time — run `archietect guard` on the actual patch before applying")
         },
         "note": "Pure composition of intent/owner/impact/decisions — one call instead of five, because the skipped calls are always the ones that mattered. Deterministic; the guard still rules on the final patch.",
     })

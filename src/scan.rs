@@ -80,7 +80,7 @@ const NON_CODE_EXTS: &[&str] = &[
     "mp3", "mp4", "wav", "mov", "avi", "webm",
     "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
     "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
-    "db", "sqlite", "sqlite3", // architect.db itself, and other embedded DBs
+    "db", "sqlite", "sqlite3", // archietect.db itself, and other embedded DBs
     "example", "local", "development", "template", // .env.example/.local/.development — not code
     "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
     "service", "plist", "unit", // systemd/launchd unit files — config, not code
@@ -146,7 +146,7 @@ fn skip_dir(e: &walkdir::DirEntry) -> bool {
 }
 
 /// Returns true if the entry's root-relative path starts with any of the
-/// user-declared exclude prefixes (architect.toml `exclude = ["validation/",
+/// user-declared exclude prefixes (archietect.toml `exclude = ["validation/",
 /// "fixtures/"]`). Trailing slash on a prefix is stripped before comparison
 /// so both `"validation"` and `"validation/"` work.
 fn skip_excluded(e: &walkdir::DirEntry, root: &Path, excludes: &[String]) -> bool {
@@ -189,7 +189,7 @@ pub fn scan_with_prior(
     };
 
     // ── ontology + decisions: always re-read (one small file) ───────────────
-    if let Ok(t) = std::fs::read_to_string(root.join("architect.toml")) {
+    if let Ok(t) = std::fs::read_to_string(root.join("archietect.toml")) {
         if let Ok(v) = t.parse::<toml::Value>() {
             if let Some(al) = v.get("aliases").and_then(|a| a.as_table()) {
                 for (k, val) in al {
@@ -216,15 +216,15 @@ pub fn scan_with_prior(
                     });
                 }
             }
-            idx.declaration_files.push(("architect.toml".into(), "ontology".into()));
+            idx.declaration_files.push(("archietect.toml".into(), "ontology".into()));
         }
     }
 
-    // ── exclude list: paths declared in architect.toml [exclude] ────────────
+    // ── exclude list: paths declared in archietect.toml [exclude] ────────────
     // Loaded separately (after the toml block above) so the walker below can
     // use it. Supports both string and array forms:
     //   exclude = ["validation/", "fixtures/"]
-    let excludes: Vec<String> = std::fs::read_to_string(root.join("architect.toml"))
+    let excludes: Vec<String> = std::fs::read_to_string(root.join("archietect.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Value>().ok())
         .and_then(|v| {

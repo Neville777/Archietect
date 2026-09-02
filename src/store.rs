@@ -1,4 +1,4 @@
-//! Persistence — one SQLite file in the repo root (`architect.db`).
+//! Persistence — one SQLite file in the repo root (`archietect.db`).
 //!
 //! `init` writes it; queries load it when fresh instead of rescanning. The
 //! staleness check is deliberately blunt: any source file newer than the
@@ -18,7 +18,7 @@ pub fn append_events(root: &Path, events: &[(i64, String, String, String)]) -> R
     if events.is_empty() {
         return Ok(());
     }
-    let conn = Connection::open(root.join("architect.db"))?;
+    let conn = Connection::open(root.join("archietect.db"))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS events (           id INTEGER PRIMARY KEY AUTOINCREMENT,            ts_ms INTEGER NOT NULL,            kind TEXT NOT NULL,            concept TEXT NOT NULL,            detail TEXT NOT NULL)",
     )?;
@@ -35,10 +35,10 @@ pub fn append_events(root: &Path, events: &[(i64, String, String, String)]) -> R
 /// `users.rs` changed; this knows the Authentication ARCHITECTURE changed,
 /// when, and what the engine said about it at the time.
 pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<serde_json::Value> {
-    let db = root.join("architect.db");
+    let db = root.join("archietect.db");
     // Existence check BEFORE open: SQLite CREATES a file on open, so an
     // unchecked open turns this read into a write — the glance was leaving
-    // 0-byte architect.db droppings wherever it ran, and each dropping then
+    // 0-byte archietect.db droppings wherever it ran, and each dropping then
     // became a STRONG root marker that corrupted git-style discovery from
     // subdirectories. A read that writes poisons more than the principle.
     if !db.exists() {
@@ -89,7 +89,7 @@ pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<ser
 /// a rename). Like a migration number, but for architectural knowledge:
 /// "v12 → v13: + WebsiteStats, - CheckoutSession". Daemon-only write.
 pub fn bump_arch_version(root: &Path) -> Result<i64> {
-    let conn = Connection::open(root.join("architect.db"))?;
+    let conn = Connection::open(root.join("archietect.db"))?;
     conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")?;
     let cur: i64 = conn
         .query_row("SELECT v FROM meta WHERE k='arch_version'", [], |r| r.get::<_, String>(0))
@@ -105,7 +105,7 @@ pub fn bump_arch_version(root: &Path) -> Result<i64> {
 }
 
 pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path) -> Result<std::path::PathBuf> {
-    let db_path = root.join("architect.db");
+    let db_path = root.join("archietect.db");
     let conn = Connection::open(&db_path)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
@@ -131,7 +131,7 @@ pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path
 /// version), which replaced the old whole-index invalidation: one touched
 /// file used to throw away everything.
 pub fn load_raw(root: &Path) -> (Option<Index>, Option<crate::structural::StructuralGraph>) {
-    let db_path = root.join("architect.db");
+    let db_path = root.join("archietect.db");
     if !db_path.exists() {
         return (None, None);
     }

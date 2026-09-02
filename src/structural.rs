@@ -113,7 +113,7 @@ pub struct Import {
 ///
 /// This is a VALUE TYPE — rebuilt from cache on every scan just like `Index`.
 /// It lives alongside `Index` in the scan result and is serialised into
-/// `architect.db` as a second row in the `idx` table.
+/// `archietect.db` as a second row in the `idx` table.
 ///
 /// ## Why not merge with Index?
 ///
@@ -156,7 +156,7 @@ pub struct StructuralFileFacts {
 ///
 /// Bumped to 2: added Swift/Objective-C/C-C++/Scala/Dart/Haskell/Clojure
 /// extractors and Django route recognition in extract_py — a checked-in
-/// validation corpus's cached architect.db predates both and would otherwise
+/// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
 pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 11; // +Gherkin (.feature), .jbuilder as Ruby; .erb moved to non-code
@@ -562,14 +562,14 @@ pub const LANGUAGES: &[LanguageSpec] = &[
     },
 ];
 
-/// Languages Architect can identify by extension but has NO extractor for —
+/// Languages Archietect can identify by extension but has NO extractor for —
 /// listed explicitly so the coverage report can say "present, unsupported"
 /// instead of silently omitting them. A language absent from BOTH tables is
 /// simply not something this list anticipated; the report says so too.
 pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[];
 
 /// Per-language, per-framework structural coverage for the files actually
-/// present in this scan — the honest answer to "does Architect understand
+/// present in this scan — the honest answer to "does Archietect understand
 /// this repo," instead of letting a user discover the boundary one UNKNOWN
 /// concept query at a time.
 pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> serde_json::Value {
@@ -617,7 +617,7 @@ pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> se
     serde_json::json!({
         "supported": supported,
         "present_but_unsupported": unsupported,
-        "note": "A file in an 'unsupported' language contributes no structural symbols or routes — a concept query for something implemented only there gets no STRUCTURAL evidence and will not guess from its filename alone (it returns INSUFFICIENT_COVERAGE instead). A 'supported' language's symbol_support/frameworks_recognized lists are exactly what is and isn't extracted — a framework not listed there (e.g. Django's urls.py) produces no Route even in a supported language. '(unclassified)' entries are extensions nobody has categorized as code OR as a known non-code format at all — possibly a real language Architect has simply never seen before.",
+        "note": "A file in an 'unsupported' language contributes no structural symbols or routes — a concept query for something implemented only there gets no STRUCTURAL evidence and will not guess from its filename alone (it returns INSUFFICIENT_COVERAGE instead). A 'supported' language's symbol_support/frameworks_recognized lists are exactly what is and isn't extracted — a framework not listed there (e.g. Django's urls.py) produces no Route even in a supported language. '(unclassified)' entries are extensions nobody has categorized as code OR as a known non-code format at all — possibly a real language Archietect has simply never seen before.",
     })
 }
 

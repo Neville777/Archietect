@@ -3,7 +3,7 @@
 Architectural features are FROZEN. The engine is internally coherent: every
 component is a client of the same deterministic core, and the next six
 months of investment hinge on evidence, not on another capability. The
-question changed from "what should Architect do?" to "what evidence do we
+question changed from "what should Archietect do?" to "what evidence do we
 need?" — this file is the protocol and the lab notebook.
 
 ## The three validation questions
@@ -13,32 +13,32 @@ need?" — this file is the protocol and the lab notebook.
 2. **Does it survive codebases its author didn't design?** The extractor
    loop continues (Laravel, JPA, gorm, Ecto are corpus work, not features —
    each ecosystem is exhausted before anything new is built).
-3. **Does it disappear?** Success = nobody opens Architect; AI, CI and
+3. **Does it disappear?** Success = nobody opens Archietect; AI, CI and
    editors ask it silently, and humans notice only when something is wrong.
 
 ## Setup (owner's actions — each is persistent config, so each is yours)
 
 ```bash
 # 1. every AI session on this machine becomes a client
-claude mcp add --scope user architect -- \
-  /home/nevo/Personal_Projects/architect/target/release/architect mcp
+claude mcp add --scope user archietect -- \
+  /home/nevo/Personal_Projects/archietect/target/release/archietect mcp
 
 # 2. the daemon runs at login for each active repo
-cp packaging/architectd.service ~/.config/systemd/user/architectd@.service
-systemctl --user enable --now architectd@$(systemd-escape /home/nevo/Personal_Projects/universal_trader/backend)
+cp packaging/archietectd.service ~/.config/systemd/user/archietectd@.service
+systemctl --user enable --now archietectd@$(systemd-escape /home/nevo/Personal_Projects/universal_trader/backend)
 
 # 3. the CI line, wherever a pipeline exists
-git diff main... | architect ci --root .
+git diff main... | archietect ci --root .
 ```
 
 ## What is measurable TODAY (no new code)
 
 | Metric | Source |
 |---|---|
-| Architectural events (drift, renames, versions) | `architect history` — append-only timeline |
+| Architectural events (drift, renames, versions) | `archietect history` — append-only timeline |
 | Guard verdicts in CI | pipeline logs (exit codes are the record) |
-| Corpus growth, laws learned | `architect laws` (`laws/corpus.toml`) |
-| Concepts believed / stopped believing | `architect status` per repo, over time |
+| Corpus growth, laws learned | `archietect laws` (`laws/corpus.toml`) |
+| Concepts believed / stopped believing | `archietect status` per repo, over time |
 
 ## What is NOT measurable today — deliberately deferred
 
@@ -62,23 +62,23 @@ recorded in the SAME append-only timeline the daemon writes. Covers both
 proposals: the "explanation recorder" (guard advice → followed/overridden +
 override reason) and the "runtime decision record" (merged X into Y, by
 whom, why, evidence). Same envelope, same storage, same archaeology
-queries. `architect history report` then answers WHY, not just what.
+queries. `archietect history report` then answers WHY, not just what.
 Guard-outcome events are the advice-given view; merge/rename rulings are
 the action-taken view. Build once. Gated on the month proving the advice
 is consulted at all.
 
-**Cross-repository search** (`architect search User` across the org, with
+**Cross-repository search** (`archietect search User` across the org, with
 consolidation recommendations) — post-freeze Track, explicitly deferred
 twice now; single-repo value must be proven first.
 
-**`architect law new`** — interactive scaffolder (what happened → what was
+**`archietect law new`** — interactive scaffolder (what happened → what was
 wrong → law toml + fixture + regression skeleton). Serves the maintainer,
 not the month; post-freeze.
 
 **TITAN internal/standalone unification** — TITAN's repair loop already
 passes through its INTERNAL guard (architecture.rs, wired 2026-08-05); the
 standalone engine serves this machine via MCP. One engine serving both is
-post-freeze consolidation — and must itself pass `architect concept guard`
+post-freeze consolidation — and must itself pass `archietect concept guard`
 first, because two guards is a duplicate concept.
 
 **The taxonomy rename** (`laws/` → `engine semantics / evidence model /
@@ -101,7 +101,7 @@ just because it keeps being proposed.
 
 ## The five-year frame (recorded 2026-08-06, not enacted)
 
-"Architect becomes the compiler for architecture" — every client (CLI,
+"Archietect becomes the compiler for architecture" — every client (CLI,
 MCP, REST, GUI, CI, IDE, TITAN) asks, none compute; the daemon is the one
 writer, the product, and eventually invisible the way git/rust-analyzer
 are invisible. Matches what's already built (one engine, thin transports,
@@ -112,7 +112,7 @@ a naming of the destination already being walked toward.
 headline, once the month ends):**
 1. Architectural consistency — duplicate concepts / conflicting decisions
    actually prevented, not just detectable.
-2. Time to architectural answer — `architect owner X` vs. manually
+2. Time to architectural answer — `archietect owner X` vs. manually
    grepping, measured, not assumed.
 3. Trust — recommendations accepted without independent verification.
    (Needs the decision-event recorder above to measure at all — currently
@@ -123,11 +123,11 @@ headline, once the month ends):**
 **Distribution roadmap (not started):** single binary, subcommands own
 daemon/mcp/serve/ci/watch (no separate installs to explain — already true
 today); package managers (cargo install today; brew/apt/winget later);
-`architect bootstrap` one-shot init+daemon-enable; framework integration
+`archietect bootstrap` one-shot init+daemon-enable; framework integration
 (`cargo new` / `npx create-next-app` prompting to enable it) is a
 multi-year distribution bet, not a near-term item.
 
-**`architect explain <concept>`** — a NARRATIVE renderer over facts that
+**`archietect explain <concept>`** — a NARRATIVE renderer over facts that
 already exist (provenance, relations, rejected duplicates, laws cited,
 decisions). No model, no generation: sentence templates over the same JSON.
 Six-month item; it becomes worth building only when decision-events exist
@@ -137,7 +137,7 @@ card.
 ## Day-1 baseline (Track 3 — evidence, not marketing)
 
 Measured 2026-08-05, 12 repos on this machine. Cold = full init; warm =
-status via incremental cache; db = architect.db on disk.
+status via incremental cache; db = archietect.db on disk.
 
 | repo | concepts | used | cold scan | warm query | db size |
 |---|---|---|---|---|---|
@@ -160,7 +160,7 @@ and the decision-event recorder.
 
 ## The bar
 
-> "It feels strange to work in a repository without Architect running."
+> "It feels strange to work in a repository without Archietect running."
 
 If that sentence is true in a month, the transition from project to
 infrastructure happened. If it is not true, no feature would have made it
@@ -172,7 +172,7 @@ true, and the month found that out at the cheapest possible price.
 
 - 2026-08-05 — freeze declared. 19 commits, 10 extractors, 9 laws,
   14-repo corpus, all interfaces built through GUI v0. TITAN registered as
-  first client (architect.toml committed in its repo).
+  first client (archietect.toml committed in its repo).
 - 2026-08-05 (day 1, full TITAN battery) — HELPED: episode/situation/theory
   all resolve through the ontology; guard blocks episodes citing the ADR;
   intent("per country phenomenon coverage") → extend phenomena, nothing new;
@@ -187,14 +187,14 @@ true, and the month found that out at the cheapest possible price.
   contradicting the stated principle → owner now comes from DECLARING
   directories only, usage breaks ties. 11/11 laws green after all three.
 - 2026-08-05 (day 1, cont.) — owner codes terminal-only, no IDE: bare
-  `architect` now prints human text by default (--json for scripts;
+  `archietect` now prints human text by default (--json for scripts;
   subcommands stay JSON for jq). Size-sorted family suggestions immediately
   deepened the findings: not 4 ledgers but FIVE (swarm_vitality_ledger),
   plus EIGHT *_events tables and SIX *_state tables, no governing decisions.
   Alphabetical truncation had buried the biggest family — presentation
   order is epistemics too.
 - 2026-08-05 (day 1, cont.) — recorded 10 family decisions in TITAN's
-  architect.toml (events/state/ledger/referral/history + snapshots/domain/
+  archietect.toml (events/state/ledger/referral/history + snapshots/domain/
   holon/transactions/access), evidence-checked: the deposit_events pair is
   TWO CHAINS (naming asymmetry = deliberate debt), swarm_vitality_ledger
   has NO WRITER (suspected orphan, recorded do-not-extend). The dormant
@@ -205,7 +205,7 @@ true, and the month found that out at the cheapest possible price.
   was wrong once: CREATE TABLE of the canonical's own declared table is a
   MIGRATION (law-002 exemption), not a duplicate — the engine was right
   and the tester was not.
-- 2026-08-05 (day 1, cont.) — `architect plan` (pure composition, glance
+- 2026-08-05 (day 1, cont.) — `archietect plan` (pure composition, glance
   precedent): one call = intent+owner+impact+decisions; first TITAN run
   cited 'referral-tables-are-funnel-stages' recorded an hour earlier — the
   decisions loop closed same-day. LAW-010 STRUCK TWICE: plan() passed
@@ -215,14 +215,14 @@ true, and the month found that out at the cheapest possible price.
   15–369ms, db 36K–1.8M).
 - 2026-08-05 (day 1, owner's first real-world use) — owner ran it on a WORK
   repo (Coseke onboard-v1) and filed the first outside bug report: bare
-  `architect` infers root but every subcommand demanded --root. Fixed
+  `archietect` infers root but every subcommand demanded --root. Fixed
   git-style: ONE resolver before dispatch, --root optional everywhere.
   The fix found two deeper bugs in sequence: (1) weak markers (Cargo.toml)
   LIE in workspaces — resolver stopped at crates/titan_api and confidently
-  answered for one crate; strong markers (architect.db/.toml/.git) now beat
+  answered for one crate; strong markers (archietect.db/.toml/.git) now beat
   weak at any distance. (2) THE READ THAT WROTE: read_history opened
   SQLite without an existence check, and SQLite creates on open — the
-  glance left 0-byte architect.db droppings wherever it ran, and each
+  glance left 0-byte archietect.db droppings wherever it ran, and each
   dropping became a STRONG root marker poisoning discovery. Reads now open
   SQLITE_OPEN_READ_ONLY; droppings cleaned. A read-path that writes
   corrupts more than the principle — it corrupted navigation.
@@ -241,13 +241,13 @@ true, and the month found that out at the cheapest possible price.
   found by USE, not by design review: the ordering gap was invisible until
   a real codebase produced the exact token collision.
 - 2026-08-06 (day 2, cont. — "test, dogfood") — full test suite (23/23)
-  and live dogfooding on both architect's own repo and TITAN. Three real
+  and live dogfooding on both archietect's own repo and TITAN. Three real
   bugs found and fixed, all by USE, none by review:
-  (1) architect's own architect.toml didn't exclude tests/fixtures/ — the
+  (1) archietect's own archietect.toml didn't exclude tests/fixtures/ — the
       fixture dirs (deliberately containing collisions like Ghost/ghosts)
       were scanned as real source, reporting 3 fake duplicate risks on
       itself. Fixed; 27→14 real concepts, 0 fake risks.
-  (2) LAW-012: `architect concept ScoreBreakdown` — the exact, correct,
+  (2) LAW-012: `archietect concept ScoreBreakdown` — the exact, correct,
       full name of a real struct — returned ABSENT. names_concept() only
       compared TOKENS of a name against the query term, never the whole
       name; a multi-token name could never match its own literal spelling.
@@ -258,14 +258,14 @@ true, and the month found that out at the cheapest possible price.
   (3) The new rust extractor's 3,838-concept surface broke two features
       silently: family suggestions drowned in 294 *Config/108 *Result/93
       *Response (universal naming, zero duplication cost), and
-      duplicates() — O(n^2) — took 23s on TITAN, which bare `architect`
+      duplicates() — O(n^2) — took 23s on TITAN, which bare `archietect`
       calls. Both restricted to storage-bearing (table.is_some())
       concepts: signal restored, 23s→11.6s (isolated: that remainder is
       cold-scan cost, not the bug — warm/incremental is 1.5s).
   TITAN dogfood, clean: guard still blocks CREATE TABLE episodes citing
   the ADR; concept theory still resolves via alias through the fixed
   ordering; 12/12 corpus canonical picks unchanged throughout.
-- 2026-08-06 (day 2, cont.) — "keep dogfooding: run architect watch on
+- 2026-08-06 (day 2, cont.) — "keep dogfooding: run archietect watch on
   TITAN for a real stretch." This was the highest-value finding of the
   day. Two SEVERE, separate daemon bugs, both making it unusable at
   TITAN's scale, NEITHER the bug I expected going in:
@@ -284,7 +284,7 @@ true, and the month found that out at the cheapest possible price.
       100% CPU, 4+ minutes, killed. Fixed: prefix match, not exact.
   Verified: single touch -> exactly one 1.3s rescan -> daemon genuinely
   idle (STAT=Sl) at 3 checkpoints over 20+ seconds. This was blocking —
-  the setup instructions tell the owner to enable architectd@; without
+  the setup instructions tell the owner to enable archietectd@; without
   today's fix, that would have pegged a CPU core indefinitely on the
   first real edit. Full regression: 23/23 tests, 12/12 corpus unchanged.
 
@@ -306,7 +306,7 @@ true, and the month found that out at the cheapest possible price.
    hook (installed this same day) does not write to the timeline at all —
    grep confirms zero references to append_events/history in query::ci or
    the pre-commit script. A real duplicate WAS prevented today (the
-   CREATE TABLE trades test) and `architect history` cannot say so. The
+   CREATE TABLE trades test) and `archietect history` cannot say so. The
    recorder needs to cover CI-block events, not only guard-outcomes and
    merge-rulings as originally scoped.
 4. **Distribution** — already logged, not started, gated on 2-3 first.

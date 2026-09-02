@@ -12,7 +12,7 @@
 //! law in the registry must be covered here, so a law cannot exist
 //! unenforced — a law without its test is a wish, and the wish now fails CI.
 
-use architect::{laws, query, scan, watch};
+use archietect::{laws, query, scan, watch};
 use std::path::PathBuf;
 
 /// Laws covered by this harness. The conformance test cross-checks this
@@ -23,7 +23,7 @@ const COVERED: &[&str] = &[
     "law-013", "law-014", "law-015",
 ];
 
-fn fixture(law: &str) -> architect::model::Index {
+fn fixture(law: &str) -> archietect::model::Index {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(law);
@@ -33,7 +33,7 @@ fn fixture(law: &str) -> architect::model::Index {
 
 /// Same as `fixture`, for laws whose test needs a before/after PAIR (a diff),
 /// not a single snapshot — `tests/fixtures/law_NNN/<sub>/`.
-fn fixture_sub(law: &str, sub: &str) -> architect::model::Index {
+fn fixture_sub(law: &str, sub: &str) -> archietect::model::Index {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(law)
@@ -179,7 +179,7 @@ fn law_010_alias_exact_target() {
 
 #[test]
 fn law_011_ontology_before_name_search() {
-    // Reproduces the exact TITAN collision: architect.toml declares
+    // Reproduces the exact TITAN collision: archietect.toml declares
     // theory = "causal_hypotheses", while an UNRELATED public struct
     // (GameTheoryEngine) independently token-matches "theory". The ontology
     // must win — an unrelated concept sharing one token with an alias key
@@ -200,7 +200,7 @@ fn law_011_ontology_before_name_search() {
 
 #[test]
 fn law_012_whole_name_matches_self() {
-    // Found by dogfooding: `architect concept ScoreBreakdown` — the exact,
+    // Found by dogfooding: `archietect concept ScoreBreakdown` — the exact,
     // correct, full name of a real live struct — returned ABSENT. A
     // multi-token declared name must be findable by querying its own
     // literal spelling, not only by a single token close enough to match.

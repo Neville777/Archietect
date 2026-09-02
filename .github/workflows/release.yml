@@ -42,7 +42,7 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact: architect-linux-x86_64
+            artifact: archietect-linux-x86_64
             # NOT -gnu: found by actually installing the v0.1.0 release on
             # a real machine (Ubuntu 22.04 LTS, glibc 2.35, still supported
             # until 2027 and extremely widely deployed) — the -gnu build
@@ -54,10 +54,10 @@ jobs:
             # this class of bug in Rust CLI distribution.
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: architect-macos-arm64
+            artifact: archietect-macos-arm64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: architect-macos-x86_64
+            artifact: archietect-macos-x86_64
             # Cross-compiled from the same Apple Silicon runner as the
             # arm64 build above, not built natively on an Intel runner.
             # GitHub has been shrinking Intel macOS (macos-13) capacity
@@ -68,7 +68,7 @@ jobs:
             # standard, well-established practice — the resulting binary is
             # a real x86_64 Mach-O, not an emulated/translated one.
           # Windows is deliberately not included here: the daemon
-          # (`architect watch` via packaging/onboard.sh --daemon) only
+          # (`archietect watch` via packaging/onboard.sh --daemon) only
           # knows systemd (Linux) and launchd (macOS) — see onboard.sh's
           # own `case "$(uname)"` — and the plain CLI binary has never
           # actually been built or run on Windows by anyone in this
@@ -94,7 +94,7 @@ jobs:
       - name: Stage artifact
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/architect" "dist/${{ matrix.artifact }}"
+          cp "target/${{ matrix.target }}/release/archietect" "dist/${{ matrix.artifact }}"
 
       - uses: actions/upload-artifact@v7
         with:

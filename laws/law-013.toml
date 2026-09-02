@@ -1,11 +1,11 @@
-# law-013 — part of Architect's language specification.
+# law-013 — part of Archietect's language specification.
 
 id = "law-013"
 title = "A single generic architectural-role token must not alone establish a duplicate-concept collision"
 statement = "Duplicate-detection loops (the watch daemon's diff, the CI guard, the storage-family grouping) skip a shared name token when that token is a generic architectural-role word (executor, manager, handler, service, controller, factory, builder, adapter, provider, client, worker, engine, repository, store, registry, gateway, middleware, config, result, response, request, context, state) — same_word()/names_concept() still match on it for direct lookup, but it cannot by itself trigger a collision finding."
 because = "Found 2026-08-07 dogfooding the watch daemon against TITAN: a brand-new SQL table `executor_gaps` (crates/titan_api/src/experiment_runner.rs) was flagged duplicate_concept_risk against `BinanceExecutor`, an unrelated pre-existing struct in a completely different crate (titan_live_connector) and a completely different subsystem (a Binance exchange connector vs. an experiment-dispatch gap tracker). The only thing they share is the token \"executor\" — a generic architectural role, not a domain concept. Same failure shape as *Config/*Result/*Response (already excluded from the storage-family grouping for the identical reason — every module having its own Config is normal, every module having its own ledger table is not); this generalizes the principle: a shared GENERIC role word is never, by itself, evidence of redundancy."
 category = "matching"
-discovered_in = ["TITAN dogfooding — architect watch daemon, live on universal_trader/backend"]
+discovered_in = ["TITAN dogfooding — archietect watch daemon, live on universal_trader/backend"]
 introduced = "2026-08-07"
 status = "active"
 regression = "tests/laws.rs::law_013_generic_role_token_is_not_collision_evidence (fixture: tests/fixtures/law_013)"

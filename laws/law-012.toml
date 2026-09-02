@@ -1,11 +1,11 @@
-# law-012 — part of Architect's language specification.
+# law-012 — part of Archietect's language specification.
 
 id = "law-012"
 title = "A multi-token name must match a query for its own exact spelling"
 statement = "names_concept() tries the WHOLE declared name against the whole query term before falling back to per-token matching."
-because = "architect concept ScoreBreakdown — the exact, correct, full name of a real live struct in this codebase — returned ABSENT (\"building it is justified\"). names_concept() only ever compared TOKENS of the name (\"Score\", \"Breakdown\") against the whole term; neither token is close enough to the full word under same_word's length-bounded prefix rule. A multi-token declared name could never be found by querying its own literal spelling. A false ABSENT on a concept's exact name is the worst answer this engine can give: it looks like knowledge and it is a lie."
+because = "archietect concept ScoreBreakdown — the exact, correct, full name of a real live struct in this codebase — returned ABSENT (\"building it is justified\"). names_concept() only ever compared TOKENS of the name (\"Score\", \"Breakdown\") against the whole term; neither token is close enough to the full word under same_word's length-bounded prefix rule. A multi-token declared name could never be found by querying its own literal spelling. A false ABSENT on a concept's exact name is the worst answer this engine can give: it looks like knowledge and it is a lie."
 category = "matching"
-discovered_in = ["architect (dogfooding its own codebase)"]
+discovered_in = ["archietect (dogfooding its own codebase)"]
 introduced = "2026-08-06"
 status = "active"
 regression = "tests/laws.rs::law_012_whole_name_matches_self (fixture: tests/fixtures/law_012)"

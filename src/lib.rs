@@ -1,4 +1,4 @@
-//! architect — architectural memory engine (library surface).
+//! archietect — architectural memory engine (library surface).
 //!
 //! The binary is one client of this library; `cargo test` is another (the
 //! law regression suite in tests/laws.rs); an embedding application would be

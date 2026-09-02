@@ -2,11 +2,11 @@
 //! human-authored: `source` just records which) can reach this repository,
 //! and it never opens on its own.
 //!
-//! `submit` only ever writes an inert patch file under `.architect/proposals/`.
+//! `submit` only ever writes an inert patch file under `.archietect/proposals/`.
 //! `test` runs that patch through the EXISTING deterministic regression
 //! suite (`invariants::check` for a decision/alias, the full `laws` +
 //! `invariants` test binaries for an extractor) inside an isolated git
-//! worktree — the real working tree, `Index`, and `architect.db` are never
+//! worktree — the real working tree, `Index`, and `archietect.db` are never
 //! touched. `accept` requires: `status == Passed`, the patch bytes
 //! unchanged since that test, AND the repository HEAD unchanged since that
 //! test — before it will `git apply` to the real working tree, and even
@@ -24,7 +24,7 @@
 //! "I fixed the test" is not an acceptable answer to "how does this pass."
 //!
 //! This is deliberately the only new capability here. There is no
-//! `Tier::Inferred` and no writer for `Index`/`architect.db` added by this
+//! `Tier::Inferred` and no writer for `Index`/`archietect.db` added by this
 //! module: a proposal is work, never evidence. See `query.rs`'s
 //! `ai_investigation` / `escalation` fields for the companion, ephemeral
 //! half of this boundary — a one-off finding that never gets this far.
@@ -42,9 +42,9 @@ use std::process::Command;
 pub enum Kind {
     /// New src/structural.rs extractor code (and its registration/tests).
     Extractor,
-    /// A new architect.toml [[decision]] entry.
+    /// A new archietect.toml [[decision]] entry.
     Decision,
-    /// A new architect.toml [aliases] entry.
+    /// A new archietect.toml [aliases] entry.
     Alias,
 }
 
@@ -71,7 +71,7 @@ struct Meta {
     /// against — informational only, never gates pass/fail.
     #[serde(default)]
     preview_repo: Option<String>,
-    /// Who/what authored this — "ai", "human", "architect", a tool name...
+    /// Who/what authored this — "ai", "human", "archietect", a tool name...
     /// Free text: the mechanism doesn't care about the source, only about
     /// what the patch touches and whether it passes.
     #[serde(default = "default_source")]
@@ -104,7 +104,7 @@ struct ResultReport {
 }
 
 fn proposals_root(root: &Path) -> PathBuf {
-    root.join(".architect").join("proposals")
+    root.join(".archietect").join("proposals")
 }
 fn proposal_dir(root: &Path, id: u64) -> PathBuf {
     proposals_root(root).join(id.to_string())
@@ -203,7 +203,7 @@ fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
         }
         if FORBIDDEN_EXACT.contains(&f.as_str()) || FORBIDDEN_PREFIX.iter().any(|p| f.starts_with(p)) {
             bail!(
-                "proposal touches '{f}', which is part of Architect's own validation machinery \
+                "proposal touches '{f}', which is part of Archietect's own validation machinery \
                  and is never permitted in a proposal patch"
             );
         }
@@ -211,8 +211,8 @@ fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
     match kind {
         Kind::Decision | Kind::Alias => {
             for f in &files {
-                if f != "architect.toml" {
-                    bail!("a decision/alias proposal may only touch architect.toml — this patch also touches '{f}'");
+                if f != "archietect.toml" {
+                    bail!("a decision/alias proposal may only touch archietect.toml — this patch also touches '{f}'");
                 }
             }
         }
@@ -318,8 +318,8 @@ pub fn submit(
         "kind": kind,
         "status": "pending",
         "dir": pdir.display().to_string(),
-        "next": format!("architect proposal test {id}"),
-        "note": "Recommend adding .architect/proposals/ to .gitignore — these are local, pending artifacts, not committed source, until `accept` applies one to the working tree.",
+        "next": format!("archietect proposal test {id}"),
+        "note": "Recommend adding .archietect/proposals/ to .gitignore — these are local, pending artifacts, not committed source, until `accept` applies one to the working tree.",
     }))
 }
 
@@ -368,14 +368,14 @@ pub fn test(root: &Path, id: u64) -> Result<Value> {
     meta.patch_hash = hash_file(&patch_file)?;
     let head = current_head(root)?;
 
-    let worktree = std::env::temp_dir().join(format!("architect-proposal-{id}-{}", now_ms()));
+    let worktree = std::env::temp_dir().join(format!("archietect-proposal-{id}-{}", now_ms()));
     let add = Command::new("git")
         .current_dir(root)
         .args(["worktree", "add", "--detach"])
         .arg(&worktree)
         .arg("HEAD")
         .output()
-        .context("failed to run `git worktree add` — is this an architect repo under git?")?;
+        .context("failed to run `git worktree add` — is this an archietect repo under git?")?;
     if !add.status.success() {
         bail!("git worktree add failed: {}", String::from_utf8_lossy(&add.stderr));
     }
@@ -431,7 +431,7 @@ fn run_in_worktree(worktree: &Path, patch_file: &Path, meta: &Meta) -> Result<Re
 
     match meta.kind {
         Kind::Decision | Kind::Alias => {
-            // No compilation needed: this just changes architect.toml, so
+            // No compilation needed: this just changes archietect.toml, so
             // an ordinary scan of the worktree already reflects it —
             // I-2/I-3 in invariants::check are exactly the safety net a
             // proposed decision/alias needs (dangling alias, dangling
@@ -506,7 +506,7 @@ fn preview_extractor(worktree: &Path, preview_repo: Option<&str>) -> Option<Valu
     if !build.status.success() {
         return Some(json!({ "error": "preview build failed" }));
     }
-    let bin = worktree.join("target").join("debug").join("architect");
+    let bin = worktree.join("target").join("debug").join("archietect");
     let out = Command::new(&bin).arg("--root").arg(repo).arg("status").output().ok()?;
     if !out.status.success() {
         return Some(json!({ "error": "preview run failed" }));
@@ -521,14 +521,14 @@ pub fn accept(root: &Path, id: u64) -> Result<Value> {
     let mut meta = load_meta(root, id)?;
     if meta.status != Status::Passed {
         bail!(
-            "proposal {id} is '{:?}', not 'passed' — run `architect proposal test {id}` first",
+            "proposal {id} is '{:?}', not 'passed' — run `archietect proposal test {id}` first",
             meta.status
         );
     }
     let patch_file = patch_path(root, id);
     let current_hash = hash_file(&patch_file)?;
     if current_hash != meta.patch_hash {
-        bail!("patch.diff changed since the last passing test — re-run `architect proposal test {id}`");
+        bail!("patch.diff changed since the last passing test — re-run `archietect proposal test {id}`");
     }
     let patch_text = std::fs::read_to_string(&patch_file)
         .with_context(|| format!("reading {}", patch_file.display()))?;
@@ -539,9 +539,9 @@ pub fn accept(root: &Path, id: u64) -> Result<Value> {
         Some(h) if *h == head_now => {}
         Some(h) => bail!(
             "repository HEAD has moved since this proposal was tested (tested against {h}, now at \
-             {head_now}) — re-run `architect proposal test {id}`"
+             {head_now}) — re-run `archietect proposal test {id}`"
         ),
-        None => bail!("proposal {id} has no recorded tested HEAD — run `architect proposal test {id}` first"),
+        None => bail!("proposal {id} has no recorded tested HEAD — run `archietect proposal test {id}` first"),
     }
 
     let apply = Command::new("git")
@@ -558,7 +558,7 @@ pub fn accept(root: &Path, id: u64) -> Result<Value> {
     save_meta(root, id, &meta)?;
 
     let mut note = "Applied to the working tree, uncommitted. Review with `git diff` and commit \
-        when ready — Architect does not commit on your behalf."
+        when ready — Archietect does not commit on your behalf."
         .to_string();
     if meta.kind == Kind::Extractor {
         note.push_str(" A rebuild (`cargo build`) is needed before the new extractor is live.");

@@ -1,4 +1,4 @@
-# architect
+# archietect
 
 **The persistent architectural brain of a software project.**
 
@@ -12,14 +12,14 @@ this way, and how that has changed over time. AI agents, editors, CI, and
 humans all query the same continuously maintained state instead of each
 reconstructing a partial, inconsistent understanding per session.
 
-**Architect does not use AI. AI uses Architect.**
+**Archietect does not use AI. AI uses Archietect.**
 
 ```
               Human
                 │
       Claude / GPT / Cursor / Zed        ← intelligence lives HERE
                 │
-          Architect (CLI / REST / MCP)
+          Archietect (CLI / REST / MCP)
                 │
         Architectural state              ← truth lives HERE
    laws · concepts · decisions · aliases
@@ -31,7 +31,7 @@ reconstructing a partial, inconsistent understanding per session.
 ## Demo
 
 ```
-$ architect concept doctor
+$ archietect concept doctor
 {
   "concept": "doctor",
   "verdict": "STRUCTURAL",
@@ -52,21 +52,21 @@ $ architect concept doctor
 yourself any time; it's live, not a fixture)
 
 Real file, real line, real code excerpt, read fresh off disk at query time —
-that's Architect answering a question about its own source. Ask about
+that's Archietect answering a question about its own source. Ask about
 something that doesn't exist and it says so, at the same confidence, instead
 of guessing:
 
 ```
-$ architect concept PaymentRefundService
+$ archietect concept PaymentRefundService
 { "verdict": "ABSENT", "confidence": "high — no declaration, no observed usage, no name resemblance",
   "recommendation": "Genuinely new for this project. Building it is justified." }
 ```
 
-And when a repo contains a language Architect can't see into, it names that
+And when a repo contains a language Archietect can't see into, it names that
 gap instead of guessing past it:
 
 ```
-$ architect concept processOrder
+$ archietect concept processOrder
 { "verdict": "INSUFFICIENT_COVERAGE",
   "confidence": "unknown — this repository contains files in a language with no structural extractor",
   "next_action": { "read": ["handler.lua"], "question": "Do any of these files implement or represent 'processOrder'?" } }
@@ -82,7 +82,7 @@ never silently guessed past). That's the entire trust model.
 - **Evidence-tiered, never invented** — every answer is ranked `DECLARED`
   (the project's own schema asserts it) > `USED` (code observably touches
   it) > `NAMED` (name resemblance only — verdict `UNKNOWN`, needs a human).
-- **Read-only against your code** — Architect flags problems with evidence
+- **Read-only against your code** — Archietect flags problems with evidence
   and stops; it never edits your working tree. The one exception (the
   proposal protocol, below) applies a patch a human explicitly accepted,
   uncommitted.
@@ -130,7 +130,7 @@ Prisma, Drizzle, TypeORM, Sequelize/Mongoose, Django, SQLAlchemy,
 pydantic/SQLModel, Rails/ActiveRecord, Eloquent, JPA, GORM, Ecto, and raw
 `CREATE TABLE` from any source.
 
-Coverage is reported **per repository**: `architect status`/`doctor`/`tour`
+Coverage is reported **per repository**: `archietect status`/`doctor`/`tour`
 list exactly which languages and frameworks were found in *this* codebase,
 so an `ABSENT` result is never a mystery. A language with no extractor at
 all isn't guessed at either — `INSUFFICIENT_COVERAGE` names the gap and
@@ -153,14 +153,14 @@ API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
 **Option A — prebuilt binary**, no Rust toolchain needed:
 
 ```bash
-# download architect-linux-x86_64 / architect-macos-arm64 / architect-macos-x86_64
+# download archietect-linux-x86_64 / archietect-macos-arm64 / archietect-macos-x86_64
 # from https://github.com/Neville777/Archietect/releases/latest
-chmod +x architect-*
-mv architect-* /usr/local/bin/architect
+chmod +x archietect-*
+mv archietect-* /usr/local/bin/archietect
 
 # once per project:
-architect init --root /path/to/your-project
-claude mcp add architect -- "$(which architect)" mcp   # once, ever — every project reuses this
+archietect init --root /path/to/your-project
+claude mcp add archietect -- "$(which archietect)" mcp   # once, ever — every project reuses this
 ```
 
 **Option B — build from source** (needed for `packaging/onboard.sh`'s
@@ -168,10 +168,10 @@ one-command flow, the systemd/launchd daemon install, or running the test
 suite):
 
 ```bash
-git clone git@github.com:Neville777/Archietect.git architect && cd architect
+git clone git@github.com:Neville777/Archietect.git archietect && cd archietect
 cargo build --release
 
-# once per project you want Architect to understand:
+# once per project you want Archietect to understand:
 packaging/onboard.sh /path/to/your-project
 ```
 
@@ -182,7 +182,7 @@ readiness report (real output, a two-file FastAPI+Prisma project):
 
 ```
 ╭──────────────────────────────────────────╮
-│            ARCHITECT READY                 │
+│            ARCHIETECT READY                 │
 ╰──────────────────────────────────────────╯
 
 Architecture
@@ -192,7 +192,7 @@ Architecture
   Concepts   1
   Laws       14
 
-Structural coverage (what Architect can actually see in THIS repo)
+Structural coverage (what Archietect can actually see in THIS repo)
   Python  (1 files) — classes, top-level functions, routes
 
 Integrations
@@ -209,53 +209,53 @@ every query.
 ## Usage
 
 From inside any onboarded project — no `--root` needed, it walks upward
-looking for `architect.db`, the same way git finds `.git`:
+looking for `archietect.db`, the same way git finds `.git`:
 
 ```bash
-architect                    # git-status-style glance
-architect status             # what's declared, used, and — per coverage — visible at all
-architect concept <name>     # does X exist, where, what's the evidence
-architect impact <name>      # what breaks if X changes
-architect duplicates         # suspected redundant concepts, before you add a new one
+archietect                    # git-status-style glance
+archietect status             # what's declared, used, and — per coverage — visible at all
+archietect concept <name>     # does X exist, where, what's the evidence
+archietect impact <name>      # what breaks if X changes
+archietect duplicates         # suspected redundant concepts, before you add a new one
 ```
 
 Full command reference:
 
 | Command | Purpose |
 |---|---|
-| `architect init --root DIR` | build/refresh `architect.db` |
-| `architect status --root DIR` | what's declared, used, and structurally visible |
-| `architect concept --root DIR TERM` | does `TERM` exist? canonical? evidence? |
-| `architect intent --root DIR "GOAL"` | smallest correct change: EXTEND vs CREATE |
-| `architect plan --root DIR "GOAL"` | one-call composition of concept+owner+impact+decisions |
-| `architect impact --root DIR TERM` | what is affected if `TERM` changes |
-| `architect owner --root DIR TERM` | which directory owns `TERM`'s declaration |
-| `architect guard --root DIR "SQL"` | rejects `CREATE TABLE` duplicating a concept |
-| `architect doctor --root DIR` | repository summary for someone who just cloned it |
-| `architect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
-| `architect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
-| `architect history --root DIR [TERM]` | the architectural timeline (what git can't say) |
-| `architect ci` | pipe a diff in, get an exit code out |
-| `architect laws` | the language specification, from `laws/*.toml` |
-| `architect watch --root DIR` | daemon: observe → notify, never act |
-| `architect serve --port 7373` | REST API (127.0.0.1, read-only except `/proposal/*`) |
-| `architect mcp` | MCP server over stdio |
-| `architect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
+| `archietect init --root DIR` | build/refresh `archietect.db` |
+| `archietect status --root DIR` | what's declared, used, and structurally visible |
+| `archietect concept --root DIR TERM` | does `TERM` exist? canonical? evidence? |
+| `archietect intent --root DIR "GOAL"` | smallest correct change: EXTEND vs CREATE |
+| `archietect plan --root DIR "GOAL"` | one-call composition of concept+owner+impact+decisions |
+| `archietect impact --root DIR TERM` | what is affected if `TERM` changes |
+| `archietect owner --root DIR TERM` | which directory owns `TERM`'s declaration |
+| `archietect guard --root DIR "SQL"` | rejects `CREATE TABLE` duplicating a concept |
+| `archietect doctor --root DIR` | repository summary for someone who just cloned it |
+| `archietect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
+| `archietect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
+| `archietect history --root DIR [TERM]` | the architectural timeline (what git can't say) |
+| `archietect ci` | pipe a diff in, get an exit code out |
+| `archietect laws` | the language specification, from `laws/*.toml` |
+| `archietect watch --root DIR` | daemon: observe → notify, never act |
+| `archietect serve --port 7373` | REST API (127.0.0.1, read-only except `/proposal/*`) |
+| `archietect mcp` | MCP server over stdio |
+| `archietect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
 
 ### Clients: the same engine, three transports
 
 | | Use | Command |
 |---|---|---|
-| CLI | scripting, terminal, CI | `architect <cmd>` |
-| REST | GUI, dashboards, anything HTTP-shaped | `architect serve --port 7373` (127.0.0.1 only) |
-| MCP | every AI coding tool | `architect mcp` (stdio) |
+| CLI | scripting, terminal, CI | `archietect <cmd>` |
+| REST | GUI, dashboards, anything HTTP-shaped | `archietect serve --port 7373` (127.0.0.1 only) |
+| MCP | every AI coding tool | `archietect mcp` (stdio) |
 
 Long-running processes (MCP, REST, `watch`) detect if the binary on disk has
 been rebuilt out from under them since they started, and return a
 `_stale_binary_warning` instead of silently answering from stale in-memory
 code — restart the process/session to clear it.
 
-### The per-project ontology: `architect.toml`
+### The per-project ontology: `archietect.toml`
 
 ```toml
 [aliases]
@@ -270,7 +270,7 @@ rejected = ["separate episodes table"]   # ← what the next person will propose
 links = ["episode", "stories"]
 ```
 
-`architect guard` cites the governing decision when it rejects — "this table
+`archietect guard` cites the governing decision when it rejects — "this table
 already exists" states a fact; the decision states the reasoning, which is
 what stops the same proposal returning next month under a different name.
 
@@ -280,18 +280,18 @@ Projects never share architectural memory, and no per-project state ever
 leaves that project's own directory:
 
 ```
-Architect core (compiled into the binary)
+Archietect core (compiled into the binary)
   └── laws/*.toml — universal rules about how the engine matches and ranks,
       the same for every project, never copied anywhere
 
-Each project — <root>/architect.db (one SQLite file)
+Each project — <root>/archietect.db (one SQLite file)
   ├── architecture state (concepts, structural graph)
-  ├── decisions + aliases (mirrored from that project's own architect.toml)
+  ├── decisions + aliases (mirrored from that project's own archietect.toml)
   └── immutable event history (append-only)
 ```
 
-A developer's `~/storefront/architect.db` and another developer's
-`~/payments/architect.db` are independent memories governed by the same
+A developer's `~/storefront/archietect.db` and another developer's
+`~/payments/archietect.db` are independent memories governed by the same
 compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
 `CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
 against a project can never drop its history or decisions.
@@ -299,23 +299,23 @@ against a project can never drop its history or decisions.
 ## Contributing: the proposal protocol
 
 The only door through which a change — a new structural extractor, or a new
-`architect.toml` decision/alias — can reach a repository, and it never opens
+`archietect.toml` decision/alias — can reach a repository, and it never opens
 on its own. An AI proposes work, never evidence: `Tier::Inferred` does not
 exist.
 
 ```bash
-architect proposal submit --kind extractor|decision|alias \
+archietect proposal submit --kind extractor|decision|alias \
     --title "..." --patch some.diff      # inert patch, nothing applied yet
-architect proposal test <id>             # applies it in an isolated git worktree
+archietect proposal test <id>             # applies it in an isolated git worktree
                                           # and runs it through the SAME laws +
                                           # invariants suite — the real
                                           # working tree is never touched
-architect proposal accept <id>           # only if: status == passed, the patch
+archietect proposal accept <id>           # only if: status == passed, the patch
                                           # is byte-identical to what was
                                           # tested, AND the repository HEAD
                                           # hasn't moved since — then applies to
                                           # the real working tree, UNCOMMITTED.
-                                          # Architect never runs `git commit`.
+                                          # Archietect never runs `git commit`.
 ```
 
 `check_scope()` hard-blocks any patch that touches the validation machinery
@@ -328,7 +328,7 @@ of which client is holding the pen.
 
 `laws/` is walled off from this protocol entirely — no proposal, from any
 user, on any install, can create or edit a law; only a human maintainer, in
-a real release, can. Found a genuine defect in Architect itself (not a
+a real release, can. Found a genuine defect in Archietect itself (not a
 local coverage gap)? File it: https://github.com/Neville777/Archietect/issues.
 
 ## Testing
@@ -345,7 +345,7 @@ Two suites, different guarantees:
   the bug class can't occur in any scanned corpus, not just the repo that
   first surfaced it.
 
-**Laws:** 15 active. A law states a timeless claim about what Architect is
+**Laws:** 15 active. A law states a timeless claim about what Archietect is
 allowed to assert — e.g. `law-015`: "must not return a confident `ABSENT`
 when coverage is insufficient" — separate from *how* today's code enforces
 that claim, which can change without the law itself changing.
@@ -359,7 +359,7 @@ As a user, none of this is required reading — the three verdict states
 (KNOWN / KNOWN ABSENT / INSUFFICIENT_COVERAGE) are the entire interface, the
 same way you don't need to know which regression test a compiler runs to
 trust that it compiles your code correctly. This section documents how
-Architect is *developed*, so it keeps improving release over release
+Archietect is *developed*, so it keeps improving release over release
 without regressing.
 
 ## License
@@ -367,7 +367,7 @@ without regressing.
 [Business Source License 1.1](LICENSE) — source-available, not permissive
 open source. In plain language: free to read, run, modify, and use in
 production — including at work, on your employer's codebases, as an
-employee or paid contractor — for anything except turning Architect itself
+employee or paid contractor — for anything except turning Archietect itself
 into a competing commercial offering (reselling it as a hosted/managed
 service, or bundling it into a paid developer-tools product) without a
 separate commercial license. Converts automatically to Apache License 2.0

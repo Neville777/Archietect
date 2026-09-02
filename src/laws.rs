@@ -1,7 +1,7 @@
-//! The law registry — Architect's language specification, loaded from DATA.
+//! The law registry — Archietect's language specification, loaded from DATA.
 //!
 //! The laws live in `laws/*.toml`, one file per law, embedded into the binary
-//! at compile time and parsed at startup. ONE source of truth: `architect
+//! at compile time and parsed at startup. ONE source of truth: `archietect
 //! laws` reads it, the regression suite cross-checks against it (a law
 //! without a covering test fails the conformance test BY NAME), and any
 //! documentation is generated from it. Editing a law is editing a data file,
@@ -37,7 +37,7 @@ pub struct Law {
     #[serde(default)]
     pub supersedes: Option<String>,
     /// The CURRENT enforcement approach — deliberately separate from
-    /// `statement`. A law is a timeless claim about what Architect is
+    /// `statement`. A law is a timeless claim about what Archietect is
     /// allowed to assert ("must not return a confident ABSENT when
     /// coverage is insufficient"); `mechanism` is how today's code happens
     /// to enforce that claim, and is expected to change — a rewrite, a

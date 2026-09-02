@@ -16,7 +16,7 @@
 //!   invariants.rs  — "the class of bug this invariant defines cannot occur
 //!                     in any scanned corpus, not just the one we've seen"
 
-use architect::{invariants, scan};
+use archietect::{invariants, scan};
 use std::path::PathBuf;
 
 fn corpus_root(name: &str) -> PathBuf {
@@ -24,12 +24,12 @@ fn corpus_root(name: &str) -> PathBuf {
 }
 
 /// Run invariant checks on a pre-built corpus repo.
-/// Uses scan_with_prior so the pre-built architect.db is the source of truth
-/// (same as a real `architect concept` call on that repo).
+/// Uses scan_with_prior so the pre-built archietect.db is the source of truth
+/// (same as a real `archietect concept` call on that repo).
 fn check_corpus(name: &str) -> Vec<invariants::Violation> {
     let root = corpus_root(name);
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (idx, _graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     invariants::check(&idx)
 }
@@ -133,11 +133,11 @@ fn invariants_redash() {
 fn structural_aspnetcore_realworld() {
     let root = corpus_root("aspnetcore-realworld-example-app");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         graph.symbols.values().any(|s| s.name == "Article"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "C# extractor failed to find the real Article domain class in a live ASP.NET Core repo"
     );
     assert!(
@@ -156,16 +156,16 @@ fn structural_aspnetcore_realworld() {
 fn structural_kilo_realworld() {
     let root = corpus_root("kilo");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         graph.symbols.values().any(|s| s.name == "editorConfig"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "C extractor failed to find the real editorConfig struct in kilo.c"
     );
     assert!(
         graph.symbols.values().any(|s| s.name == "disableRawMode"
-            && matches!(s.kind, architect::structural::SymbolKind::Function)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Function)),
         "C extractor failed to find the real disableRawMode function in kilo.c"
     );
 }
@@ -176,16 +176,16 @@ fn structural_kilo_realworld() {
 fn structural_dart_args_realworld() {
     let root = corpus_root("args");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         graph.symbols.values().any(|s| s.name == "CommandRunner"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Dart extractor failed to find the real CommandRunner class in lib/command_runner.dart"
     );
     assert!(
         graph.symbols.values().any(|s| s.name == "ArgParser"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Dart extractor failed to find the real ArgParser class"
     );
 }
@@ -196,16 +196,16 @@ fn structural_dart_args_realworld() {
 fn structural_scala_xml_realworld() {
     let root = corpus_root("scala-xml");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         graph.symbols.values().any(|s| s.name == "MetaData"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Scala extractor failed to find the real MetaData class in scala-xml"
     );
     assert!(
         graph.symbols.values().any(|s| s.name == "Comment"
-            && matches!(s.kind, architect::structural::SymbolKind::Class)),
+            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Scala extractor failed to find the real Comment class in scala-xml"
     );
 }
@@ -233,7 +233,7 @@ fn invariants_rails() {
 fn structural_rails_routes_realworld() {
     let root = corpus_root("rails-realworld-example-app");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         graph.routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/articles"),
@@ -262,7 +262,7 @@ fn invariants_nestjs() {
 fn structural_nestjs_routes_realworld() {
     let root = corpus_root("nestjs-realworld-example-app");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
         !graph.routes.is_empty(),
@@ -277,10 +277,10 @@ fn structural_nestjs_routes_realworld() {
 fn structural_nuxt_devtools_realworld() {
     let root = corpus_root("nuxt-devtools");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| matches!(s.kind, architect::structural::SymbolKind::Class) && s.file.ends_with(".vue")),
+        graph.symbols.values().any(|s| matches!(s.kind, archietect::structural::SymbolKind::Class) && s.file.ends_with(".vue")),
         "Vue extractor found no .vue file registered as a component symbol"
     );
     assert!(
@@ -299,10 +299,10 @@ fn structural_nuxt_devtools_realworld() {
 fn structural_grpc_examples_realworld() {
     let root = corpus_root("grpc-examples");
     assert!(root.exists(), "corpus repo missing: {}", root.display());
-    let (schema_prior, graph_prior) = architect::store::load_raw(&root);
+    let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| s.name == "Greeter" && matches!(s.kind, architect::structural::SymbolKind::Class)),
+        graph.symbols.values().any(|s| s.name == "Greeter" && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Protobuf extractor failed to find the real Greeter service"
     );
     assert!(

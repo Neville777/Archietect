@@ -1,10 +1,10 @@
-<!-- architect GUI v0 — a READ-ONLY client of the REST API, nothing more.
+<!-- archietect GUI v0 — a READ-ONLY client of the REST API, nothing more.
      No business logic, no architectural reasoning, no state of its own:
      every number on this page is a fetch of the same JSON the CLI and MCP
      return. GitHub Desktop is a client of git; this page is a client of
      the engine. Single file, no build step, vanilla JS. -->
 <meta charset="utf-8">
-<title>architect</title>
+<title>archietect</title>
 <style>
   :root { color-scheme: dark; }
   body { font: 14px/1.5 ui-monospace, monospace; background:#0d1117; color:#c9d1d9;
@@ -25,7 +25,7 @@
   .muted { color:#8b949e; } pre { white-space:pre-wrap; margin:0; }
 </style>
 
-<h1>architect <small>— read-only client of the engine · every number is a REST fetch</small></h1>
+<h1>archietect <small>— read-only client of the engine · every number is a REST fetch</small></h1>
 <div>
   root <input id="root" size="52" placeholder="/absolute/path/to/repo">
   <button onclick="setRoot()">load</button>
@@ -71,7 +71,7 @@ async function overview(){
     <h3>top concepts <span class="muted">(by observed use)</span></h3>
     <table>${d.top_concepts.map(x=>`<tr><td>${esc(x.concept)}</td><td>${x.observed_uses} uses</td></tr>`).join('')}</table>
     <h3>decisions to read</h3>
-    <table>${d.things_to_read.map(x=>`<tr><td>${esc(x.id)}</td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — architect.toml [[decision]] entries appear here</td></tr>'}</table>`;
+    <table>${d.things_to_read.map(x=>`<tr><td>${esc(x.id)}</td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — archietect.toml [[decision]] entries appear here</td></tr>'}</table>`;
 }
 
 async function timeline(){
@@ -83,13 +83,13 @@ async function timeline(){
       <td class="muted"><pre>${esc(JSON.stringify(e.detail).slice(0,180))}</pre></td></tr>`).join('');
   $('out').innerHTML = `<h3>architectural timeline <span class="muted">(append-only; written only by the daemon)</span></h3>
     <table><tr><th>when</th><th>event</th><th>concept</th><th>detail</th></tr>${rows ||
-    '<tr><td colspan=4 class="muted">no events yet — run `architect watch --root …` and history accumulates</td></tr>'}</table>`;
+    '<tr><td colspan=4 class="muted">no events yet — run `archietect watch --root …` and history accumulates</td></tr>'}</table>`;
 }
 
 async function drift(){
   const d = await api('/duplicates');
   $('out').innerHTML = `
-    <h3 class="warn">likely same concept, needs alias <span class="muted">(one-line architect.toml fix)</span></h3>
+    <h3 class="warn">likely same concept, needs alias <span class="muted">(one-line archietect.toml fix)</span></h3>
     <table>${(d.likely_same_concept_needs_alias||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>
     <h3>suspected duplicates <span class="muted">(name overlap = risk, not proof)</span></h3>
     <table>${(d.suspected_duplicates||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td><td class="muted">via ${esc(p.shared_token)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;

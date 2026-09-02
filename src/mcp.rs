@@ -1,4 +1,4 @@
-//! MCP server — the killer interface. `architect mcp [--root DIR]`
+//! MCP server — the killer interface. `archietect mcp [--root DIR]`
 //!
 //! Claude Code, Cursor, Codex, Gemini CLI all speak MCP natively, so this one
 //! subcommand makes every AI coding tool on the machine a CLIENT of the
@@ -81,7 +81,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "status",
-            "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, concepts declared but never observed in use, and structural_coverage (which languages/frameworks in THIS repo Architect can actually see) — with an honest note about what the scan cannot see.",
+            "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, concepts declared but never observed in use, and structural_coverage (which languages/frameworks in THIS repo Archietect can actually see) — with an honest note about what the scan cannot see.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
@@ -96,7 +96,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "history",
-            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `architect ci`.",
+            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `archietect ci`.",
             "inputSchema": { "type": "object", "properties": {
                 "concept": { "type": "string", "description": "Optional — filter to events touching this concept." },
                 "limit": { "type": "number", "description": "Max events to return (default 50)." },
@@ -105,7 +105,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "ci",
-            "description": "CI gate: check a diff/patch text for CREATE TABLE statements that duplicate an existing concept. Read-only — unlike `architect ci` on the command line, this tool call does NOT record the outcome to history (recording happens only at the actual commit-time call site).",
+            "description": "CI gate: check a diff/patch text for CREATE TABLE statements that duplicate an existing concept. Read-only — unlike `archietect ci` on the command line, this tool call does NOT record the outcome to history (recording happens only at the actual commit-time call site).",
             "inputSchema": { "type": "object", "properties": {
                 "diff": { "type": "string", "description": "The diff or patch text to check." },
                 "strict": { "type": "boolean", "description": "Also fail on name-collision warnings, not only storage violations." },
@@ -114,7 +114,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "proposal_submit",
-            "description": "AI-EXTENSION PROTOCOL, step 1 of 3. Register a new proposal (a unified diff) as pending — writes only under .architect/proposals/, never touches the real working tree. An extractor proposal may only touch src/structural.rs, tests/fixtures/**, validation/**; a decision/alias proposal may only touch architect.toml. Call `proposal_test` next.",
+            "description": "AI-EXTENSION PROTOCOL, step 1 of 3. Register a new proposal (a unified diff) as pending — writes only under .archietect/proposals/, never touches the real working tree. An extractor proposal may only touch src/structural.rs, tests/fixtures/**, validation/**; a decision/alias proposal may only touch archietect.toml. Call `proposal_test` next.",
             "inputSchema": { "type": "object", "properties": {
                 "kind": { "type": "string", "enum": ["extractor", "decision", "alias"] },
                 "title": { "type": "string" },
@@ -140,7 +140,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "proposal_test",
-            "description": "AI-EXTENSION PROTOCOL, step 2 of 3. Apply the patch in an ISOLATED git worktree and run the real regression suite against it (laws + invariants for an extractor; invariants::check for a decision/alias). Never touches the real working tree or architect.db. This is the only thing that can turn a proposal 'passed' — nothing here writes a fact.",
+            "description": "AI-EXTENSION PROTOCOL, step 2 of 3. Apply the patch in an ISOLATED git worktree and run the real regression suite against it (laws + invariants for an extractor; invariants::check for a decision/alias). Never touches the real working tree or archietect.db. This is the only thing that can turn a proposal 'passed' — nothing here writes a fact.",
             "inputSchema": { "type": "object", "properties": {
                 "id": { "type": "number" },
                 "root": root_prop
@@ -204,7 +204,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
             "initialize" => Ok(json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "architect", "version": env!("CARGO_PKG_VERSION") },
+                "serverInfo": { "name": "archietect", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": "Architectural memory for this machine's repositories. Call `concept` before designing anything, `intent` for feature requests, `impact` before modifying models, `guard` on any patch that creates tables. Answers are deterministic facts with tiered evidence (DECLARED/USED/NAMED) — reason on top of them; do not override them with intuition."
             })),
             "ping" => Ok(json!({})),
@@ -246,7 +246,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                     args.get("concept").and_then(|c| c.as_str()),
                                     args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize,
                                 ),
-                                "note": "Append-only architectural timeline, newest first, written only by the daemon or `architect ci`.",
+                                "note": "Append-only architectural timeline, newest first, written only by the daemon or `archietect ci`.",
                             }),
                             "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
                             "proposal_submit" => {
@@ -255,7 +255,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                     Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
                                     Ok(kind) => {
                                         let patch_text = args["patch"].as_str().unwrap_or("");
-                                        let tmp = std::env::temp_dir().join(format!("architect-mcp-proposal-{}.diff", std::process::id()));
+                                        let tmp = std::env::temp_dir().join(format!("archietect-mcp-proposal-{}.diff", std::process::id()));
                                         match std::fs::write(&tmp, patch_text) {
                                             Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
                                             Ok(()) => {
@@ -302,7 +302,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             if now != started {
                                 if let Value::Object(ref mut map) = out {
                                     map.insert("_stale_binary_warning".to_string(), json!(
-                                        "This MCP server process has been running since before the architect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart this session (or otherwise force your MCP client to respawn the 'architect' server) to pick up the current build."
+                                        "This MCP server process has been running since before the archietect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart this session (or otherwise force your MCP client to respawn the 'archietect' server) to pick up the current build."
                                     ));
                                 }
                             }

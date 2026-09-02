@@ -10,7 +10,7 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
-/// STRONG markers identify a repository root UNAMBIGUOUSLY (architect's own
+/// STRONG markers identify a repository root UNAMBIGUOUSLY (archietect's own
 /// files, or .git). WEAK markers (Cargo.toml, package.json, ...) identify
 /// *a* project but LIE inside workspaces: a single crate carries its own
 /// Cargo.toml, and stopping there answers questions about one crate while
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// Cargo.toml and the naive resolver stopped there. Strong beats weak at
 /// ANY distance; weak is only the fallback when nothing strong exists
 /// anywhere above the starting directory.
-const STRONG_MARKERS: &[&str] = &["architect.db", "architect.toml", ".git"];
+const STRONG_MARKERS: &[&str] = &["archietect.db", "archietect.toml", ".git"];
 const WEAK_MARKERS: &[&str] = &[
     "Cargo.toml", "package.json", "composer.json", "manage.py", "mix.exs",
     "go.mod", "Gemfile", "pom.xml",
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn strong_marker_beats_weak_at_any_distance() {
-        let root = std::env::temp_dir().join(format!("architect-root-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("archietect-root-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let sub = root.join("crates/titan_api/src");
         std::fs::create_dir_all(&sub).unwrap();
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn explicit_root_always_wins() {
-        let root = std::env::temp_dir().join(format!("architect-root-test-explicit-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("archietect-root-test-explicit-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let resolved = resolve(Some(root.clone()), &std::env::temp_dir()).unwrap();
         assert_eq!(resolved, root);

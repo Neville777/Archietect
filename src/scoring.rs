@@ -8,7 +8,7 @@
 //! relation counts break ties.
 //!
 //! ```text
-//! Tier 1 — DeclaredOntology    architect.toml alias — the project spoke directly
+//! Tier 1 — DeclaredOntology    archietect.toml alias — the project spoke directly
 //! Tier 2 — ExactOrm            exact name + ORM/framework declaration
 //! Tier 3 — ExactSql            exact name + SQL-only declaration
 //! Tier 4 — TokenOrm            token match + ORM/framework declaration
@@ -84,7 +84,7 @@ pub const RELATION_PER_LINK: i32 = 1;
 /// "why did Website beat WebsiteEvent?" should have a one-word answer.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RankTier {
-    /// architect.toml alias — the project declared this mapping explicitly.
+    /// archietect.toml alias — the project declared this mapping explicitly.
     /// law-009: declared ontology outranks all name-derived inference.
     DeclaredOntology,
     /// Candidate name matches query exactly AND has an ORM/framework declaration.

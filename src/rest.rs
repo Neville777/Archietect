@@ -1,4 +1,4 @@
-//! REST API — `architect serve [--root DIR] [--port 7373]`.
+//! REST API — `archietect serve [--root DIR] [--port 7373]`.
 //!
 //! A thin transport over the same engine the CLI and MCP expose: no business
 //! logic lives here, ever. The GUI (when it exists), CI checks, dashboards,
@@ -6,9 +6,9 @@
 //! — GitHub Desktop is a client of git, never a fork of it.
 //!
 //! Read-only by design, with one deliberate exception: every endpoint is a
-//! query and nothing here EVER writes architect.db (the daemon remains the
+//! query and nothing here EVER writes archietect.db (the daemon remains the
 //! single writer for that) — except `/proposal/*`, which writes only under
-//! .architect/proposals/ or, for `accept`, the working tree itself
+//! .archietect/proposals/ or, for `accept`, the working tree itself
 //! (uncommitted, never `git commit`). See src/proposal.rs's own module doc
 //! for the trust boundary that makes that safe. Every other endpoint here
 //! can serve any number of concurrent readers without coordination.
@@ -37,7 +37,7 @@
 //! REST is a long-running SERVER, not a one-shot CLI invocation — but until
 //! this fix it behaved like the CLI called in a loop: every request called
 //! `scan::scan(&root)` fresh, with no memory of the previous request. Found
-//! by dogfooding: on TITAN (1,483 files) with no persisted architect.db,
+//! by dogfooding: on TITAN (1,483 files) with no persisted archietect.db,
 //! that meant every single HTTP request paid the full 11+ SECOND cold-scan
 //! cost, forever — a "server" that was never actually warm.
 //!
@@ -45,7 +45,7 @@
 //! keep the last built `Index` per root IN MEMORY and pass it as `prior` to
 //! `scan_with_prior`. The first request for a root still pays scan cost
 //! (once); every request after that is incremental — only files whose
-//! (size, mtime) changed get re-parsed, the same guarantee `architect
+//! (size, mtime) changed get re-parsed, the same guarantee `archietect
 //! watch` gives. This is a request-loop-local cache, not a second daemon:
 //! it holds no lock, needs no thread-safety, because `serve` is a single
 //! blocking loop over `incoming_requests()` — one request handled at a
@@ -126,7 +126,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let token = generate_token();
-    eprintln!("architect REST listening on http://127.0.0.1:{port} (read-only except /proposal/*)");
+    eprintln!("archietect REST listening on http://127.0.0.1:{port} (read-only except /proposal/*)");
     eprintln!("proposal-mutating requests (submit/test/accept/reject) require &token={token}");
 
     // The warm cache. Single-threaded loop, one request at a time — plain
@@ -144,7 +144,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             && p.get("token").map(|t| t.as_str()) != Some(token.as_str())
         {
             let body = json!({
-                "error": "missing or incorrect token — pass &token=<value printed when `architect serve` started>",
+                "error": "missing or incorrect token — pass &token=<value printed when `archietect serve` started>",
             });
             let response = tiny_http::Response::from_string(
                 serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
@@ -220,8 +220,8 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         // AI-extension protocol. The one exception to this
                         // module's read-only design (see the header comment)
                         // — `test`/`accept`/`reject` do write, but only ever
-                        // under .architect/proposals/ or, for `accept`, the
-                        // working tree itself, uncommitted; never architect.db.
+                        // under .archietect/proposals/ or, for `accept`, the
+                        // working tree itself, uncommitted; never archietect.db.
                         // `patch` here is a query param like everything else
                         // in this file ("identifiers and short text, not
                         // arbitrary payloads" — see `decode()` above): fine
@@ -232,7 +232,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
                                 Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
                                 Ok(kind) => {
-                                    let tmp = std::env::temp_dir().join(format!("architect-rest-proposal-{}.diff", std::process::id()));
+                                    let tmp = std::env::temp_dir().join(format!("archietect-rest-proposal-{}.diff", std::process::id()));
                                     match std::fs::write(&tmp, p.get("patch").map(|s| s.as_str()).unwrap_or("")) {
                                         Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
                                         Ok(()) => {
@@ -288,7 +288,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             if now != started {
                 if let Value::Object(ref mut map) = body {
                     map.insert("_stale_binary_warning".to_string(), json!(
-                        "This REST server process has been running since before the architect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart the `architect serve` process to pick up the current build."
+                        "This REST server process has been running since before the archietect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart the `archietect serve` process to pick up the current build."
                     ));
                 }
             }

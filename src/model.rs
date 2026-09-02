@@ -1,6 +1,6 @@
-//! The fact model — what the Architect is allowed to know.
+//! The fact model — what the Archietect is allowed to know.
 //!
-//! THE NON-NEGOTIABLE PRINCIPLE: the Architect never invents architectural
+//! THE NON-NEGOTIABLE PRINCIPLE: the Archietect never invents architectural
 //! facts. Every answer carries its evidence, and every piece of evidence is
 //! labelled with its strength:
 //!
@@ -82,10 +82,10 @@ pub struct Index {
     pub declaration_files: Vec<(String, String)>,
     /// BTreeMap for deterministic output — same repo, same answer, same order.
     pub concepts: BTreeMap<String, Concept>,
-    /// architect.toml [aliases]: concept term → the concept that implements it.
+    /// archietect.toml [aliases]: concept term → the concept that implements it.
     /// The project's own ontology; DECLARED-tier evidence.
     pub aliases: BTreeMap<String, String>,
-    /// architect.toml [[decision]] entries.
+    /// archietect.toml [[decision]] entries.
     pub decisions: Vec<Decision>,
     /// Per-file extraction cache: the incremental engine. A file whose size,
     /// mtime and extractor version are unchanged contributes its stored facts
@@ -100,7 +100,7 @@ pub struct Index {
     pub concepts_sig: String,
     #[serde(default)]
     pub extractor_version: u32,
-    /// Paths excluded from scanning, as declared in architect.toml `exclude`.
+    /// Paths excluded from scanning, as declared in archietect.toml `exclude`.
     /// Stored in the index so query-time walkers (NAMED-tier search) respect
     /// the same boundaries as the extraction pass.
     #[serde(default)]
@@ -195,14 +195,14 @@ const GENERIC_ROLE_TOKENS: &[&str] = &[
 
 /// Is this token too generic to serve as SOLE evidence of a name collision?
 /// Used by duplicate-detection loops (the watch daemon, the CI guard) — never
-/// by direct lookup (`architect concept executor` legitimately wants every
+/// by direct lookup (`archietect concept executor` legitimately wants every
 /// Executor-named thing back).
 pub fn is_generic_role_token(tok: &str) -> bool {
     GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str())
 }
 
 pub fn names_concept(name: &str, term: &str) -> bool {
-    // WHOLE-NAME match first. Found by dogfooding: `architect concept
+    // WHOLE-NAME match first. Found by dogfooding: `archietect concept
     // ScoreBreakdown` — the exact, correct, full name of a real struct —
     // returned ABSENT ("building it is justified"), because this function
     // only ever compared TOKENS of the name against the whole term. Neither

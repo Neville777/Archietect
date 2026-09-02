@@ -1,8 +1,8 @@
-//! The daemon — `architect watch --root DIR`. Levels 1–3 of autonomy, and
+//! The daemon — `archietect watch --root DIR`. Levels 1–3 of autonomy, and
 //! deliberately NOT levels 4–5.
 //!
 //! Level 1, automatic OBSERVATION: a filesystem watcher triggers the
-//! incremental scan on change; architect.db stays warm, so every client —
+//! incremental scan on change; archietect.db stays warm, so every client —
 //! CLI, MCP, any editor — reads the same continuously maintained facts with
 //! no startup scan. rust-analyzer thinking: the model is rebuilt as you save,
 //! not when you ask.
@@ -17,15 +17,15 @@
 //!                            caught at the moment of infection);
 //!   concept_lost_storage   — a concept lost all its declarations (removed
 //!                            intentionally, or a refactor casualty?);
-//!   stale_alias            — architect.toml points at a concept that no
+//!   stale_alias            — archietect.toml points at a concept that no
 //!                            longer exists.
 //!
 //! Levels 4–5 (proposal generation, auto-apply) are deliberately ABSENT from
 //! this engine: they require an AI and a permission model, and this core is
-//! deterministic. Architect preserves architectural truth; it does not decide
+//! deterministic. Archietect preserves architectural truth; it does not decide
 //! product direction. The guard rejects with evidence — it never rewrites.
 //!
-//! Concurrency: the daemon is the ONLY writer to architect.db (queries are
+//! Concurrency: the daemon is the ONLY writer to archietect.db (queries are
 //! read-only by design), so SQLite's single-writer model is satisfied without
 //! locks or coordination.
 
@@ -81,9 +81,9 @@ fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
 fn relevant(path: &Path) -> bool {
     // Never react to our own database — the daemon writing it must not wake
     // the daemon. PREFIX match, not exact: found by dogfooding on TITAN.
-    // SQLite's rollback-journal file (architect.db-journal) is created and
+    // SQLite's rollback-journal file (archietect.db-journal) is created and
     // deleted around EVERY write transaction — a file whose name does not
-    // equal "architect.db" exactly, so the old exact check let both its
+    // equal "archietect.db" exactly, so the old exact check let both its
     // create and delete events through as "relevant". Each daemon write
     // (store::save, store::append_events) generated new events that woke
     // the daemon, which rescanned and wrote again — a fully self-sustaining
@@ -94,7 +94,7 @@ fn relevant(path: &Path) -> bool {
     if path
         .file_name()
         .and_then(|f| f.to_str())
-        .map(|f| f.starts_with("architect.db"))
+        .map(|f| f.starts_with("archietect.db"))
         .unwrap_or(false)
     {
         return false;
@@ -275,7 +275,7 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
         if !resolves {
             event(&mut out, "stale_alias", k, json!({
                 "target": target,
-                "advice": "architect.toml declares this alias but the target concept no longer exists — the ontology file is stale or the concept was removed",
+                "advice": "archietect.toml declares this alias but the target concept no longer exists — the ontology file is stale or the concept was removed",
             }));
         }
     }
@@ -335,7 +335,7 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         // (a build tool cleaning up) should not abort the whole daemon.
         let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
     }
-    eprintln!("architect watch: registered {} directories (skipped target/node_modules/.git/...)", dirs.len());
+    eprintln!("archietect watch: registered {} directories (skipped target/node_modules/.git/...)", dirs.len());
 
     loop {
         // block until something changes…
@@ -350,7 +350,7 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
             if now != started {
                 println!("{}", json!({
                     "ts_ms": now_ms(), "kind": "stale_binary_warning", "concept": "",
-                    "detail": "This daemon has been running since before the architect binary on disk was last rebuilt — it is rescanning with OLD extractor code. Restart it (systemctl --user restart architectd@<escaped-path>, or re-run `architect watch`) to pick up the current build.",
+                    "detail": "This daemon has been running since before the archietect binary on disk was last rebuilt — it is rescanning with OLD extractor code. Restart it (systemctl --user restart archietectd@<escaped-path>, or re-run `archietect watch`) to pick up the current build.",
                 }));
             }
         }
