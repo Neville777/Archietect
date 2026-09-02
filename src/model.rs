@@ -35,6 +35,37 @@ pub enum Tier {
     /// doc calls out under "every fact has an as-of time") — don't treat an
     /// OBSERVED evidence string as durable the way DECLARED is.
     Observed,
+
+    // ── The UNSTRUCTURED-domain vocabulary — see SYSTEM_MEMORY.md's
+    // "Evidence has two vocabularies, not one". Declared/Used/Observed/Named
+    // above are the STRUCTURED vocabulary: they work because code and infra
+    // are formal, self-declaring artifacts. Explicit/Derived/Inferred below
+    // are for domains that aren't (documents, photos, messages) — a file has
+    // no schema asserting what it "is". These two vocabularies must NEVER be
+    // compared or ranked against each other as if on one shared scale (e.g.
+    // treating Inferred as "about as weak as Named") — a verdict must always
+    // say which vocabulary produced it. Kept as variants of this same enum
+    // for now (no exhaustive `match Tier` exists anywhere in this codebase to
+    // break) rather than a second parallel type, but that convenience must
+    // never become a reason to blur which vocabulary a given tier belongs to.
+    /// The user directly labeled/tagged this fact themselves. No mechanism
+    /// for that exists yet anywhere in this codebase — this variant is
+    /// defined for vocabulary completeness (SYSTEM_MEMORY.md names all
+    /// three), not because anything constructs it today.
+    Explicit,
+    /// Structured metadata says so — a filename, an EXIF field, a file's own
+    /// mtime/size from the filesystem — never content interpretation. First
+    /// (and, as of this commit, only) real use: `documents_domain.rs`, which
+    /// reads a file's name/extension/size/modified-time and nothing else.
+    Derived,
+    /// Content analysis suggests it. Permanently the weakest tier in this
+    /// vocabulary — no extractor in this codebase constructs this variant
+    /// yet (documents_domain.rs deliberately never reads file content), but
+    /// SYSTEM_MEMORY.md names it as part of the vocabulary, so it exists
+    /// here to be reached for correctly instead of reusing Derived or Named
+    /// (either of which would misstate what kind of claim it is) the day
+    /// something legitimately needs it.
+    Inferred,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -111,6 +111,27 @@ enum Cmd {
     /// and the hardcoded denial list nothing can override. See
     /// SYSTEM_MEMORY.md's "Memory boundaries are the default" section.
     Permissions,
+    /// The first UNSTRUCTURED domain (SYSTEM_MEMORY.md's "Evidence has two
+    /// vocabularies, not one") — filename/extension/size/modified-time only,
+    /// content never read. Deliberately its own explicit subcommand rather
+    /// than folded into `status`: this domain needs an explicit target
+    /// directory and can trigger a one-time interactive y/N confirmation,
+    /// neither of which belongs firing implicitly on every `status` call.
+    #[command(subcommand)]
+    Documents(DocumentsCmd),
+}
+
+#[derive(Subcommand)]
+enum DocumentsCmd {
+    /// Scan a directory for document files (.pdf/.docx/.txt/.md/.odt),
+    /// non-recursive. First use of an unstructured domain requires a
+    /// one-time interactive y/N confirmation (persisted so it's asked at
+    /// most once) unless `[domains.documents]` is already set in
+    /// archietect.toml/system.toml — fails closed with no real TTY.
+    Scan {
+        #[arg(long)]
+        dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -391,6 +412,19 @@ fn main() -> anyhow::Result<()> {
             let global_path = archietect::permissions::default_global_config_path()?;
             let cfg = archietect::permissions::load(&global_path, &root)?;
             archietect::permissions::report(&cfg)
+        }
+        Cmd::Documents(DocumentsCmd::Scan { dir }) => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            let confirmations_path = archietect::permissions::default_confirmations_path()?;
+            let asker = archietect::permissions::stdio_asker();
+            let (enabled, resources) =
+                archietect::documents_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
+            serde_json::json!({
+                "dir": dir.display().to_string(),
+                "enabled": enabled,
+                "resources": resources,
+            })
         }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);

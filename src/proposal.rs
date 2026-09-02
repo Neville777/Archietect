@@ -23,9 +23,14 @@
 //! proposal could pass `test` by editing the test it's judged against —
 //! "I fixed the test" is not an acceptable answer to "how does this pass."
 //!
-//! This is deliberately the only new capability here. There is no
-//! `Tier::Inferred` and no writer for `Index`/`archietect.db` added by this
-//! module: a proposal is work, never evidence. See `query.rs`'s
+//! This is deliberately the only new capability here. This module adds no
+//! writer for `Index`/`archietect.db`: a proposal is work, never evidence.
+//! `Tier::Inferred` now exists (added for the unstructured-domain
+//! vocabulary — see `model::Tier`'s doc, SYSTEM_MEMORY.md), but that changes
+//! nothing about this boundary: `src/model.rs` is itself on `check_scope`'s
+//! forbidden list above, so no proposal can ever edit it to grant itself a
+//! new evidence-writing capability, and this module still has no code path
+//! that constructs an `Evidence` of any tier and persists it. See `query.rs`'s
 //! `ai_investigation` / `escalation` fields for the companion, ephemeral
 //! half of this boundary — a one-off finding that never gets this far.
 

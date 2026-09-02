@@ -230,6 +230,21 @@ impl ConfirmationAsker for NonInteractiveAsker {
     }
 }
 
+/// The real CLI's asker, auto-selected by whether stdin/stdout are actually
+/// a terminal — mirrors `packaging/onboard.sh`'s own `[[ -t 0 && -t 1 ]]`
+/// check for its daemon-install prompt exactly, including the failure
+/// direction: no real TTY means `NonInteractiveAsker`, never a silent
+/// assumption of consent. First real (non-test) caller of `InteractiveAsker`
+/// — until now it only existed for this module's own tests to reference.
+pub fn stdio_asker() -> Box<dyn ConfirmationAsker> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        Box::new(InteractiveAsker)
+    } else {
+        Box::new(NonInteractiveAsker)
+    }
+}
+
 fn load_confirmation(path: &Path, domain: &str) -> Result<Option<bool>> {
     let Ok(text) = std::fs::read_to_string(path) else { return Ok(None) };
     let Ok(v) = text.parse::<toml::Value>() else { return Ok(None) };

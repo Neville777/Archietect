@@ -6,6 +6,7 @@
 //! this through MCP, they are never a component of it.
 
 pub mod docker_domain;
+pub mod documents_domain;
 pub mod git_domain;
 pub mod invariants;
 pub mod laws;
