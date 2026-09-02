@@ -352,10 +352,22 @@ pub fn structural_dependents(
     depth_limit: usize,
 ) -> Vec<StructuralDependent> {
     // Step 1: owner files — files that declare a symbol for this concept.
+    //
+    // Two ways a symbol can own a concept, and the second was missing until
+    // it was found live: (a) `linked_concept` — the symbol was linked to a
+    // SCHEMA-layer concept by `link_to_concepts`; (b) the symbol's own name
+    // IS the concept — a plain class/function with no schema model behind
+    // it. Case (b) is every STRUCTURAL-verdict concept there is (archietect's
+    // own `structural_dependents` fn, ghosttrack's `GovernanceClient` class):
+    // `linked_concept` is None for all of them, so `owner_files` came back
+    // empty and this function returned before walking a single import edge —
+    // reporting "nothing touches it" for symbols that were, in fact, imported
+    // and called. The import graph was never the problem; it was never being
+    // entered for exactly the symbols wiring questions are about.
     let owner_files: std::collections::HashSet<String> = graph
         .symbols
         .values()
-        .filter(|s| s.linked_concept.as_deref() == Some(concept_name))
+        .filter(|s| s.linked_concept.as_deref() == Some(concept_name) || s.name == concept_name)
         .map(|s| s.file.clone())
         .collect();
 
@@ -2501,5 +2513,62 @@ Feature: OIDC Device Flow 原生表单提交
         assert!(symbols.iter().any(|s| s.name == "OIDC Device Flow 原生表单提交" && s.kind == SymbolKind::Class));
         assert!(symbols.iter().any(|s| s.name == "loading 状态不会阻断设备授权表单提交" && s.kind == SymbolKind::Function));
         assert!(symbols.iter().any(|s| s.name == "retry with <count> attempts" && s.kind == SymbolKind::Function));
+    }
+}
+
+#[cfg(test)]
+mod structural_dependents_structural_only_tests {
+    use super::*;
+
+    /// `structural_dependents` must find importers of a STRUCTURAL-only
+    /// symbol — a class with no schema model behind it, so `linked_concept`
+    /// is `None`. Before the fix, `owner_files` was filtered on
+    /// `linked_concept` alone, came back empty for every such symbol, and
+    /// the function returned before walking a single import edge — reporting
+    /// "nothing touches it" for symbols that were imported and called. Found
+    /// live: `archietect impact GovernanceClient` on ghosttrack-monorepo
+    /// returned no dependents while extension.ts demonstrably imported it.
+    /// This fixture is the same shape: a plain exported class, a file that
+    /// imports it by relative path, nothing declared in any schema.
+    #[test]
+    fn finds_importers_of_a_structural_only_class() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-structdeps-structural-only-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("services")).unwrap();
+        std::fs::write(
+            tmp.join("services").join("governance-client.ts"),
+            "export class GovernanceClient {\n  evaluate() {}\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("extension.ts"),
+            "import { GovernanceClient } from './services/governance-client';\nconst c = new GovernanceClient();\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.join("unrelated.ts"), "export const x = 1;\n").unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        assert!(
+            !idx.concepts.contains_key("GovernanceClient"),
+            "sanity: must be structural-only, with no schema concept behind it"
+        );
+        assert!(
+            graph.symbols.values().any(|s| s.name == "GovernanceClient" && s.linked_concept.is_none()),
+            "sanity: the symbol exists and is NOT linked to any schema concept"
+        );
+
+        let deps = structural_dependents(&graph, "GovernanceClient", 3);
+        let files: Vec<&str> = deps.iter().map(|d| d.file.as_str()).collect();
+        assert!(
+            files.contains(&"extension.ts"),
+            "extension.ts imports GovernanceClient and must be reported as a dependent, got: {files:?}"
+        );
+        assert!(
+            !files.contains(&"unrelated.ts"),
+            "a file that imports nothing relevant must not be reported, got: {files:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
