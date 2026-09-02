@@ -148,6 +148,12 @@ enum SystemCmd {
     /// state. A registered project with no archietect.db (moved, deleted,
     /// or never `init`'d) is reported honestly, not skipped silently.
     Query { term: String },
+    /// "What do I have" across every registered project in one call — each
+    /// project's own `archietect status` (counts, git, docker,
+    /// same_project_as), fetched live and read-only from that project's own
+    /// db, never cached into system.db. A registered project with no
+    /// archietect.db is reported honestly, not skipped silently.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -401,6 +407,18 @@ fn main() -> anyhow::Result<()> {
                             "root": r.root,
                             "name": r.name,
                             "found": r.found,
+                        })).collect::<Vec<_>>(),
+                        "system_db": db_path.display().to_string(),
+                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+                    })
+                }
+                SystemCmd::Status => {
+                    let results = archietect::system_db::status_registered_projects(&db_path)?;
+                    serde_json::json!({
+                        "projects": results.iter().map(|r| serde_json::json!({
+                            "root": r.root,
+                            "name": r.name,
+                            "status": r.status,
                         })).collect::<Vec<_>>(),
                         "system_db": db_path.display().to_string(),
                         "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",

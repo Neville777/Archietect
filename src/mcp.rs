@@ -182,6 +182,11 @@ fn tool_defs() -> Value {
             }, "required": ["term"] }
         },
         {
+            "name": "system_status",
+            "description": "SYSTEM MEMORY. \"What do I have?\" — fans out a full status summary (counts, git, docker, same_project_as) live, read-only, over every registered project's OWN archietect.db (never cached into system.db). A registered project with no archietect.db yet (moved, deleted, or never `init`'d) is reported honestly rather than skipped.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
             "name": "system_register",
             "description": "SYSTEM MEMORY. Register this repository (the resolved root) in the machine-wide pointer registry (~/.archietect/system.db). Safe to re-run: updates last-seen, never duplicates the entry or resets when it was first registered. Writes only a root path, name, and timestamps — never any architectural fact.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -360,6 +365,20 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                             "root": r.root,
                                             "name": r.name,
                                             "found": r.found,
+                                        })).collect::<Vec<_>>(),
+                                        "system_db": db_path.display().to_string(),
+                                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+                                    }),
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                            "system_status" => {
+                                match system_db::default_db_path().and_then(|db| system_db::status_registered_projects(&db).map(|r| (db, r))) {
+                                    Ok((db_path, results)) => json!({
+                                        "projects": results.iter().map(|r| json!({
+                                            "root": r.root,
+                                            "name": r.name,
+                                            "status": r.status,
                                         })).collect::<Vec<_>>(),
                                         "system_db": db_path.display().to_string(),
                                         "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
@@ -555,7 +574,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        for expected in ["permissions", "system_list", "system_query", "system_register", "documents_scan"] {
+        for expected in ["permissions", "system_list", "system_query", "system_status", "system_register", "documents_scan"] {
             assert!(names.contains(&expected), "expected tool '{expected}' in tools/list, got: {names:?}");
         }
 
@@ -578,6 +597,15 @@ mod tests {
         );
         let queried = tool_result(&query_resp);
         assert_eq!(queried["results"].as_array().unwrap().len(), 1, "expected exactly the one registered project, got: {queried}");
+
+        let status_resp = call(&mut stdin, &rx, 7, "tools/call", json!({ "name": "system_status", "arguments": {} }));
+        let statuses = tool_result(&status_resp);
+        let status_projects = statuses["projects"].as_array().unwrap();
+        assert_eq!(status_projects.len(), 1, "expected exactly the one registered project, got: {statuses}");
+        assert!(
+            status_projects[0]["status"].is_null(),
+            "this project was registered but never `init`'d, so its status must honestly report null, not fabricate counts — got: {statuses}"
+        );
 
         let perms_resp = call(&mut stdin, &rx, 6, "tools/call", json!({ "name": "permissions", "arguments": {} }));
         let perms = tool_result(&perms_resp);

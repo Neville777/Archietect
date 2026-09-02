@@ -165,6 +165,41 @@ pub fn query_registered_projects(db_path: &Path, term: &str) -> Result<Vec<Proje
     Ok(out)
 }
 
+/// One project's answer to a cross-project `status` aggregate: "what do I
+/// have" across every registered project in one call, per SYSTEM_MEMORY.md's
+/// vision ("what do I have, what do I know about each, and how do I know
+/// it" without a consumer separately querying every registered project by
+/// hand). Same shape as `ProjectQueryResult` — `status: None` means the
+/// pointer is stale (no `archietect.db` at that root), reported honestly.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectStatusResult {
+    pub root: String,
+    pub name: String,
+    pub status: Option<serde_json::Value>,
+}
+
+/// Fan out `query::status` over every registered project's own db, read-only,
+/// live — never cached into system.db, re-read from scratch every call,
+/// exactly like `query_registered_projects` above. `query::status` already
+/// includes that project's git/docker sections and its `same_project_as`
+/// relationship internally (derived from `idx.root`), so this reuses the
+/// existing per-project status computation wholesale rather than
+/// re-deriving git/docker identity separately here.
+pub fn status_registered_projects(db_path: &Path) -> Result<Vec<ProjectStatusResult>> {
+    let pointers = list_projects(db_path)?;
+    let mut out = Vec::with_capacity(pointers.len());
+    for p in pointers {
+        let root = PathBuf::from(&p.root);
+        let (idx, graph) = crate::store::load_raw(&root);
+        let status = idx.map(|idx| {
+            let graph = graph.unwrap_or_default();
+            crate::query::status(&idx, &graph)
+        });
+        out.push(ProjectStatusResult { root: p.root, name: p.name, status });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +324,65 @@ mod tests {
 
         let _ = std::fs::remove_file(&db);
         let _ = std::fs::remove_dir_all(&proj);
+    }
+
+    /// Real end-to-end, mirroring the query test above: two distinct
+    /// tempdir projects with different real content, both `init`'d and
+    /// registered, plus a third registered-but-never-init'd pointer. Proves
+    /// status_registered_projects reports each project's OWN real counts —
+    /// not swapped, not duplicated — and handles the missing-db pointer
+    /// honestly.
+    #[test]
+    fn status_registered_projects_reports_each_projects_own_counts() {
+        let db = tmp_db("status-cross-project");
+        let _ = std::fs::remove_file(&db);
+        let proj_a = tmp_project("status-a");
+        let proj_b = tmp_project("status-b");
+        let proj_c = tmp_project("status-never-init");
+
+        std::fs::write(
+            proj_a.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            proj_b.join("schema.prisma"),
+            "model Sprocket {\n  id Int @id @default(autoincrement())\n  name String\n}\nmodel Cog {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+
+        let (idx_a, graph_a) = crate::scan::scan(&proj_a);
+        crate::store::save(&idx_a, &graph_a, &proj_a).unwrap();
+        let (idx_b, graph_b) = crate::scan::scan(&proj_b);
+        crate::store::save(&idx_b, &graph_b, &proj_b).unwrap();
+
+        register_project(&db, &proj_a).unwrap();
+        register_project(&db, &proj_b).unwrap();
+        register_project(&db, &proj_c).unwrap();
+
+        let results = status_registered_projects(&db).unwrap();
+        assert_eq!(results.len(), 3, "must report every registered project, not just the init'd ones");
+
+        let a_result = results.iter().find(|r| r.root.contains(proj_a.file_name().unwrap().to_str().unwrap())).unwrap();
+        let b_result = results.iter().find(|r| r.root.contains(proj_b.file_name().unwrap().to_str().unwrap())).unwrap();
+        let c_result = results.iter().find(|r| r.root.contains(proj_c.file_name().unwrap().to_str().unwrap())).unwrap();
+
+        assert_eq!(
+            a_result.status.as_ref().unwrap()["concepts_declared"].as_u64(),
+            Some(1),
+            "project A declared exactly one concept (Widget)"
+        );
+        assert_eq!(
+            b_result.status.as_ref().unwrap()["concepts_declared"].as_u64(),
+            Some(2),
+            "project B declared exactly two concepts (Sprocket, Cog) — must not be swapped with A's count"
+        );
+        assert!(c_result.status.is_none(), "a registered-but-never-init'd project must report status: None, not crash or fabricate counts");
+
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_dir_all(&proj_a);
+        let _ = std::fs::remove_dir_all(&proj_b);
+        let _ = std::fs::remove_dir_all(&proj_c);
     }
 
     #[test]

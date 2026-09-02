@@ -30,14 +30,16 @@
 //!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
 //!   GET /history[?q=concept][&limit=50]      GET /permissions[&root=/path]
 //!   GET /system/list                         GET /system/query?q=Widget
+//!   GET /system/status
 //!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
-//! `/system/list` and `/system/query` are the one exception — like `/laws`,
-//! they answer from `~/.archietect/system.db` directly and need no root at
-//! all (a project root is meaningless for "list every project I know about").
+//! `/system/list`, `/system/query`, and `/system/status` are the exception —
+//! like `/laws`, they answer from `~/.archietect/system.db` directly and
+//! need no root at all (a project root is meaningless for "list/summarize
+//! every project I know about").
 //!
 //! ## `/documents/scan` never prompts
 //!
@@ -238,6 +240,19 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                     Err(e) => json!({ "error": e.to_string() }),
                 }
             }
+            // No root needed — same reasoning as /system/list and /laws.
+            ("/system/status", _) => match system_db::default_db_path().and_then(|db| system_db::status_registered_projects(&db).map(|r| (db, r))) {
+                Ok((db_path, results)) => json!({
+                    "projects": results.iter().map(|r| json!({
+                        "root": r.root,
+                        "name": r.name,
+                        "status": r.status,
+                    })).collect::<Vec<_>>(),
+                    "system_db": db_path.display().to_string(),
+                    "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+                }),
+                Err(e) => json!({ "error": e.to_string() }),
+            },
             (_, None) => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
             (_, Some(root)) if !root.exists() => {
                 json!({ "error": format!("root does not exist: {}", root.display()) })
@@ -381,7 +396,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
                                           "/history", "/ci", "/laws", "/permissions",
-                                          "/system/list", "/system/query", "/system/register",
+                                          "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
@@ -562,6 +577,43 @@ mod tests {
         assert_eq!(status, 200, "GET /system/query (read-only) must not require a token");
         let v: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["results"].as_array().unwrap().len(), 0, "nothing registered yet, got: {body}");
+    }
+
+    #[test]
+    fn system_status_needs_no_token_and_reports_real_project_counts() {
+        let home = tmp_dir("home-status");
+        let project = tmp_dir("project-status");
+        std::fs::write(
+            project.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+        // A real archietect.db on disk, exactly what `archietect init` would
+        // produce — `serve` itself never persists to disk (it only keeps an
+        // in-memory warm cache), and /system/status reads live from each
+        // project's OWN db file, so one must actually exist here first.
+        let (idx, graph) = scan::scan(&project);
+        store::save(&idx, &graph, &project).unwrap();
+
+        let (_guard, token) = spawn_server(&project, &home, 17407);
+
+        // Register via the token-gated endpoint (real end-to-end, not a
+        // direct system_db:: call) so this project actually appears in
+        // system.db before querying its status.
+        let (status, _) = http_get(17407, &format!("/system/register?token={token}"));
+        assert_eq!(status, 200);
+
+        let (status, body) = http_get(17407, "/system/status");
+        assert_eq!(status, 200, "GET /system/status (read-only) must not require a token, got: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let projects = v["projects"].as_array().unwrap();
+        let canonical = project.canonicalize().unwrap().display().to_string();
+        let entry = projects.iter().find(|p| p["root"] == canonical).expect("registered project must appear");
+        assert_eq!(
+            entry["status"]["concepts_declared"].as_u64(),
+            Some(1),
+            "must report this project's real concept count from its own archietect.db, got: {body}"
+        );
     }
 
     #[test]
