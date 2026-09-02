@@ -9,9 +9,9 @@
 #   packaging/test-onboard.sh
 set -euo pipefail
 
-ARCHITECT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ARCHITECT_REPO/target/release/architect"
-ONBOARD="$ARCHITECT_REPO/packaging/onboard.sh"
+ARCHIETECT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="$ARCHIETECT_REPO/target/release/archietect"
+ONBOARD="$ARCHIETECT_REPO/packaging/onboard.sh"
 
 pass=0
 fail=0
@@ -26,7 +26,7 @@ check() {
 }
 
 echo "== building (if needed) =="
-[[ -x "$BIN" ]] || (cd "$ARCHITECT_REPO" && cargo build --release)
+[[ -x "$BIN" ]] || (cd "$ARCHIETECT_REPO" && cargo build --release)
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -41,16 +41,58 @@ EOF
 
 echo
 echo "== Test 1: fresh project =="
-"$ONBOARD" "$PROJECT" --non-interactive > "$TMP/run1.log" 2>&1
+git -C "$PROJECT" init -q
+git -C "$PROJECT" config user.email test@test.com
+git -C "$PROJECT" config user.name test
+git -C "$PROJECT" add schema.prisma
+git -C "$PROJECT" commit -q -m init
+"$ONBOARD" "$PROJECT" --non-interactive --git-hook --claude-hook > "$TMP/run1.log" 2>&1
 check "binary exists"                 "[[ -x \"$BIN\" ]]"
-check "project database created"      "[[ -f \"$PROJECT/architect.db\" ]]"
-check "architect status works"        "\"$BIN\" status --root \"$PROJECT\" >/dev/null"
-check "architect concept works"       "\"$BIN\" concept --root \"$PROJECT\" Widget | grep -q '\"canonical\": \"Widget\"'"
-check "readiness report printed"      "grep -q 'ARCHITECT READY' \"$TMP/run1.log\""
+check "project database created"      "[[ -f \"$PROJECT/archietect.db\" ]]"
+check "archietect status works"        "\"$BIN\" status --root \"$PROJECT\" >/dev/null"
+check "archietect concept works"       "\"$BIN\" concept --root \"$PROJECT\" Widget | grep -q '\"canonical\": \"Widget\"'"
+check "readiness report printed"      "grep -q 'ARCHIETECT READY' \"$TMP/run1.log\""
+
+echo
+echo "== Test 1b: agent instructions written =="
+check "AGENTS.md written"                  "grep -q 'archietect:agent-instructions:begin' \"$PROJECT/AGENTS.md\""
+check "CLAUDE.md written"                  "grep -q 'archietect:agent-instructions:begin' \"$PROJECT/CLAUDE.md\""
+
+echo
+echo "== Test 1c: commit gate actually blocks a real duplicate =="
+echo "CREATE TABLE Widgets (id INT PRIMARY KEY, name TEXT);" > "$PROJECT/dup.sql"
+git -C "$PROJECT" add dup.sql
+DUP_COMMIT_RC=0
+git -C "$PROJECT" commit -q -m "add duplicate widgets table" >/dev/null 2>&1 || DUP_COMMIT_RC=$?
+check "pre-commit hook rejected the duplicate" "[[ \"$DUP_COMMIT_RC\" -ne 0 ]]"
+check "duplicate commit never landed"          "! git -C \"$PROJECT\" log --oneline | grep -q 'duplicate widgets table'"
+git -C "$PROJECT" reset -q
+rm -f "$PROJECT/dup.sql"
+echo "console.log(1)" > "$PROJECT/unrelated.js"
+git -C "$PROJECT" add unrelated.js
+git -C "$PROJECT" commit -q -m "add unrelated file"
+check "pre-commit hook allows a non-duplicate change" "git -C \"$PROJECT\" log --oneline | grep -q 'add unrelated file'"
+
+echo
+echo "== Test 1d: Claude Code guard script blocks a duplicate, allows the rest =="
+GUARD="$PROJECT/.claude/hooks/archietect-guard.sh"
+check "guard script installed"        "[[ -x \"$GUARD\" ]]"
+check "settings.json references it"   "grep -q archietect-guard.sh \"$PROJECT/.claude/settings.json\""
+BLOCK_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/Widget.ts\"}}' | \"$GUARD\"" >/dev/null 2>&1 || BLOCK_RC=$?
+check "guard blocks a new file matching an existing concept" "[[ \"$BLOCK_RC\" -eq 2 ]]"
+ALLOW_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/TotallyNewThing.ts\"}}' | \"$GUARD\"" >/dev/null 2>&1 || ALLOW_RC=$?
+check "guard allows a genuinely new name" "[[ \"$ALLOW_RC\" -eq 0 ]]"
+touch "$PROJECT/Widget.ts"
+REWRITE_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/Widget.ts\"}}' | \"$GUARD\"" >/dev/null 2>&1 || REWRITE_RC=$?
+check "guard allows rewriting a file that already exists" "[[ \"$REWRITE_RC\" -eq 0 ]]"
+rm -f "$PROJECT/Widget.ts"
 
 echo
 echo "== Test 2: existing architecture memory survives re-onboarding =="
-cat > "$PROJECT/architect.toml" <<'EOF'
+cat > "$PROJECT/archietect.toml" <<'EOF'
 [aliases]
 gadget = "Widget"
 
@@ -62,11 +104,11 @@ rejected = ["separate Gadget table"]
 links = ["Widget"]
 EOF
 echo "" | "$BIN" ci --root "$PROJECT" >/dev/null 2>&1 || true
-BEFORE_SIZE=$(stat -c%s "$PROJECT/architect.db")
+BEFORE_SIZE=$(stat -c%s "$PROJECT/archietect.db")
 "$ONBOARD" "$PROJECT" --non-interactive > "$TMP/run2.log" 2>&1
-AFTER_SIZE=$(stat -c%s "$PROJECT/architect.db")
+AFTER_SIZE=$(stat -c%s "$PROJECT/archietect.db")
 check "alias still resolves after re-onboarding" "\"$BIN\" concept --root \"$PROJECT\" gadget | grep -q '\"canonical\": \"Widget\"'"
-check "decision text untouched"                  "grep -q 'widget-is-canonical' \"$PROJECT/architect.toml\""
+check "decision text untouched"                  "grep -q 'widget-is-canonical' \"$PROJECT/archietect.toml\""
 check "history event survived"                   "\"$BIN\" history --root \"$PROJECT\" --limit 5 | grep -q ci_passed"
 check "db did not shrink (no data loss)"         "[[ $AFTER_SIZE -ge $BEFORE_SIZE ]]"
 
@@ -87,7 +129,7 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user status >/dev/null 2>
     echo "== Test 5: daemon actually watches (systemd --user available) =="
     "$ONBOARD" "$PROJECT" --daemon > "$TMP/run5.log" 2>&1
     ESCAPED="$(systemd-escape "$PROJECT")"
-    check "daemon unit active" "systemctl --user is-active --quiet \"architectd@${ESCAPED}\""
+    check "daemon unit active" "systemctl --user is-active --quiet \"archietectd@${ESCAPED}\""
     cat > "$PROJECT/schema2.prisma" <<'EOF'
 model Sprocket {
   id Int @id @default(autoincrement())
@@ -95,7 +137,7 @@ model Sprocket {
 EOF
     sleep 3
     check "daemon observed the new file live" "\"$BIN\" concept --root \"$PROJECT\" Sprocket | grep -q DECLARED_ONLY"
-    systemctl --user disable --now "architectd@${ESCAPED}" >/dev/null 2>&1 || true
+    systemctl --user disable --now "archietectd@${ESCAPED}" >/dev/null 2>&1 || true
     DAEMON_TESTED=1
 else
     echo
