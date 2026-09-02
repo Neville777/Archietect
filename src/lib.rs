@@ -11,6 +11,7 @@ pub mod mcp;
 pub mod model;
 pub mod proposal;
 pub mod query;
+pub mod resource;
 pub mod root;
 pub mod rest;
 pub mod scan;

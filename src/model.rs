@@ -59,6 +59,46 @@ pub struct Concept {
     pub usage: Vec<(String, String)>,
 }
 
+impl Concept {
+    /// Project this schema-layer concept onto the general `Resource` shape
+    /// (see resource.rs / SYSTEM_MEMORY.md). Reproduces exactly the
+    /// evidence `query::concept_card` already builds inline — this exists so
+    /// that construction happens in one place, not to change what it says.
+    /// The primary location is the first declaration site; every other
+    /// declared_in/usage pair stays present as evidence, same as today.
+    pub fn to_resource(&self, canonical_name: &str) -> crate::resource::Resource {
+        let mut evidence: Vec<Evidence> = self
+            .declared_in
+            .iter()
+            .map(|(f, k)| Evidence { tier: Tier::Declared, what: format!("{k} declaration in {f}") })
+            .collect();
+        // .take(8): matches the existing cap in query::concept_card, which
+        // this method's output replaces verbatim — not a new limit.
+        evidence.extend(self.usage.iter().take(8).map(|(f, k)| Evidence {
+            tier: Tier::Used,
+            what: format!("{k} access in {f}"),
+        }));
+        let location = match self.declared_in.first() {
+            Some((f, _)) => crate::resource::Location { file: f.clone(), line: None },
+            None => crate::resource::Location { file: String::new(), line: None },
+        };
+        let mut attributes = BTreeMap::new();
+        if let Some(table) = &self.table {
+            attributes.insert("table".to_string(), table.clone());
+        }
+        attributes.insert("fields".to_string(), self.fields.join(","));
+        attributes.insert("relations".to_string(), self.relations.join(","));
+        crate::resource::Resource {
+            id: crate::resource::Identity(canonical_name.to_string()),
+            kind: "schema_model".to_string(),
+            domain: "code".to_string(),
+            location,
+            attributes,
+            evidence,
+        }
+    }
+}
+
 /// A declared architectural decision — the WHY behind a shape, with the roads
 /// considered and rejected. Rationale is the one architectural fact that can
 /// NEVER be extracted from code: code shows the road taken, and the rejected

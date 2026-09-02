@@ -81,6 +81,27 @@ pub struct Symbol {
     pub line: usize,
 }
 
+impl Symbol {
+    /// Project this structural symbol onto the general `Resource` shape
+    /// (see resource.rs / SYSTEM_MEMORY.md). Reproduces exactly the single
+    /// evidence entry `query::concept`'s STRUCTURAL tier already builds
+    /// inline (`"{:?} declared in {}:{}"`) — construction moves here, the
+    /// string does not change.
+    pub fn to_resource(&self) -> crate::resource::Resource {
+        crate::resource::Resource {
+            id: crate::resource::Identity(self.name.clone()),
+            kind: format!("{:?}", self.kind),
+            domain: "code".to_string(),
+            location: crate::resource::Location { file: self.file.clone(), line: Some(self.line) },
+            attributes: Default::default(),
+            evidence: vec![crate::model::Evidence {
+                tier: crate::model::Tier::Declared,
+                what: format!("{:?} declared in {}:{}", self.kind, self.file, self.line),
+            }],
+        }
+    }
+}
+
 /// 1-indexed line number containing byte offset `pos` in `text`.
 fn line_of(text: &str, pos: usize) -> usize {
     text.as_bytes()[..pos.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1

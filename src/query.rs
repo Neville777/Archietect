@@ -44,15 +44,10 @@ fn source_snippet(root: &str, file: &str, line: usize, context: usize) -> Option
 /// searching, no ranking. Used by alias resolution (law-010).
 fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) -> Value {
     let c = &idx.concepts[name];
-    let mut evidence: Vec<Evidence> = c
-        .declared_in
-        .iter()
-        .map(|(f, k)| Evidence { tier: Tier::Declared, what: format!("{k} declaration in {f}") })
-        .collect();
-    evidence.extend(c.usage.iter().take(8).map(|(f, k)| Evidence {
-        tier: Tier::Used,
-        what: format!("{k} access in {f}"),
-    }));
+    // Built via Concept::to_resource (resource.rs) — the general shape this
+    // schema-layer struct projects onto; see SYSTEM_MEMORY.md. Same evidence
+    // this function built inline before, just constructed in one place.
+    let evidence: Vec<Evidence> = c.to_resource(name).evidence;
     let used = !c.usage.is_empty();
     let symbols = symbols_for_concept(graph, name);
     let routes = routes_for_concept(graph, name);
@@ -271,10 +266,10 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             "concept": term,
             "verdict": "STRUCTURAL",
             "canonical": canon,
-            "evidence": structural_hits.iter().take(10).map(|s| Evidence {
-                tier: Tier::Declared,
-                what: format!("{:?} declared in {}:{}", s.kind, s.file, s.line),
-            }).collect::<Vec<_>>(),
+            // Via Symbol::to_resource (resource.rs) — see SYSTEM_MEMORY.md.
+            // Each symbol yields exactly one evidence entry, same string as
+            // before; construction just moved to one place.
+            "evidence": structural_hits.iter().take(10).map(|s| s.to_resource().evidence[0].clone()).collect::<Vec<_>>(),
             "routes": linked_routes.iter().map(|r| json!({
                 "method": r.method, "path": r.path, "handler": r.handler, "file": r.file,
             })).collect::<Vec<_>>(),
