@@ -5,27 +5,51 @@ current behavior. It exists so the discussion that produced it doesn't
 evaporate, and so implementation has a spec to build against instead of
 starting from a slogan.
 
-## The reframe
+## The vision
+
+A system has reality, but no persistent, trustworthy memory of that reality.
+What exists, what depends on what, what is running, what was declared, what
+was observed, and what changed are continuously rediscovered — by AI, by
+developers, by CI, by monitoring, by whoever happens to be asking — and each
+of those reconstructions is temporary, private, and unverifiable the moment
+it's spoken. Nothing accumulates. Everyone independently re-derives the same
+reality, forever, and none of it becomes the system's own memory of itself.
+
+Archietect is that memory: an evidence-backed, provenance-preserving record
+of what exists and how things relate, with explicit boundaries around what
+it's allowed to observe, and an explicit distinction between what is
+declared, observed, derived, and unknown. It does not decide what is true —
+it records what can be established, and where that knowledge came from.
+
+**AI is a client of Archietect, not its purpose.** So is a human, a CI job,
+a migration tool, a monitoring service, or any other program that would
+otherwise have to rediscover the same fact independently. AI is currently
+the client paying the steepest rediscovery tax, which is why it's the
+loudest use case — but the problem this solves predates AI and isn't
+bounded by it. The goal is not better search. The goal is for a system to
+have memory of itself, so search becomes the fallback for what's genuinely
+unknown (`INSUFFICIENT_COVERAGE`) instead of the default way anything gets
+known at all — and once that fallback discovery happens, its result can
+become part of the persistent memory instead of evaporating again.
+
+The test for every feature from here is: **does this make the system's
+persistent memory of reality more complete, more trustworthy, or more
+accessible?** If not, it doesn't belong here, regardless of how useful it
+would otherwise be.
 
 Archietect today answers "does this concept already exist in this codebase."
-The premise of this document is that the codebase was never the point — it
-was the domain where the underlying idea was easiest to prove, because code
-is the cleanest artifact class that formally declares itself.
-
-The underlying idea, restated without the word "code" in it:
-
-> A continuously maintained, evidence-backed model of the environment an AI
-> is operating in, so it queries what's already known instead of
-> re-discovering the world by searching it every session.
-
-Everything below is what changes, and what deliberately doesn't, to get
-there.
+The rest of this document is about generalizing that beyond code — the
+premise being that the codebase was never the point, it was the domain
+where the underlying idea was easiest to prove, because code is the
+cleanest artifact class that formally declares itself. Everything below is
+what changes, and what deliberately doesn't, to get there.
 
 ## What doesn't change
 
-- **Archietect does not use AI. AI uses Archietect.** This gets more
-  important at world scale, not less — the bigger the memory, the more it
-  matters that the thing holding it never guesses.
+- **Archietect does not use AI. AI uses Archietect** — one memory, many
+  consumers, none of them privileged. This gets more important at world
+  scale, not less — the bigger the memory, the more it matters that the
+  thing holding it never guesses.
 - **Evidence over inference.** Every fact still needs a reason it's believed,
   tiered by strength.
 - **Absence of evidence is disclosed, not hidden.** `INSUFFICIENT_COVERAGE`
