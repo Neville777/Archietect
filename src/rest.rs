@@ -15,11 +15,12 @@
 //!
 //! Binding to 127.0.0.1 keeps remote attackers out, but not a malicious page
 //! open in the same browser as the operator — a plain `<img>` tag can fire a
-//! cross-origin GET with no confirmation. So the four write endpoints
-//! (`submit`/`test`/`accept`/`reject`) additionally require `&token=...`,
-//! printed once to stderr when `serve` starts; nothing else on the machine
-//! can guess it. Responses carry no `Access-Control-Allow-Origin` header —
-//! the embedded GUI at `/` is same-origin and needs none.
+//! cross-origin GET with no confirmation. So the five write endpoints
+//! (`proposal/{submit,test,accept,reject}`, `system/register`) additionally
+//! require `&token=...`, printed once to stderr when `serve` starts; nothing
+//! else on the machine can guess it. Responses carry no
+//! `Access-Control-Allow-Origin` header — the embedded GUI at `/` is
+//! same-origin and needs none.
 //!
 //!   GET /concept?q=invoice[&root=/path]      GET /doctor
 //!   GET /intent?q=add+invoicing              GET /tour
@@ -27,10 +28,31 @@
 //!   GET /owner?q=invoice                     GET /status
 //!   GET /guard?sql=CREATE+TABLE+...          GET /laws
 //!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
-//!   GET /history[?q=concept][&limit=50]
+//!   GET /history[?q=concept][&limit=50]      GET /permissions[&root=/path]
+//!   GET /system/list                         GET /system/query?q=Widget
+//!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
+//!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
+//! `/system/list` and `/system/query` are the one exception — like `/laws`,
+//! they answer from `~/.archietect/system.db` directly and need no root at
+//! all (a project root is meaningless for "list every project I know about").
+//!
+//! ## `/documents/scan` never prompts
+//!
+//! `permissions::domain_allowed_with_confirmation`'s interactive y/N prompt
+//! is designed around a real terminal. Neither REST nor MCP has one, and
+//! blocking a server's single request-handling thread on stdin that will
+//! never receive input would hang the whole process for every other client.
+//! So this endpoint always passes `NonInteractiveAsker`, which fails closed
+//! (`"enabled": false`) rather than prompting — the documents domain is only
+//! ever reachable over REST/MCP for a project that already has
+//! `[domains.documents]` explicitly set in its `archietect.toml`/
+//! `system.toml` (an explicit config entry is honored without ever
+//! consulting the asker at all — see `permissions.rs`'s own doc on
+//! `domain_allowed_with_confirmation`). The CLI (`archietect documents
+//! scan`) remains the only way to answer the confirmation prompt itself.
 //!
 //! ## The warm cache
 //!
@@ -55,7 +77,10 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::{laws, model::Index, query, root, scan, store, structural::StructuralGraph};
+use crate::{
+    documents_domain, laws, model::Index, permissions, query, root, scan, store, system_db,
+    structural::StructuralGraph,
+};
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
 /// tiny: this API serves identifiers and short text, not arbitrary payloads.
@@ -120,14 +145,20 @@ const MUTATING_ENDPOINTS: &[&str] = &[
     "/proposal/test",
     "/proposal/accept",
     "/proposal/reject",
+    // Writes a pointer (root path, name, timestamps) into
+    // ~/.archietect/system.db — same class of risk as the four proposal
+    // endpoints above (a mutating action reachable by a bare cross-origin
+    // request), so it gets the same token gate. See src/system_db.rs's own
+    // module doc for exactly what this write does and does not store.
+    "/system/register",
 ];
 
 pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let token = generate_token();
-    eprintln!("archietect REST listening on http://127.0.0.1:{port} (read-only except /proposal/*)");
-    eprintln!("proposal-mutating requests (submit/test/accept/reject) require &token={token}");
+    eprintln!("archietect REST listening on http://127.0.0.1:{port} (read-only except /proposal/* and /system/register)");
+    eprintln!("mutating requests (proposal submit/test/accept/reject, system/register) require &token={token}");
 
     // The warm cache. Single-threaded loop, one request at a time — plain
     // HashMap, no lock needed.
@@ -177,6 +208,36 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 
         let mut body: Value = match (path.as_str(), root) {
             ("/laws", _) => laws::registry_json(),
+            // No root needed — same reasoning as /laws: this answers from
+            // ~/.archietect/system.db directly, not from any one project.
+            ("/system/list", _) => match system_db::default_db_path().and_then(|db| system_db::list_projects(&db).map(|p| (db, p))) {
+                Ok((db_path, projects)) => json!({
+                    "projects": projects.iter().map(|p| json!({
+                        "root": p.root,
+                        "name": p.name,
+                        "first_registered_ms": p.first_registered_ms,
+                        "last_seen_ms": p.last_seen_ms,
+                    })).collect::<Vec<_>>(),
+                    "system_db": db_path.display().to_string(),
+                }),
+                Err(e) => json!({ "error": e.to_string() }),
+            },
+            ("/system/query", _) => {
+                let term = p.get("q").map(|s| s.as_str()).unwrap_or("");
+                match system_db::default_db_path().and_then(|db| system_db::query_registered_projects(&db, term).map(|r| (db, r))) {
+                    Ok((db_path, results)) => json!({
+                        "term": term,
+                        "results": results.iter().map(|r| json!({
+                            "root": r.root,
+                            "name": r.name,
+                            "found": r.found,
+                        })).collect::<Vec<_>>(),
+                        "system_db": db_path.display().to_string(),
+                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+                    }),
+                    Err(e) => json!({ "error": e.to_string() }),
+                }
+            }
             (_, None) => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
             (_, Some(root)) if !root.exists() => {
                 json!({ "error": format!("root does not exist: {}", root.display()) })
@@ -269,11 +330,59 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         ) {
                             Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
                         },
+                        // Token-gated (see MUTATING_ENDPOINTS) — writes a
+                        // pointer for THIS request's resolved root into
+                        // ~/.archietect/system.db.
+                        "/system/register" => match system_db::default_db_path().and_then(|db| system_db::register_project(&db, &root).map(|proj| (db, proj))) {
+                            Ok((db_path, proj)) => json!({
+                                "registered": proj.root,
+                                "name": proj.name,
+                                "first_registered_ms": proj.first_registered_ms,
+                                "last_seen_ms": proj.last_seen_ms,
+                                "system_db": db_path.display().to_string(),
+                            }),
+                            Err(e) => json!({ "error": e.to_string() }),
+                        },
+                        "/permissions" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                            Ok(cfg) => permissions::report(&cfg),
+                            Err(e) => json!({ "error": e.to_string() }),
+                        },
+                        // See this module's doc: always NonInteractiveAsker —
+                        // never blocks waiting for a y/N answer that can
+                        // never arrive over a network transport.
+                        "/documents/scan" => match p.get("dir") {
+                            None => json!({ "error": "missing required ?dir=<path> parameter" }),
+                            Some(dir_str) => {
+                                let dir = PathBuf::from(dir_str);
+                                let result: anyhow::Result<Value> = (|| {
+                                    let global_path = permissions::default_global_config_path()?;
+                                    let cfg = permissions::load(&global_path, &root)?;
+                                    let confirmations_path = permissions::default_confirmations_path()?;
+                                    let (enabled, resources) = documents_domain::scan_if_allowed(
+                                        &cfg,
+                                        &confirmations_path,
+                                        &dir,
+                                        &permissions::NonInteractiveAsker,
+                                    )?;
+                                    Ok(json!({
+                                        "dir": dir.display().to_string(),
+                                        "enabled": enabled,
+                                        "resources": resources,
+                                    }))
+                                })();
+                                match result {
+                                    Ok(v) => v,
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                        },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
-                                          "/history", "/ci", "/laws",
+                                          "/history", "/ci", "/laws", "/permissions",
+                                          "/system/list", "/system/query", "/system/register",
+                                          "/documents/scan",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),
@@ -305,4 +414,207 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
         let _ = req.respond(response);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::path::Path;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    /// Kills the spawned `archietect serve` child even if an assertion
+    /// panics mid-test — otherwise a failed test leaks a real bound TCP
+    /// listener for the rest of the test run.
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn bin_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/archietect")
+    }
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-rest-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Spawns a REAL `archietect serve` subprocess (the actual compiled
+    /// binary, not rest.rs's internals called in-process) with its own
+    /// isolated HOME, so it never touches the real machine's
+    /// ~/.archietect/system.db, and returns a guard plus the real random
+    /// token it printed on startup — parsed off its own stderr, the same
+    /// way an operator running this command themselves would read it.
+    fn spawn_server(project_root: &Path, home: &Path, port: u16) -> (ChildGuard, String) {
+        let mut child = Command::new(bin_path())
+            .args(["serve", "--root", project_root.to_str().unwrap(), "--port", &port.to_string()])
+            .env("HOME", home)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn archietect serve — is target/release/archietect built?");
+
+        let stderr = child.stderr.take().unwrap();
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut token = None;
+        use std::io::BufRead;
+        // Bounded read: a broken binary that never prints its token must
+        // fail this test loudly, not hang it waiting for a line that never
+        // comes.
+        for _ in 0..10 {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            if let Some(t) = line.trim().strip_prefix("mutating requests (proposal submit/test/accept/reject, system/register) require &token=") {
+                token = Some(t.to_string());
+                break;
+            }
+        }
+        let token = token.expect("server never printed its token on stderr");
+
+        let mut connected = false;
+        for _ in 0..50 {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                connected = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(connected, "server on port {port} never accepted a connection");
+
+        (ChildGuard(child), token)
+    }
+
+    /// Minimal raw HTTP/1.1 GET client — this project has no HTTP client
+    /// dependency (see Cargo.toml), and a GET this simple doesn't warrant
+    /// pulling one in for tests. A 5-second read timeout turns a server that
+    /// hangs (e.g. a regression that makes /documents/scan block on a
+    /// confirmation prompt it can never receive) into a loud test failure
+    /// instead of hanging this whole test suite forever.
+    fn http_get(port: u16, path_and_query: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let req = format!("GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = Vec::new();
+        stream.read_to_end(&mut resp).expect("reading response (or it hung/timed out)");
+        let resp = String::from_utf8_lossy(&resp);
+        let status = resp
+            .lines()
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (status, body)
+    }
+
+    // Fixed, widely-spaced high ports — distinct per test so they can run
+    // concurrently (the default for `cargo test`) without colliding with
+    // each other; arbitrary enough to be unlikely to collide with a real
+    // dev server already running on this machine.
+    #[test]
+    fn system_register_requires_token_then_actually_registers() {
+        let home = tmp_dir("home-register");
+        let project = tmp_dir("project-register");
+        let (_guard, token) = spawn_server(&project, &home, 17402);
+
+        let (status, body) = http_get(17402, "/system/register");
+        assert_eq!(status, 401, "registering with no token must be rejected, got body: {body}");
+
+        let (status, body) = http_get(17402, &format!("/system/register?token={token}"));
+        assert_eq!(status, 200, "registering with the correct token must succeed, got: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let canonical = project.canonicalize().unwrap().display().to_string();
+        assert_eq!(v["registered"].as_str().unwrap(), canonical);
+
+        let (status, body) = http_get(17402, "/system/list");
+        assert_eq!(status, 200);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let projects = v["projects"].as_array().unwrap();
+        assert!(
+            projects.iter().any(|p| p["root"] == canonical),
+            "expected the just-registered project in /system/list, got: {body}"
+        );
+    }
+
+    #[test]
+    fn system_list_and_query_need_no_token() {
+        let home = tmp_dir("home-list");
+        let project = tmp_dir("project-list");
+        let (_guard, _token) = spawn_server(&project, &home, 17403);
+
+        let (status, _) = http_get(17403, "/system/list");
+        assert_eq!(status, 200, "GET /system/list (read-only) must not require a token");
+
+        let (status, body) = http_get(17403, "/system/query?q=NothingRegisteredYet");
+        assert_eq!(status, 200, "GET /system/query (read-only) must not require a token");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["results"].as_array().unwrap().len(), 0, "nothing registered yet, got: {body}");
+    }
+
+    #[test]
+    fn permissions_endpoint_reports_real_domain_state() {
+        let home = tmp_dir("home-permissions");
+        let project = tmp_dir("project-permissions");
+        let (_guard, _token) = spawn_server(&project, &home, 17404);
+
+        let (status, body) = http_get(17404, "/permissions");
+        assert_eq!(status, 200);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let domains = v["domains"].as_array().unwrap();
+        let code = domains.iter().find(|d| d["domain"] == "code").unwrap();
+        assert_eq!(code["allowed"], true);
+        assert_eq!(code["source"], "default-enabled");
+        let docker = domains.iter().find(|d| d["domain"] == "docker").unwrap();
+        assert_eq!(docker["allowed"], false);
+    }
+
+    #[test]
+    fn documents_scan_never_hangs_and_reports_disabled_without_config() {
+        let home = tmp_dir("home-documents");
+        let project = tmp_dir("project-documents");
+        std::fs::write(project.join("note.md"), b"should never be read").unwrap();
+        let (_guard, _token) = spawn_server(&project, &home, 17405);
+
+        let start = std::time::Instant::now();
+        let (status, body) = http_get(17405, &format!("/documents/scan?dir={}", project.display()));
+        let elapsed = start.elapsed();
+
+        assert_eq!(status, 200, "got: {body}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "documents/scan took {elapsed:?} — should return near-instantly, never block on a confirmation prompt"
+        );
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["enabled"], false,
+            "no explicit [domains.documents] config here, so REST must report disabled rather than prompting or guessing consent — got: {body}"
+        );
+        assert_eq!(v["resources"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn existing_proposal_endpoints_still_token_gated_as_before() {
+        // Regression guard for the original REST security fix (this
+        // session, earlier): confirms adding new mutating/read endpoints
+        // did not loosen the pre-existing proposal token gate.
+        let home = tmp_dir("home-proposal-regression");
+        let project = tmp_dir("project-proposal-regression");
+        let (_guard, _token) = spawn_server(&project, &home, 17406);
+
+        let (status, _) = http_get(17406, "/proposal/submit?kind=decision");
+        assert_eq!(status, 401, "proposal/submit with no token must still be rejected");
+    }
 }

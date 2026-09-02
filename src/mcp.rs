@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::{query, root, scan};
+use crate::{documents_domain, permissions, query, root, scan, system_db};
 
 fn tool_defs() -> Value {
     let root_prop = json!({
@@ -162,6 +162,37 @@ fn tool_defs() -> Value {
                 "purge": { "type": "boolean", "description": "Delete the proposal's files instead of just marking it rejected." },
                 "root": root_prop
             }, "required": ["id"] }
+        },
+        {
+            "name": "permissions",
+            "description": "Inspect the resolved domain permission state for this repository: which domains (code, git, docker, systemd, photos, messages, documents, browser) are enabled and WHERE that decision came from (project config / global config / default), plus the hardcoded denial list (.ssh, .aws, credential files, browser profiles, ...) nothing can ever override.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "system_list",
+            "description": "SYSTEM MEMORY. List every project registered in the machine-wide pointer registry (~/.archietect/system.db) — root path, display name, and when it was first/last registered. Stores pointers only, never any project's actual architectural facts.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "system_query",
+            "description": "SYSTEM MEMORY. \"Which of my registered projects has X?\" — fans out a concept lookup live, read-only, over every registered project's OWN archietect.db (never cached into system.db). A registered project with no archietect.db yet (moved, deleted, or never `init`'d) is reported honestly rather than skipped.",
+            "inputSchema": { "type": "object", "properties": {
+                "term": { "type": "string", "description": "The concept in plain language, checked against every registered project." },
+                "root": root_prop
+            }, "required": ["term"] }
+        },
+        {
+            "name": "system_register",
+            "description": "SYSTEM MEMORY. Register this repository (the resolved root) in the machine-wide pointer registry (~/.archietect/system.db). Safe to re-run: updates last-seen, never duplicates the entry or resets when it was first registered. Writes only a root path, name, and timestamps — never any architectural fact.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "documents_scan",
+            "description": "FIRST UNSTRUCTURED DOMAIN. Scan one explicit directory for document files (.pdf/.docx/.txt/.md/.odt), non-recursive — filename/extension/size/modified-time only, content never read. Requires the 'documents' domain to already be explicitly enabled via [domains.documents] in archietect.toml or ~/.archietect/system.toml for this repository: over MCP this tool can never prompt for the one-time confirmation the CLI (`archietect documents scan`) can, so an unconfigured repository always reports enabled:false here rather than hanging or guessing consent.",
+            "inputSchema": { "type": "object", "properties": {
+                "dir": { "type": "string", "description": "Absolute path to the directory to scan." },
+                "root": root_prop
+            }, "required": ["dir"] }
         }
     ])
 }
@@ -295,6 +326,97 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 Ok(v) => v,
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
+                            "permissions" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                                Ok(cfg) => permissions::report(&cfg),
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            // root is required here purely because every MCP
+                            // tool call in this server goes through the same
+                            // Some(root) dispatch gate above — system_list
+                            // itself never reads or needs that root, it
+                            // answers from ~/.archietect/system.db alone
+                            // (see REST's /system/list, which — unlike this
+                            // MCP tool — genuinely needs no root at all,
+                            // since rest.rs's dispatch has a root-independent
+                            // path this server does not).
+                            "system_list" => match system_db::default_db_path().and_then(|db| system_db::list_projects(&db).map(|p| (db, p))) {
+                                Ok((db_path, projects)) => json!({
+                                    "projects": projects.iter().map(|p| json!({
+                                        "root": p.root,
+                                        "name": p.name,
+                                        "first_registered_ms": p.first_registered_ms,
+                                        "last_seen_ms": p.last_seen_ms,
+                                    })).collect::<Vec<_>>(),
+                                    "system_db": db_path.display().to_string(),
+                                }),
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            "system_query" => {
+                                let term = args["term"].as_str().unwrap_or("");
+                                match system_db::default_db_path().and_then(|db| system_db::query_registered_projects(&db, term).map(|r| (db, r))) {
+                                    Ok((db_path, results)) => json!({
+                                        "term": term,
+                                        "results": results.iter().map(|r| json!({
+                                            "root": r.root,
+                                            "name": r.name,
+                                            "found": r.found,
+                                        })).collect::<Vec<_>>(),
+                                        "system_db": db_path.display().to_string(),
+                                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+                                    }),
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                            // MCP's trust boundary is "whoever spawned this
+                            // process" (see rest.rs's module doc, which
+                            // documents the REST token gate by contrast) —
+                            // no token needed here, unlike REST's
+                            // /system/register.
+                            "system_register" => match system_db::default_db_path().and_then(|db| system_db::register_project(&db, &root).map(|proj| (db, proj))) {
+                                Ok((db_path, proj)) => json!({
+                                    "registered": proj.root,
+                                    "name": proj.name,
+                                    "first_registered_ms": proj.first_registered_ms,
+                                    "last_seen_ms": proj.last_seen_ms,
+                                    "system_db": db_path.display().to_string(),
+                                }),
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            // Always NonInteractiveAsker — see tool_defs()'s
+                            // description and rest.rs's matching endpoint doc:
+                            // MCP has no real stdin to prompt against, so this
+                            // must never block waiting for a y/N that can
+                            // never come. Only ever returns real data for a
+                            // repository that already has [domains.documents]
+                            // explicitly configured.
+                            "documents_scan" => {
+                                let dir_str = args["dir"].as_str().unwrap_or("");
+                                if dir_str.is_empty() {
+                                    json!({ "error": "missing required 'dir' argument" })
+                                } else {
+                                    let dir = PathBuf::from(dir_str);
+                                    let result: anyhow::Result<Value> = (|| {
+                                        let global_path = permissions::default_global_config_path()?;
+                                        let cfg = permissions::load(&global_path, &root)?;
+                                        let confirmations_path = permissions::default_confirmations_path()?;
+                                        let (enabled, resources) = documents_domain::scan_if_allowed(
+                                            &cfg,
+                                            &confirmations_path,
+                                            &dir,
+                                            &permissions::NonInteractiveAsker,
+                                        )?;
+                                        Ok(json!({
+                                            "dir": dir.display().to_string(),
+                                            "enabled": enabled,
+                                            "resources": resources,
+                                        }))
+                                    })();
+                                    match result {
+                                        Ok(v) => v,
+                                        Err(e) => json!({ "error": e.to_string() }),
+                                    }
+                                }
+                            }
                             other => json!({ "error": format!("unknown tool {other}") }),
                         };
                         cache.insert(root, (idx, graph));
@@ -328,4 +450,170 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
         stdout.flush()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::Path;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// Kills the spawned `archietect mcp` child even if an assertion panics
+    /// mid-test.
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn bin_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/archietect")
+    }
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-mcp-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// Spawns a REAL `archietect mcp` subprocess (the actual compiled
+    /// binary, exercised over its real stdio JSON-RPC transport — not
+    /// mcp.rs's dispatch called in-process) with its own isolated HOME, so
+    /// it never touches the real machine's ~/.archietect/system.db. Returns
+    /// a guard, the child's stdin, and a channel yielding each stdout line
+    /// as it arrives: decoupling reads from a fixed timeout means a
+    /// hung/broken server fails a test loudly instead of blocking it
+    /// forever.
+    fn spawn_mcp(project_root: &Path, home: &Path) -> (ChildGuard, std::process::ChildStdin, mpsc::Receiver<String>) {
+        let mut child = Command::new(bin_path())
+            .args(["mcp", "--root", project_root.to_str().unwrap()])
+            .env("HOME", home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn archietect mcp — is target/release/archietect built?");
+
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        (ChildGuard(child), stdin, rx)
+    }
+
+    fn call(
+        stdin: &mut std::process::ChildStdin,
+        rx: &mpsc::Receiver<String>,
+        id: u64,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        writeln!(stdin, "{req}").unwrap();
+        stdin.flush().unwrap();
+        let line = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("no MCP response to '{method}' within 5s — possible hang"));
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// A `tools/call` response wraps its actual JSON payload as a STRING
+    /// inside `result.content[0].text` (see this file's own `tools/call`
+    /// handler above) — unwrap that one extra layer.
+    fn tool_result(resp: &Value) -> Value {
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("tool response missing content[0].text: {resp}"));
+        serde_json::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn new_tools_are_registered_and_return_real_data() {
+        let home = tmp_dir("home");
+        let project = tmp_dir("project");
+        let (_guard, mut stdin, rx) = spawn_mcp(&project, &home);
+
+        let _ = call(&mut stdin, &rx, 1, "initialize", json!({}));
+
+        let list_resp = call(&mut stdin, &rx, 2, "tools/list", json!({}));
+        let names: Vec<&str> = list_resp["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        for expected in ["permissions", "system_list", "system_query", "system_register", "documents_scan"] {
+            assert!(names.contains(&expected), "expected tool '{expected}' in tools/list, got: {names:?}");
+        }
+
+        let register_resp = call(&mut stdin, &rx, 3, "tools/call", json!({ "name": "system_register", "arguments": {} }));
+        let registered = tool_result(&register_resp);
+        let canonical = project.canonicalize().unwrap().display().to_string();
+        assert_eq!(registered["registered"].as_str().unwrap(), canonical);
+
+        let list_resp = call(&mut stdin, &rx, 4, "tools/call", json!({ "name": "system_list", "arguments": {} }));
+        let listed = tool_result(&list_resp);
+        let projects = listed["projects"].as_array().unwrap();
+        assert!(
+            projects.iter().any(|p| p["root"] == canonical),
+            "expected the just-registered project in system_list, got: {listed}"
+        );
+
+        let query_resp = call(
+            &mut stdin, &rx, 5, "tools/call",
+            json!({ "name": "system_query", "arguments": { "term": "Anything" } }),
+        );
+        let queried = tool_result(&query_resp);
+        assert_eq!(queried["results"].as_array().unwrap().len(), 1, "expected exactly the one registered project, got: {queried}");
+
+        let perms_resp = call(&mut stdin, &rx, 6, "tools/call", json!({ "name": "permissions", "arguments": {} }));
+        let perms = tool_result(&perms_resp);
+        assert!(
+            perms["domains"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["domain"] == "code" && d["allowed"] == true),
+            "expected code to show as allowed in permissions, got: {perms}"
+        );
+    }
+
+    #[test]
+    fn documents_scan_tool_never_hangs_and_reports_disabled_without_config() {
+        let home = tmp_dir("home-docs");
+        let project = tmp_dir("project-docs");
+        std::fs::write(project.join("note.md"), b"should never be read").unwrap();
+        let (_guard, mut stdin, rx) = spawn_mcp(&project, &home);
+        let _ = call(&mut stdin, &rx, 1, "initialize", json!({}));
+
+        let start = std::time::Instant::now();
+        let resp = call(
+            &mut stdin, &rx, 2, "tools/call",
+            json!({ "name": "documents_scan", "arguments": { "dir": project.to_str().unwrap() } }),
+        );
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "documents_scan took {elapsed:?} — must never block waiting for a confirmation prompt over MCP"
+        );
+        let out = tool_result(&resp);
+        assert_eq!(
+            out["enabled"], false,
+            "no explicit config for 'documents' in this project, so MCP must report disabled — got: {out}"
+        );
+    }
 }
