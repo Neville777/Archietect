@@ -127,6 +127,44 @@ pub fn list_projects(db_path: &Path) -> Result<Vec<ProjectPointer>> {
     Ok(rows)
 }
 
+/// One project's answer to a cross-project `query`: what its OWN db says
+/// about `term`, fetched live, read-only, every call — never cached back
+/// into system.db. See this module's own doc: system.db stays a pointer
+/// table; this function is how a query gets to "what do my projects know"
+/// without weakening that guarantee to make the question easier to ask.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectQueryResult {
+    pub root: String,
+    pub name: String,
+    /// `None` when the pointer is stale — `root_path` no longer contains an
+    /// `archietect.db` (moved, deleted, or simply never `init`'d after
+    /// registration). Reported honestly, not skipped silently and not
+    /// treated as a hard error that aborts every other project's result.
+    pub found: Option<serde_json::Value>,
+}
+
+/// Fan out `query::concept(term)` over every registered project's own db,
+/// read-only, live. Pure aggregation of an already-existing per-project
+/// query function — no new cross-project matching logic, no identity
+/// resolution, nothing written back to system.db or to any project's db.
+/// A registered project whose `archietect.db` is missing (moved/deleted
+/// since registration, or never `init`'d) is reported with `found: None`
+/// rather than aborting the whole command over one bad pointer.
+pub fn query_registered_projects(db_path: &Path, term: &str) -> Result<Vec<ProjectQueryResult>> {
+    let pointers = list_projects(db_path)?;
+    let mut out = Vec::with_capacity(pointers.len());
+    for p in pointers {
+        let root = PathBuf::from(&p.root);
+        let (idx, graph) = crate::store::load_raw(&root);
+        let found = idx.map(|idx| {
+            let graph = graph.unwrap_or_default();
+            crate::query::concept(&idx, &graph, term)
+        });
+        out.push(ProjectQueryResult { root: p.root, name: p.name, found });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +224,71 @@ mod tests {
         let db = tmp_db("nonexistent");
         let _ = std::fs::remove_file(&db);
         assert!(list_projects(&db).unwrap().is_empty());
+    }
+
+    /// Real end-to-end: two tempdir projects, each actually `init`'d
+    /// (scan::scan + store::save, exactly what `archietect init` does) with
+    /// DIFFERENT declared concepts, both registered, then queried. Proves
+    /// query_registered_projects genuinely opens each project's own db
+    /// live rather than getting lucky on one.
+    #[test]
+    fn query_registered_projects_finds_the_right_project_and_reports_absence_in_the_other() {
+        let db = tmp_db("query-cross-project");
+        let _ = std::fs::remove_file(&db);
+        let proj_a = tmp_project("query-a");
+        let proj_b = tmp_project("query-b");
+
+        std::fs::write(
+            proj_a.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            proj_b.join("schema.prisma"),
+            "model Sprocket {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+
+        let (idx_a, graph_a) = crate::scan::scan(&proj_a);
+        crate::store::save(&idx_a, &graph_a, &proj_a).unwrap();
+        let (idx_b, graph_b) = crate::scan::scan(&proj_b);
+        crate::store::save(&idx_b, &graph_b, &proj_b).unwrap();
+
+        register_project(&db, &proj_a).unwrap();
+        register_project(&db, &proj_b).unwrap();
+
+        let results = query_registered_projects(&db, "Widget").unwrap();
+        assert_eq!(results.len(), 2, "must check every registered project, not just one");
+
+        let a_result = results.iter().find(|r| r.root.contains(proj_a.file_name().unwrap().to_str().unwrap())).unwrap();
+        let b_result = results.iter().find(|r| r.root.contains(proj_b.file_name().unwrap().to_str().unwrap())).unwrap();
+
+        let a_verdict = a_result.found.as_ref().unwrap()["verdict"].as_str().unwrap();
+        assert_ne!(a_verdict, "ABSENT", "project A declares Widget, must not be reported absent");
+
+        let b_verdict = b_result.found.as_ref().unwrap()["verdict"].as_str().unwrap();
+        assert_eq!(b_verdict, "ABSENT", "project B never declared Widget, must be genuinely checked and found absent, not just skipped");
+
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_dir_all(&proj_a);
+        let _ = std::fs::remove_dir_all(&proj_b);
+    }
+
+    #[test]
+    fn query_registered_projects_reports_missing_db_without_crashing() {
+        let db = tmp_db("query-missing-db");
+        let _ = std::fs::remove_file(&db);
+        // Registered but never init'd — no archietect.db ever created here.
+        let proj = tmp_project("query-missing");
+
+        register_project(&db, &proj).unwrap();
+        let results = query_registered_projects(&db, "Anything").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].found.is_none(), "a project with no archietect.db must report found: None, not crash or fabricate a verdict");
+
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_dir_all(&proj);
     }
 
     #[test]

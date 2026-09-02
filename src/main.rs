@@ -121,6 +121,12 @@ enum SystemCmd {
     Register,
     /// List every project registered in the system-level pointer registry.
     List,
+    /// Fan out a concept lookup over every registered project's OWN db,
+    /// read-only, live — "which of my projects has X". Never caches results
+    /// back into system.db; a re-run always re-reads each project's current
+    /// state. A registered project with no archietect.db (moved, deleted,
+    /// or never `init`'d) is reported honestly, not skipped silently.
+    Query { term: String },
 }
 
 #[derive(Subcommand)]
@@ -364,6 +370,19 @@ fn main() -> anyhow::Result<()> {
                             "last_seen_ms": p.last_seen_ms,
                         })).collect::<Vec<_>>(),
                         "system_db": db_path.display().to_string(),
+                    })
+                }
+                SystemCmd::Query { term } => {
+                    let results = archietect::system_db::query_registered_projects(&db_path, &term)?;
+                    serde_json::json!({
+                        "term": term,
+                        "results": results.iter().map(|r| serde_json::json!({
+                            "root": r.root,
+                            "name": r.name,
+                            "found": r.found,
+                        })).collect::<Vec<_>>(),
+                        "system_db": db_path.display().to_string(),
+                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
                     })
                 }
             }
