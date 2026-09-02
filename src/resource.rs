@@ -48,6 +48,23 @@ pub struct Resource {
     pub evidence: Vec<Evidence>,
 }
 
+/// One relationship between two resources — with its OWN evidence, never
+/// implied merely by both endpoints existing. See SYSTEM_MEMORY.md
+/// ("Relationships need their own evidence, not borrowed evidence").
+///
+/// Phase 2, code-only, one instance: `structural::Route::relationship_to`
+/// turns what `routes_for_concept` already computed as a disposable inline
+/// filter (handler name matches? path contains the name?) into an explicit,
+/// evidenced edge — a route "handling" a concept is a real fact distinct
+/// from the route existing and the concept existing.
+#[derive(Debug, Clone)]
+pub struct Relationship {
+    pub from: Identity,
+    pub kind: String,
+    pub to: Identity,
+    pub evidence: Evidence,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +105,46 @@ mod tests {
         assert_eq!(r.evidence.len(), 1);
         assert_eq!(r.evidence[0].tier, Tier::Declared);
         assert_eq!(r.evidence[0].what, "Function declared in src/query.rs:677");
+    }
+
+    #[test]
+    fn route_relationship_used_tier_on_handler_name_match() {
+        use crate::structural::Route;
+        let r = Route {
+            method: "GET".into(),
+            path: "/widgets".into(),
+            handler: "Widget".into(),
+            file: "src/routes.ts".into(),
+        };
+        let rel = r.relationship_to("Widget").expect("expected a relationship");
+        assert_eq!(rel.from.0, "GET /widgets");
+        assert_eq!(rel.kind, "handles");
+        assert_eq!(rel.to.0, "Widget");
+        assert_eq!(rel.evidence.tier, Tier::Used);
+    }
+
+    #[test]
+    fn route_relationship_named_tier_on_path_substring_only() {
+        use crate::structural::Route;
+        let r = Route {
+            method: "GET".into(),
+            path: "/widgets/list".into(),
+            handler: "unknown".into(),
+            file: "src/routes.ts".into(),
+        };
+        let rel = r.relationship_to("widgets").expect("expected a relationship");
+        assert_eq!(rel.evidence.tier, Tier::Named);
+    }
+
+    #[test]
+    fn route_relationship_none_when_unrelated() {
+        use crate::structural::Route;
+        let r = Route {
+            method: "GET".into(),
+            path: "/orders".into(),
+            handler: "OrderHandler".into(),
+            file: "src/routes.ts".into(),
+        };
+        assert!(r.relationship_to("Widget").is_none());
     }
 }

@@ -116,6 +116,46 @@ pub struct Route {
     pub file: String,
 }
 
+impl Route {
+    /// Whether/why this route is believed to relate to `concept_name` — the
+    /// evidence `routes_for_concept` previously computed as a bare boolean
+    /// filter and discarded. See resource.rs::Relationship / SYSTEM_MEMORY.md
+    /// ("Relationships need their own evidence"): a route's handler actually
+    /// naming the concept is a real structural fact (USED tier — the code
+    /// demonstrably ties this route to that name); the route's PATH merely
+    /// containing the concept's name is much weaker (NAMED tier — resemblance
+    /// only), same distinction the rest of the engine already draws for a
+    /// bare name match versus a real declared/observed one.
+    pub fn relationship_to(&self, concept_name: &str) -> Option<crate::resource::Relationship> {
+        use crate::model::{names_concept, Evidence, Tier};
+        let evidence = if names_concept(&self.handler, concept_name) {
+            Evidence {
+                tier: Tier::Used,
+                what: format!(
+                    "route handler '{}' in {} name-matches concept '{}'",
+                    self.handler, self.file, concept_name
+                ),
+            }
+        } else if self.path.to_lowercase().contains(&concept_name.to_lowercase()) {
+            Evidence {
+                tier: Tier::Named,
+                what: format!(
+                    "route path '{}' contains concept name '{}'",
+                    self.path, concept_name
+                ),
+            }
+        } else {
+            return None;
+        };
+        Some(crate::resource::Relationship {
+            from: crate::resource::Identity(format!("{} {}", self.method, self.path)),
+            kind: "handles".to_string(),
+            to: crate::resource::Identity(concept_name.to_string()),
+            evidence,
+        })
+    }
+}
+
 /// A file-level import edge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Import {
@@ -395,19 +435,18 @@ pub struct StructuralDependent {
     pub via_symbols: Vec<String>,
 }
 
-/// Return all routes in `graph` that are linked to `concept_name`.
+/// Return all routes in `graph` that are linked to `concept_name`. Via
+/// `Route::relationship_to` (see resource.rs::Relationship /
+/// SYSTEM_MEMORY.md) — same predicate as before, now an explicit evidenced
+/// edge instead of an inline, disposable boolean.
 pub fn routes_for_concept<'a>(
     graph: &'a StructuralGraph,
     concept_name: &str,
 ) -> Vec<&'a Route> {
-    use crate::model::names_concept;
     graph
         .routes
         .iter()
-        .filter(|r| {
-            names_concept(&r.handler, concept_name)
-                || r.path.to_lowercase().contains(&concept_name.to_lowercase())
-        })
+        .filter(|r| r.relationship_to(concept_name).is_some())
         .collect()
 }
 
