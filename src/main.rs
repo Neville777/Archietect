@@ -100,6 +100,22 @@ enum Cmd {
     /// AI proposes work, never evidence; a human always runs `accept`.
     #[command(subcommand)]
     Proposal(ProposalCmd),
+    /// The cross-project pointer registry (~/.archietect/system.db) — an
+    /// explicit, separate act from `init`. Stores only a project's root
+    /// path, name, and timestamps; never any of its architectural facts,
+    /// which stay exclusively in that project's own archietect.db.
+    #[command(subcommand)]
+    System(SystemCmd),
+}
+
+#[derive(Subcommand)]
+enum SystemCmd {
+    /// Register this project (the resolved --root) in the system-level
+    /// pointer registry. Safe to re-run: updates last-seen, never
+    /// duplicates the entry or resets when it was first registered.
+    Register,
+    /// List every project registered in the system-level pointer registry.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -320,6 +336,33 @@ fn main() -> anyhow::Result<()> {
             ProposalCmd::Accept { id } => proposal::accept(&root, id)?,
             ProposalCmd::Reject { id, purge } => proposal::reject(&root, id, purge)?,
         },
+        Cmd::System(scmd) => {
+            let db_path = archietect::system_db::default_db_path()?;
+            match scmd {
+                SystemCmd::Register => {
+                    let p = archietect::system_db::register_project(&db_path, &root)?;
+                    serde_json::json!({
+                        "registered": p.root,
+                        "name": p.name,
+                        "first_registered_ms": p.first_registered_ms,
+                        "last_seen_ms": p.last_seen_ms,
+                        "system_db": db_path.display().to_string(),
+                    })
+                }
+                SystemCmd::List => {
+                    let projects = archietect::system_db::list_projects(&db_path)?;
+                    serde_json::json!({
+                        "projects": projects.iter().map(|p| serde_json::json!({
+                            "root": p.root,
+                            "name": p.name,
+                            "first_registered_ms": p.first_registered_ms,
+                            "last_seen_ms": p.last_seen_ms,
+                        })).collect::<Vec<_>>(),
+                        "system_db": db_path.display().to_string(),
+                    })
+                }
+            }
+        }
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())

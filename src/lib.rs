@@ -19,6 +19,7 @@ pub mod scan;
 pub mod scoring;
 pub mod store;
 pub mod structural;
+pub mod system_db;
 pub mod watch;
 
 /// The mtime of the currently-running binary's file on disk, at the moment
