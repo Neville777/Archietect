@@ -552,7 +552,38 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "concepts_with_observed_usage": used,
         "declared_but_never_observed_in_use": dead,
         "structural_coverage": crate::structural::coverage_report(idx, graph),
+        "git": git_status_section(idx),
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Archietect can actually see structurally.",
+    })
+}
+
+/// The first real (non-test) call site for `git_domain`'s gated scan — see
+/// SYSTEM_MEMORY.md's phase 3 report, which left this domain built but with
+/// nothing surfacing it. Goes through `scan_if_allowed`, never `scan`
+/// directly, so a disabled git domain (via `[domains] git = "disabled"` in
+/// either config layer) is honestly reported as disabled rather than the
+/// section silently vanishing — vanishing would be indistinguishable from
+/// "this isn't a git repository", a different fact entirely. Fails open on
+/// a missing/unreadable global permission config the same way
+/// `scan_with_prior` already fails open on a missing `archietect.toml`
+/// elsewhere in this codebase — a config problem here should not take down
+/// `status`, the single most load-bearing command in the CLI.
+fn git_status_section(idx: &Index) -> Value {
+    let root = std::path::Path::new(&idx.root);
+    let cfg = crate::permissions::default_global_config_path()
+        .and_then(|p| crate::permissions::load(&p, root))
+        .unwrap_or_default();
+    if !crate::permissions::domain_allowed(&cfg, "git") {
+        return json!({
+            "enabled": false,
+            "resources": [],
+            "note": "the 'git' domain is disabled by permission config — see `archietect permissions`",
+        });
+    }
+    let resources = crate::git_domain::scan_if_allowed(&cfg, root);
+    json!({
+        "enabled": true,
+        "resources": resources,
     })
 }
 
@@ -1070,4 +1101,48 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
         },
         "note": "Pure composition of intent/owner/impact/decisions — one call instead of five, because the skipped calls are always the ones that mattered. Deterministic; the guard still rules on the final patch.",
     })
+}
+
+#[cfg(test)]
+mod status_git_section_tests {
+    use super::*;
+
+    /// `status` against THIS repository's own real .git — a real fixture,
+    /// not synthetic, matching this codebase's own testing preference.
+    #[test]
+    fn status_includes_git_resources_for_this_real_repo() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        assert_eq!(out["git"]["enabled"], true);
+        let resources = out["git"]["resources"].as_array().expect("resources must be an array");
+        assert!(
+            resources.iter().any(|r| r["kind"] == "git_repository"),
+            "expected a git_repository resource in status's git section, got: {resources:?}"
+        );
+        assert!(
+            resources.iter().any(|r| r["kind"] == "git_branch"),
+            "expected a git_branch resource (this repo has a checked-out branch)"
+        );
+    }
+
+    /// A project-level `[domains] git = "disabled"` override must make the
+    /// git section honestly report itself disabled, not silently vanish or
+    /// fall back to `scan`'s ungated output.
+    #[test]
+    fn status_git_section_honestly_disabled_via_project_config() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-status-git-disabled-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::process::Command::new("git").arg("init").arg("-q").current_dir(&tmp).status().unwrap();
+        std::fs::write(tmp.join("archietect.toml"), "[domains]\ngit = \"disabled\"\n").unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        let out = status(&idx, &graph);
+        assert_eq!(out["git"]["enabled"], false);
+        assert_eq!(out["git"]["resources"].as_array().unwrap().len(), 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

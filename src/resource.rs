@@ -15,11 +15,17 @@
 //! improvise here as a side effect of a type-shape refactor.
 
 use crate::model::Evidence;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// A resource's name, standing in for real cross-domain identity for now.
 /// See the module doc: this is deliberately not doing identity resolution.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// `Serialize` derived so a `Resource` can be emitted directly into a real
+/// JSON surface (first real use: `query::status`'s `git` section) —
+/// `transparent` serializes as the bare string, not `{"0": "..."}`, matching
+/// how every other name-shaped field in this codebase's JSON already looks.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
 pub struct Identity(pub String);
 
 /// Where a resource lives. `line` is `None` for anything that isn't a single
@@ -27,7 +33,7 @@ pub struct Identity(pub String);
 /// files — see `Concept::to_resource`, which uses the first declaration site
 /// as the primary location and keeps the rest as evidence, exactly like the
 /// existing JSON output already does).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Location {
     pub file: String,
     pub line: Option<usize>,
@@ -38,7 +44,7 @@ pub struct Location {
 /// stay exactly as they are. This is the shape `Concept` and `Symbol`
 /// project themselves onto at query time, proving the code domain fits the
 /// general model without migrating how it's scanned or persisted yet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Resource {
     pub id: Identity,
     pub kind: String,
@@ -57,7 +63,7 @@ pub struct Resource {
 /// filter (handler name matches? path contains the name?) into an explicit,
 /// evidenced edge — a route "handling" a concept is a real fact distinct
 /// from the route existing and the concept existing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Relationship {
     pub from: Identity,
     pub kind: String,
