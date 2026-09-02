@@ -163,23 +163,103 @@ be globally queryable.
 ## Memory boundaries are the default, not an add-on
 
 There is no "scan everything" mode. Every domain is off until explicitly
-enabled, at multiple scopes:
+enabled. This section is the finalized design (decided, not just sketched)
+for phase 5's prerequisite — reusing two mechanisms this codebase already
+has rather than inventing new ones: the global/per-project config split
+(MCP registration is global; `archietect.toml` is per-project) and the
+hardcoded, non-overridable blocklist pattern (`proposal.rs`'s
+`FORBIDDEN_EXACT`/`FORBIDDEN_PREFIX`).
 
+### Config surface — two layers
+
+```toml
+# ~/.archietect/system.toml — global defaults, every project inherits these
+[domains]
+code = "enabled"     # the tool's original contract — never was opt-in
+git  = "enabled"     # phase 3's domain — read-only, structural, low sensitivity
+# every other domain: absent = disabled. Default-deny, not default-allow.
 ```
-GLOBAL     ~/.archietect/system.toml — which domains exist at all
-DOMAIN     filesystem / docker / git / documents / photos / messages
-RESOURCE   a specific path, container, or service
-ATTRIBUTE  filename-only vs. metadata vs. content, for a given domain
+
+```toml
+# <project>/archietect.toml — per-project override. Reuses the SAME file
+# phase-0 already uses for [aliases]/[[decision]] — one config file per
+# project, not a second one with its own onboarding/documentation surface.
+[domains]
+docker = "enabled"   # this project only
 ```
+
+### Precedence, strict-descending, no exceptions
+
+1. **Hardcoded denial list** — not configurable by any toml, project or
+   global: `~/.ssh`, `~/.aws`, `~/.gnupg`, browser profile directories,
+   anything matching a credentials/secrets naming pattern. Same shape as
+   `proposal.rs`'s forbidden-path constants — a proposal cannot weaken the
+   suite it's judged by; a config file cannot re-enable a hardcoded denial.
+2. **Project-level `archietect.toml` `[domains]`** — overrides global, for
+   that project only.
+3. **Global `~/.archietect/system.toml` `[domains]`** — the default for
+   everything else.
+4. **No entry for a domain, in either file** = disabled. A domain that
+   hasn't shipped yet, or that nobody has configured, is never silently on.
+
+### Attribute scoping (relevant once unstructured domains exist)
+
+```toml
+[domains.photos]
+state = "enabled"
+attributes = ["filename", "metadata"]   # explicitly NOT "content" —
+                                         # no vision/content analysis
+                                         # without a separate, louder opt-in
+```
+
+Code and git don't need this — they already operate at content-level by
+nature (a symbol declaration IS the content); attribute scoping only
+becomes meaningful for domains where "look at the filename" and "analyze
+the content" are genuinely different acts with different privacy weight.
+
+### Enable friction: structured vs. unstructured domains
+
+Editing `[domains]` in either toml file is suffient, on its own, to enable
+a **structured** domain (code, git, docker, systemd, package manifests) —
+these are already low-sensitivity and this project already asks a user to
+run `onboard.sh` deliberately once per project. But enabling ANY
+**unstructured** domain (photos, messages, documents, browser) additionally
+requires a one-time interactive `y/N` confirmation via the CLI at first use
+— the same shape as `onboard.sh`'s existing daemon-install prompt — so it
+can never take effect purely from a config file someone else wrote, an
+agent edited unsupervised, or a copy-pasted `system.toml`. A `--non-interactive`
+context (CI, a script) that hits an unstructured domain awaiting confirmation
+fails closed (treats it as disabled) rather than silently assuming consent —
+same failure direction `onboard.sh --non-interactive` already takes for the
+daemon prompt.
+
+### Enforcement
+
+One gate, called by every extractor before it does any real work — matching
+the `Extractor` trait sketch below:
+
+```rust
+permissions::domain_allowed(cfg, "docker") -> bool
+permissions::resource_allowed(cfg, "docker", &path) -> bool  // hardcoded
+                                                              // denial list
+                                                              // checked
+                                                              // here first,
+                                                              // unconditionally,
+                                                              // before any
+                                                              // config is
+                                                              // even read
+```
+
+`git_domain::scan()` (phase 3) currently runs unconditionally with no gate
+at all — implementing this permission model must retrofit that call site,
+not just apply to domains added after it.
 
 "Archietect knows my machine" has to mean "it has a declared boundary and
 everything inside it has provenance," never "it indexed everything by
 default." This is not a caveat bolted onto the design — it is the
 architectural difference between this and the class of product (blanket
 device-activity indexing, shipped as a default-on feature) that has already
-been a public security/privacy failure elsewhere. Sensitive domains
-(`~/.ssh`, credential files, browser profiles) are never enabled by a
-default config; enabling them is a deliberate, visible act by the user.
+been a public security/privacy failure elsewhere.
 
 ## Where the laws model actually stands (correction from design discussion)
 
