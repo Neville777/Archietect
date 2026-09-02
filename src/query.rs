@@ -553,6 +553,7 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "declared_but_never_observed_in_use": dead,
         "structural_coverage": crate::structural::coverage_report(idx, graph),
         "git": git_status_section(idx),
+        "docker": docker_status_section(idx),
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Archietect can actually see structurally.",
     })
 }
@@ -581,6 +582,30 @@ fn git_status_section(idx: &Index) -> Value {
         });
     }
     let resources = crate::git_domain::scan_if_allowed(&cfg, root);
+    json!({
+        "enabled": true,
+        "resources": resources,
+    })
+}
+
+/// Second domain wired the same way `git_status_section` is — see that
+/// function's doc for the honest-disabled-reporting and fail-open rationale,
+/// both identical here. `docker` is NOT in `DEFAULT_ENABLED_DOMAINS` (unlike
+/// git), so with zero config anywhere this reports disabled by default,
+/// proven by a test in docker_domain.rs.
+fn docker_status_section(idx: &Index) -> Value {
+    let root = std::path::Path::new(&idx.root);
+    let cfg = crate::permissions::default_global_config_path()
+        .and_then(|p| crate::permissions::load(&p, root))
+        .unwrap_or_default();
+    if !crate::permissions::domain_allowed(&cfg, "docker") {
+        return json!({
+            "enabled": false,
+            "resources": [],
+            "note": "the 'docker' domain is disabled by permission config — see `archietect permissions`",
+        });
+    }
+    let resources = crate::docker_domain::scan_if_allowed(&cfg, root);
     json!({
         "enabled": true,
         "resources": resources,
