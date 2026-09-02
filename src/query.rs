@@ -554,8 +554,57 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "structural_coverage": crate::structural::coverage_report(idx, graph),
         "git": git_status_section(idx),
         "docker": docker_status_section(idx),
+        "relationships": same_project_relationships(idx),
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Archietect can actually see structurally.",
     })
+}
+
+/// The first real cross-domain identity link — see SYSTEM_MEMORY.md's
+/// "Identity is a link, and the mechanism for it already exists". This is
+/// deliberately the ONE safe case that needs no name-matching at all: the
+/// git domain's `git_repository` resource and the code domain's resources
+/// were extracted from the literally identical root path, in this same
+/// `status()` call. That shared root IS the declared, checkable fact — not
+/// a comparison of the two domains' names/identities against each other.
+///
+/// Returns nothing when there's no git repository resource (git disabled,
+/// or no `.git` here) or when the code domain found no files at this root
+/// (an empty directory isn't "a codebase to link against"). Recomputes git
+/// resources independently from `git_status_section` rather than sharing
+/// its output — this keeps that function's existing shape/tests completely
+/// untouched, at the cost of scanning `.git` twice per `status()` call,
+/// which is cheap (two small file reads, no subprocess).
+fn same_project_relationships(idx: &Index) -> Vec<crate::resource::Relationship> {
+    let root = std::path::Path::new(&idx.root);
+    let cfg = crate::permissions::default_global_config_path()
+        .and_then(|p| crate::permissions::load(&p, root))
+        .unwrap_or_default();
+    if !crate::permissions::domain_allowed(&cfg, "git") {
+        return Vec::new();
+    }
+    let git_resources = crate::git_domain::scan_if_allowed(&cfg, root);
+    let Some(repo) = git_resources.iter().find(|r| r.kind == "git_repository") else {
+        return Vec::new();
+    };
+    if idx.files_scanned == 0 {
+        return Vec::new();
+    }
+    vec![crate::resource::Relationship {
+        from: repo.id.clone(),
+        kind: "same_project_as".to_string(),
+        // The code domain has no single "whole codebase" resource today —
+        // its resources are per-concept/per-symbol. `idx.root` itself is
+        // the identity here: not a name, the actual shared location both
+        // domains were scanned from.
+        to: crate::resource::Identity(idx.root.clone()),
+        evidence: Evidence {
+            tier: Tier::Declared,
+            what: format!(
+                "'{}' (git domain) and the code resources scanned at '{}' were extracted from the same root path — a shared location, not a name match",
+                repo.id.0, idx.root
+            ),
+        },
+    }]
 }
 
 /// The first real (non-test) call site for `git_domain`'s gated scan — see
@@ -1169,5 +1218,83 @@ mod status_git_section_tests {
         assert_eq!(out["git"]["resources"].as_array().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod same_project_relationship_tests {
+    use super::*;
+
+    /// A real project (tempdir, real `git init`, a real Prisma schema so
+    /// `files_scanned` is genuinely > 0) must produce a `same_project_as`
+    /// relationship whose evidence text names the actual shared root path —
+    /// proving this is real co-location evidence, not a decorative constant.
+    #[test]
+    fn status_links_git_repository_to_code_by_shared_root() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-same-project-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::process::Command::new("git").arg("init").arg("-q").current_dir(&tmp).status().unwrap();
+        std::fs::write(
+            tmp.join("schema.prisma"),
+            "model Widget {\n  id   Int    @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        assert!(idx.files_scanned > 0, "sanity: the fixture must have real scanned files");
+        let out = status(&idx, &graph);
+
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert_eq!(rels.len(), 1, "expected exactly one same_project_as relationship, got: {rels:?}");
+        let rel = &rels[0];
+        assert_eq!(rel["kind"], "same_project_as");
+        assert_eq!(rel["evidence"]["tier"], "Declared");
+        let root_str = tmp.display().to_string();
+        let what = rel["evidence"]["what"].as_str().unwrap();
+        assert!(
+            what.contains(&root_str),
+            "evidence text must cite the actual shared root path {root_str}, got: {what}"
+        );
+        assert!(what.contains("same root path"), "evidence text must state the actual reason, got: {what}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A project with real code but no `.git` at all must produce NO
+    /// relationship — there is nothing on the git side to link from.
+    #[test]
+    fn no_relationship_when_no_git_repository() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-same-project-nogit-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("schema.prisma"),
+            "model Widget {\n  id   Int    @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        assert!(idx.files_scanned > 0, "sanity: the fixture must have real scanned files");
+        let out = status(&idx, &graph);
+
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert!(rels.is_empty(), "no .git directory means no same_project_as relationship, got: {rels:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// This repository's own real status output — proves the relationship
+    /// fires end-to-end against a real, non-synthetic project.
+    #[test]
+    fn this_repo_has_a_same_project_relationship() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0]["kind"], "same_project_as");
     }
 }
