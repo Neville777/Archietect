@@ -504,16 +504,28 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             "detail": r,
         });
     };
-    let c = &idx.concepts[&canon];
-    let mut files: Vec<&String> = c.usage.iter().map(|(f, _)| f).collect();
-    files.sort();
-    files.dedup();
-    let dependents: Vec<&String> = idx
-        .concepts
-        .iter()
-        .filter(|(_, other)| other.relations.iter().any(|r| r == &canon))
-        .map(|(n, _)| n)
-        .collect();
+    // `canon` is a schema-layer concept key ONLY when the verdict above was
+    // DECLARED_ONLY/HAS_STORAGE/etc — a STRUCTURAL verdict (a class/function
+    // that isn't a schema model, e.g. `GovernanceClient`) also sets
+    // `canonical`, but that name was never inserted into `idx.concepts` at
+    // all. Blindly indexing here panicked on exactly that real case
+    // (`archietect impact GovernanceClient` on a real repo) — a
+    // structural-only concept still has real impact data via
+    // `structural_dependents` below, it just has no schema-layer
+    // usage/relations to report, which is a fact to state, not a crash.
+    let mut files: Vec<&String> = Vec::new();
+    let mut dependents: Vec<&String> = Vec::new();
+    if let Some(c) = idx.concepts.get(&canon) {
+        files = c.usage.iter().map(|(f, _)| f).collect();
+        files.sort();
+        files.dedup();
+        dependents = idx
+            .concepts
+            .iter()
+            .filter(|(_, other)| other.relations.iter().any(|r| r == &canon))
+            .map(|(n, _)| n)
+            .collect();
+    }
     let structural_dependents = structural_dependents(graph, &canon, 3);
     json!({
         "target": canon,
@@ -1296,5 +1308,40 @@ mod same_project_relationship_tests {
         let rels = out["relationships"].as_array().expect("relationships must be an array");
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0]["kind"], "same_project_as");
+    }
+}
+
+#[cfg(test)]
+mod impact_structural_only_tests {
+    use super::*;
+
+    /// `impact()` on a STRUCTURAL-only concept (a real class/function that
+    /// is not a schema model) must not panic. `concept()`'s STRUCTURAL
+    /// branch sets `"canonical"` to a name that was never inserted into
+    /// `idx.concepts` at all — found live against a real repository
+    /// (`archietect impact GovernanceClient` on ghosttrack-monorepo), where
+    /// `impact` unconditionally indexed `idx.concepts[&canon]` and panicked
+    /// with "no entry found for key".
+    #[test]
+    fn impact_on_structural_only_concept_does_not_panic() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-impact-structural-only-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("service.ts"),
+            "export class GovernanceClient {\n  doSomething() {}\n}\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        assert!(!idx.concepts.contains_key("GovernanceClient"), "sanity: must be structural-only, not a schema concept");
+
+        let out = impact(&idx, &graph, "GovernanceClient");
+        assert_eq!(out["target"], "GovernanceClient");
+        assert!(out["used_by_files"].as_array().unwrap().is_empty());
+        assert!(out["declared_dependents"].as_array().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
