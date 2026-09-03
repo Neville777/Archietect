@@ -339,31 +339,51 @@ that must stay separate:
   everywhere — the exact CLAUDE.md-can-be-ignored problem this section
   exists to move past.
 
-So the right shape is: **one bag, one boundary, many thin adapters** —
+So the right shape is: **one boundary, universally reachable; adapters are
+the rare exception, not the roadmap** —
 
 ```
                          ARCHIETECT
                     permissions::check_resource
                              │
-                  CLI · REST · MCP (vendor-neutral)
+                  CLI · REST · MCP (vendor-neutral,
+                   already works, zero code needed)
                              │
-          ┌──────────────────┼──────────────────┐
-          │                  │                  │
-   Claude Code          Cursor              (future tool)
-     adapter            adapter                adapter
-   (PreToolUse           (its own              (its own
-    hook, built)      rules mechanism)      mechanism)
+       ┌──────────┬──────────┬──────────┬──────────┐
+       │          │          │          │          │
+    Codex      Gemini      a CI       a human    Claude Code /
+   (calls      (calls      job       at a       Cursor, when
+    the CLI)    MCP)     (curl's    terminal    AUTOMATIC
+                          the REST              enforcement is
+                          endpoint)              wanted — an
+                                                  adapter, not
+                                                  a rebuild
 ```
 
-An adapter's entire job, and nothing more: translate that tool's
-"about to act" moment into one `permissions-check`-shaped call, and
-translate the returned `{allowed, reason}` into whatever that tool's own
-blocking mechanism is. An adapter must never reimplement denial logic
-itself (no adapter should have its own idea of what `.ssh` means) — it is
-plumbing, not policy. The Claude Code adapter (`packaging/onboard.sh
---claude-hook`'s `archietect-boundary.sh`) is the first instance of this
-shape, not a Claude-specific design — a Cursor or Codex adapter is future
-work following the same contract, not a re-design.
+Every client in the top row needs **nothing built for it** — it already has
+full access to the exact same decision, today, via whichever of CLI/REST/MCP
+it can already speak. This is the default case, not a fallback. **Do not
+build a new "Archietect for X"** for any client that can already reach one
+of those three transports — that would mean N copies of the same decision
+engine, which is the one outcome this design exists to prevent (see "one
+memory, many consumers, none of them privileged" above).
+
+An adapter is warranted for exactly one narrower reason: a specific tool
+wants a denial to be *automatically enforced inside its own execution
+loop*, not merely queryable — the same way `CLAUDE.md` can be read but not
+enforced. Only then is a thin, tool-specific translation worth writing, and
+its entire job, and nothing more, is: translate that tool's "about to act"
+moment into one `permissions-check`-shaped call, and translate the returned
+`{allowed, reason}` into whatever that tool's own blocking mechanism is. An
+adapter must never reimplement denial logic itself (no adapter should have
+its own idea of what `.ssh` means) — it is plumbing, not policy, and it
+stays a handful of lines because of that. The Claude Code and Cursor
+adapters (`packaging/onboard.sh --claude-hook` / `--cursor-hook`) are the
+two built so far, each under 60 lines with zero decision logic in either —
+evidence that this really is thin plumbing, not a second product. Building
+a third is worth doing only when a specific tool's own enforcement surface
+is confirmed and a real need for automatic (not just queryable) enforcement
+exists — not preemptively, and not "to support every AI."
 
 `CLAUDE.md`/`AGENTS.md` still tell an AI what you want. Archietect tells it
 what the world establishes — and, wherever an adapter exists, what it is
