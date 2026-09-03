@@ -201,12 +201,27 @@ pub fn domain_allowed(cfg: &PermissionConfig, domain: &str) -> bool {
 /// prompt in shape.
 pub trait ConfirmationAsker {
     fn confirm(&self, prompt: &str) -> bool;
+    /// Whether a `false` from `confirm` is a real decision by a person, and
+    /// therefore worth remembering. `false` by default: only an asker that
+    /// actually put the question to someone may say its answers are
+    /// durable. A fail-closed "no" from a context that COULDN'T ask
+    /// (no TTY, REST, MCP) is "couldn't ask", not "was declined" — persisting
+    /// it silently made every later interactive run skip the question,
+    /// found live via `archietect register` showing
+    /// `documents: confirmation-declined` on a machine where nobody had
+    /// ever been asked.
+    fn answers_are_decisions(&self) -> bool {
+        false
+    }
 }
 
 /// The real CLI's asker: reads one line from stdin, case-insensitively
 /// accepting "y"/"yes".
 pub struct InteractiveAsker;
 impl ConfirmationAsker for InteractiveAsker {
+    fn answers_are_decisions(&self) -> bool {
+        true
+    }
     fn confirm(&self, prompt: &str) -> bool {
         use std::io::Write;
         print!("{prompt} [y/N] ");
@@ -318,7 +333,12 @@ pub fn domain_allowed_with_confirmation(
     let allowed = asker.confirm(&format!(
         "archietect: enable the '{domain_lc}' domain (unstructured/personal content)?"
     ));
-    persist_confirmation(confirmations_path, &domain_lc, allowed)?;
+    // A "yes" is always a decision (nothing fails OPEN by accident — every
+    // asker that returns true chose to). A "no" is only durable if this
+    // asker actually asked someone; see ConfirmationAsker::answers_are_decisions.
+    if allowed || asker.answers_are_decisions() {
+        persist_confirmation(confirmations_path, &domain_lc, allowed)?;
+    }
     Ok(allowed)
 }
 
@@ -425,12 +445,20 @@ mod tests {
 
     struct AlwaysYes;
     impl ConfirmationAsker for AlwaysYes {
+        fn answers_are_decisions(&self) -> bool {
+            true
+        }
         fn confirm(&self, _prompt: &str) -> bool {
             true
         }
     }
+    /// A PERSON declining — a real decision, so it is durable. Contrast
+    /// `NonInteractiveAsker`, whose "no" means "could not ask" and must not be.
     struct AlwaysNo;
     impl ConfirmationAsker for AlwaysNo {
+        fn answers_are_decisions(&self) -> bool {
+            true
+        }
         fn confirm(&self, _prompt: &str) -> bool {
             false
         }
@@ -505,6 +533,30 @@ mod tests {
 
         let second = domain_allowed_with_confirmation(&empty, &confirmations, "messages", &AlwaysNo).unwrap();
         assert!(second, "a prior persisted 'yes' must not be re-asked and overturned silently");
+
+        let _ = std::fs::remove_file(&confirmations);
+    }
+
+    /// The bug `archietect register` surfaced on a real machine: one no-TTY
+    /// call (REST, MCP, `< /dev/null`) fails closed — correct — but used to
+    /// PERSIST that "no", so every later interactive run skipped the question
+    /// and the domain was silently un-enableable. "Could not ask" must leave
+    /// no trace; only a person's answer is durable.
+    #[test]
+    fn non_interactive_decline_is_not_persisted_so_a_later_interactive_run_still_asks() {
+        let confirmations = tmp_file("non-interactive-not-durable");
+        let _ = std::fs::remove_file(&confirmations);
+        let empty = PermissionConfig::default();
+
+        let first = domain_allowed_with_confirmation(&empty, &confirmations, "documents", &NonInteractiveAsker).unwrap();
+        assert!(!first, "fail closed");
+        assert!(!confirmations.exists() || load_confirmation(&confirmations, "documents").unwrap().is_none(),
+            "a non-interactive 'no' must not be written to disk");
+
+        // A later run that CAN ask must actually be asked — and its yes sticks.
+        let second = domain_allowed_with_confirmation(&empty, &confirmations, "documents", &AlwaysYes).unwrap();
+        assert!(second, "the interactive run must be asked, not pre-empted by the earlier no-TTY call");
+        assert_eq!(load_confirmation(&confirmations, "documents").unwrap(), Some(true));
 
         let _ = std::fs::remove_file(&confirmations);
     }

@@ -173,12 +173,20 @@ mod tests {
 
     struct AlwaysYes;
     impl ConfirmationAsker for AlwaysYes {
+        fn answers_are_decisions(&self) -> bool {
+            true
+        }
         fn confirm(&self, _prompt: &str) -> bool {
             true
         }
     }
+    /// A PERSON declining — a real decision, so it is durable. Contrast
+    /// `NonInteractiveAsker`, whose "no" means "could not ask" and must not be.
     struct AlwaysNo;
     impl ConfirmationAsker for AlwaysNo {
+        fn answers_are_decisions(&self) -> bool {
+            true
+        }
         fn confirm(&self, _prompt: &str) -> bool {
             false
         }
