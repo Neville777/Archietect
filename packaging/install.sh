@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Downloads the right prebuilt archietect binary for this machine from the
 # latest GitHub Release and installs it onto PATH. No Rust toolchain, no
 # clone.
@@ -7,10 +7,17 @@
 #   curl -fsSL .../install.sh | sh -s -- --version v0.1.2   # pin a version
 #   curl -fsSL .../install.sh | sh -s -- --dir ~/bin        # custom install dir
 #
+# POSIX sh, deliberately — `curl ... | sh` ignores this file's own shebang
+# and runs under whatever `sh` actually is on the machine (often dash, not
+# bash). `set -o pipefail` is bash-only and broke this exact invocation on
+# a real dash system — caught by actually running the public one-liner, not
+# by reading the script. No internal pipes here, so pipefail bought nothing
+# anyway; `set -eu` covers everything this script needs.
+#
 # Windows is deliberately unsupported here — see release.yml's own comment:
 # the plain binary has never been built or run on Windows by anyone in this
 # project's history.
-set -euo pipefail
+set -eu
 
 REPO="Neville777/Archietect"
 VERSION="latest"
