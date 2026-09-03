@@ -98,21 +98,93 @@ if command -v "$INSTALL_DIR/archietect" >/dev/null 2>&1 || "$INSTALL_DIR/archiet
     echo "archietect: $("$INSTALL_DIR/archietect" --version 2>/dev/null || echo installed)"
 fi
 
-# One-time, global, idempotent: if Claude Code is on this machine, register
-# archietect's MCP server automatically — every onboarded project reuses
-# this same registration, so it belongs here (install time), not in any
-# per-project step. `claude mcp add` exits 1 if already registered (checked
+# One-time, global, idempotent, best-effort MCP registration — attempted
+# for EVERY MCP-speaking client this script has a verified mechanism for,
+# not just one. Each client's own real command/config format was checked
+# live before being written here (see each block's own comment) rather
+# than assumed from another client's shape. A failure in any one of these
+# never fails the install itself, and never blocks the others from being
+# tried.
+ARCHIETECT_MCP_CMD="$INSTALL_DIR/archietect"
+
+# Claude Code — `claude mcp add` exits 1 if already registered (checked
 # live: re-adding an existing name errors, doesn't just overwrite), so this
-# checks `mcp list` first rather than swallowing that error blindly. Best
-# effort only — a failure here never fails the install itself.
+# checks first rather than swallowing that error blindly. Uses `mcp get`,
+# NOT `mcp list` — `list` runs a live health check against EVERY configured
+# server (including unrelated ones, e.g. Gmail/Drive), so it can stall this
+# entire install on network conditions that have nothing to do with
+# archietect. Found by actually timing a rerun: `list` hung past two
+# minutes in this environment, `get` returns instantly either way.
 if command -v claude >/dev/null 2>&1; then
-    if claude mcp list 2>/dev/null | grep -q "^archietect:"; then
-        : # already registered, e.g. a prior install or rerun — nothing to do
-    elif claude mcp add archietect -- "$INSTALL_DIR/archietect" mcp >/dev/null 2>&1; then
+    if claude mcp get archietect >/dev/null 2>&1; then
+        : # already registered — nothing to do
+    elif claude mcp add archietect -- "$ARCHIETECT_MCP_CMD" mcp >/dev/null 2>&1; then
         echo "archietect: registered as an MCP server for Claude Code (every project, automatically)"
     fi
 fi
 
+# Gemini CLI — `gemini mcp add` was checked live too: no `--` separator (its
+# arg parser treats everything after the name as a command+args list
+# directly, unlike Claude's), and --scope user is required or it silently
+# registers project-local only. Unlike Claude, calling `add` again on an
+# existing name UPDATES it in place and exits 0 — genuinely idempotent,
+# confirmed by actually calling it twice. `gemini mcp list` writes its
+# actual output to STDERR, not stdout (confirmed by capturing each stream
+# separately) — `2>/dev/null` here would silently discard the very text
+# being grepped and make this check always report "not registered."
+if command -v gemini >/dev/null 2>&1; then
+    if gemini mcp list 2>&1 | grep -q "archietect: $ARCHIETECT_MCP_CMD mcp"; then
+        : # already registered with this exact command — nothing to do
+    elif gemini mcp add --scope user archietect "$ARCHIETECT_MCP_CMD" mcp >/dev/null 2>&1; then
+        echo "archietect: registered as an MCP server for Gemini CLI (every project, automatically)"
+    fi
+fi
+
+# Cursor — has no CLI for this at all (confirmed against cursor.com/docs/mcp:
+# the only documented paths are one-click marketplace install or hand-editing
+# ~/.cursor/mcp.json — no `cursor mcp add`). Detected by the presence of
+# ~/.cursor/ rather than by running the `cursor` binary, which launches the
+# GUI app itself rather than behaving as a scriptable CLI. Written as a
+# real JSON merge (jq preferred, python3 fallback — same dual-path already
+# used for Claude's settings.json elsewhere in this project), never a
+# blind overwrite of a file that may hold a human's other servers.
+if [ -d "$HOME/.cursor" ] && ! grep -q "\"archietect\"" "$HOME/.cursor/mcp.json" 2>/dev/null; then
+    CURSOR_MCP_JSON="$HOME/.cursor/mcp.json"
+    if command -v jq >/dev/null 2>&1; then
+        TMP_MCP="$(mktemp)"
+        if [ -f "$CURSOR_MCP_JSON" ]; then
+            EXISTING="$(cat "$CURSOR_MCP_JSON")"
+        else
+            EXISTING='{}'
+        fi
+        if echo "$EXISTING" | jq --arg cmd "$ARCHIETECT_MCP_CMD" \
+            '.mcpServers = ((.mcpServers // {}) + {"archietect": {"command": $cmd, "args": ["mcp"]}})' \
+            > "$TMP_MCP" 2>/dev/null; then
+            mv "$TMP_MCP" "$CURSOR_MCP_JSON"
+            echo "archietect: registered as an MCP server for Cursor (every project, automatically)"
+        else
+            rm -f "$TMP_MCP"
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 - "$CURSOR_MCP_JSON" "$ARCHIETECT_MCP_CMD" <<'PYEOF' 2>/dev/null && echo "archietect: registered as an MCP server for Cursor (every project, automatically)"
+import json, sys
+path, cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+data.setdefault("mcpServers", {})["archietect"] = {"command": cmd, "args": ["mcp"]}
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PYEOF
+    fi
+fi
+
+echo
+echo "archietect: for any other MCP-speaking tool (Codex CLI, Windsurf, ...), the stdio command is:"
+echo "  $ARCHIETECT_MCP_CMD mcp"
 echo
 echo "next: cd into a project and run: archietect"
 echo "  (first run there indexes it automatically — no separate init step)"

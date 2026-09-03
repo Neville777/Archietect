@@ -161,10 +161,19 @@ API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
 curl -fsSL https://raw.githubusercontent.com/Neville777/Archietect/main/packaging/install.sh | sh
 ```
 
-That's it. If Claude Code is on your machine, the script registers
-archietect's MCP server automatically (idempotent — safe to rerun,
-skipped if already registered) — no separate `claude mcp add` step.
-Then, in any project:
+That's it. The script auto-registers archietect's MCP server with
+whichever of these are already on your machine — no separate command for
+any of them, idempotent, safe to rerun:
+
+- **Claude Code** — via `claude mcp add`
+- **Gemini CLI** — via `gemini mcp add --scope user`
+- **Cursor** — no CLI exists for this (confirmed against cursor.com/docs/mcp),
+  so the script merges `archietect` into `~/.cursor/mcp.json` directly,
+  preserving any other servers already there
+
+Any other MCP-speaking tool (Codex CLI, Windsurf, ...) — the script has no
+verified mechanism for those, so it prints the raw stdio command
+(`archietect mcp`) instead of guessing at one. Then, in any project:
 
 ```bash
 cd /path/to/your-project
