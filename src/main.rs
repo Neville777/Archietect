@@ -76,6 +76,29 @@ enum Cmd {
         concept: Option<String>,
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Also include events previously moved by `history-archive`. Off
+        /// by default: most projects have no archive file, and merging two
+        /// sources is extra work a caller that just wants the live tail
+        /// shouldn't pay for.
+        #[arg(long)]
+        include_archived: bool,
+    },
+    /// Move events older than a cutoff out of the live archietect.db into a
+    /// permanent, append-only archive file (.archietect/history-archive.db)
+    /// — never deletes a record, only relocates it. A human-invoked
+    /// maintenance action, the same shape as `git gc`; nothing in
+    /// archietect calls this automatically. See store.rs's
+    /// `archive_events_before` for why this exists and how it stays
+    /// consistent with "history is append-only, never rewritten."
+    HistoryArchive {
+        /// Archive events older than this many days from now. Mutually
+        /// exclusive with --before-ms.
+        #[arg(long)]
+        before_days: Option<u64>,
+        /// Archive events with ts_ms strictly less than this raw
+        /// millisecond timestamp. Mutually exclusive with --before-days.
+        #[arg(long)]
+        before_ms: Option<i64>,
     },
     /// CI gate: pipe a diff in, get an exit code out.
     /// `git diff main... | archietect ci`
@@ -325,12 +348,42 @@ fn main() -> anyhow::Result<()> {
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
         Cmd::Owner { term } => { let (idx, _g) = index_for(&root); query::owner(&idx, &term) }
-        Cmd::History { concept, limit } => serde_json::json!({
-            "root": root.display().to_string(),
-            "concept": concept,
-            "events": store::read_history(&root, concept.as_deref(), limit),
-            "note": "Append-only architectural timeline, newest first, written only by the daemon.",
-        }),
+        Cmd::History { concept, limit, include_archived } => {
+            let mut events = store::read_history(&root, concept.as_deref(), limit);
+            if include_archived {
+                events.extend(archietect::store::read_archived_history(&root, concept.as_deref(), limit));
+                events.sort_by(|a, b| b["ts_ms"].as_i64().unwrap_or(0).cmp(&a["ts_ms"].as_i64().unwrap_or(0)));
+                events.truncate(limit);
+            }
+            serde_json::json!({
+                "root": root.display().to_string(),
+                "concept": concept,
+                "events": events,
+                "note": "Append-only architectural timeline, newest first, written only by the daemon. Pass --include-archived to also see events moved by `history-archive`.",
+            })
+        }
+        Cmd::HistoryArchive { before_days, before_ms } => {
+            let cutoff = match (before_days, before_ms) {
+                (Some(_), Some(_)) => anyhow::bail!("pass exactly one of --before-days or --before-ms, not both"),
+                (None, None) => anyhow::bail!("pass one of --before-days or --before-ms"),
+                (Some(days), None) => {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    now_ms - (days as i64) * 86_400_000
+                }
+                (None, Some(ms)) => ms,
+            };
+            let (archived_events, archived_to) = archietect::store::archive_events_before(&root, cutoff)?;
+            serde_json::json!({
+                "root": root.display().to_string(),
+                "cutoff_ms": cutoff,
+                "archived_events": archived_events,
+                "archived_to": archived_to.display().to_string(),
+                "note": "Moved, not deleted — the full record still exists in archived_to. Pass --include-archived to `archietect history` to read it back.",
+            })
+        }
         Cmd::Ci { strict } => {
             let mut diff = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
