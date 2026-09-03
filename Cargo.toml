@@ -4,6 +4,12 @@ version = "0.1.1"
 edition = "2021"
 description = "Architectural memory engine — answers 'does this concept already exist, what is canonical, and what is the evidence' for any codebase. Deterministic; AI is a client, never a component."
 license-file = "LICENSE"
+repository = "https://github.com/Neville777/Archietect"
+homepage = "https://github.com/Neville777/Archietect"
+readme = "README.md"
+keywords = ["cli", "architecture", "static-analysis", "mcp", "codebase"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["validation/", "prototype/", ".claude/", ".cursor/"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

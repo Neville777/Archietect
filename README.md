@@ -150,20 +150,30 @@ API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
 
 ## Installation
 
-**Option A — prebuilt binary**, no Rust toolchain needed:
+**Option A — install script**, no Rust toolchain needed:
 
 ```bash
-# download archietect-linux-x86_64 / archietect-macos-arm64 / archietect-macos-x86_64
-# from https://github.com/Neville777/Archietect/releases/latest
-chmod +x archietect-*
-mv archietect-* /usr/local/bin/archietect
+curl -fsSL https://raw.githubusercontent.com/Neville777/Archietect/main/packaging/install.sh | sh
 
 # once per project:
 archietect init --root /path/to/your-project
 claude mcp add archietect -- "$(which archietect)" mcp   # once, ever — every project reuses this
 ```
 
-**Option B — build from source** (needed for `packaging/onboard.sh`'s
+Downloads the right prebuilt binary for your platform (Linux x86_64, macOS
+arm64/x86_64) from the latest GitHub Release. Windows and other platforms:
+build from source (Option C). `--version vX.Y.Z` pins a version, `--dir`
+picks the install directory — see the script's own header for both.
+
+**Option B — `cargo install`**, if you already have a Rust toolchain:
+
+```bash
+cargo install archietect
+
+archietect init --root /path/to/your-project
+```
+
+**Option C — build from source** (needed for `packaging/onboard.sh`'s
 one-command flow, the systemd/launchd daemon install, or running the test
 suite):
 

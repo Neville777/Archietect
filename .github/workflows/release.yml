@@ -1,10 +1,13 @@
 name: Release
 
-# Builds and attaches dependency-free binaries to a GitHub Release whenever
-# a version tag (v0.1.0, v1.2.3, ...) is pushed. Never runs on an ordinary
-# push/PR — see ci.yml for that. Nothing here creates a tag on its own;
-# cutting the first release is a decision for a human to make, not this
-# workflow.
+# Builds and attaches dependency-free binaries to a GitHub Release, and
+# publishes to crates.io, whenever a version tag (v0.1.0, v1.2.3, ...) is
+# pushed. Never runs on an ordinary push/PR — see ci.yml for that. Nothing
+# here creates a tag on its own; cutting the first release is a decision
+# for a human to make, not this workflow. The crates.io publish step
+# no-ops with a warning if the CARGO_REGISTRY_TOKEN secret isn't set —
+# that token has to come from a human's crates.io account, never assumed
+# to exist.
 on:
   push:
     tags:
@@ -33,6 +36,23 @@ jobs:
             echo "::error::Tag v$TAG does not match Cargo.toml version $CARGO_VERSION — bump Cargo.toml before tagging."
             exit 1
           fi
+
+  publish-crate:
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN secret is not set — skipping crates.io publish. Add it in repo Settings > Secrets to enable this."
+            exit 0
+          fi
+          cargo publish
 
   build:
     needs: check-version
