@@ -50,7 +50,41 @@ git -C "$PROJECT" commit -q -m init
 check "binary exists"                 "[[ -x \"$BIN\" ]]"
 check "project database created"      "[[ -f \"$PROJECT/archietect.db\" ]]"
 check "archietect status works"        "\"$BIN\" status --root \"$PROJECT\" >/dev/null"
-check "archietect concept works"       "\"$BIN\" concept --root \"$PROJECT\" Widget | grep -q '\"canonical\": \"Widget\"'"
+
+# Confirmed real and intermittent (~1-in-200, needs the FULL onboard.sh
+# flow to manifest — a tight, isolated `init` then `concept` loop run 300
+# times back to back never reproduced it, ruling out a simple race in
+# that specific transition alone). Bare pass/fail told us nothing on the
+# one occurrence caught so far, so on failure this captures everything
+# that could matter — real diagnostic capacity for the next time this
+# actually fires, rather than reporting UNFIXED as FIXED.
+CONCEPT_OUT="$("$BIN" concept --root "$PROJECT" Widget 2>&1)"
+if echo "$CONCEPT_OUT" | grep -q '"canonical": "Widget"'; then
+    echo "  ✓ archietect concept works"
+    pass=$((pass + 1))
+else
+    echo "  ✗ archietect concept works"
+    fail=$((fail + 1))
+    mkdir -p /tmp/archietect-test-onboard-diagnostics
+    DIAG="/tmp/archietect-test-onboard-diagnostics/concept-flake-$(date +%s%N).log"
+    {
+        echo "=== archietect concept works — FAILURE DIAGNOSTIC ==="
+        echo "--- concept output ---"
+        echo "$CONCEPT_OUT"
+        echo "--- archietect.db stat ---"
+        stat "$PROJECT/archietect.db" 2>&1
+        echo "--- schema.prisma stat ---"
+        stat "$PROJECT/schema.prisma" 2>&1
+        echo "--- onboard.sh's own run1.log ---"
+        cat "$TMP/run1.log"
+        echo "--- immediate retry (does it self-heal?) ---"
+        "$BIN" concept --root "$PROJECT" Widget 2>&1
+        echo "--- full project directory listing ---"
+        ls -la "$PROJECT"
+    } > "$DIAG" 2>&1
+    echo "    diagnostic captured: $DIAG"
+fi
+
 check "readiness report printed"      "grep -q 'ARCHIETECT READY' \"$TMP/run1.log\""
 
 echo
