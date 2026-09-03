@@ -120,6 +120,22 @@ enum Cmd {
     /// and the hardcoded denial list nothing can override. See
     /// SYSTEM_MEMORY.md's "Memory boundaries are the default" section.
     Permissions,
+    /// Check ONE path against the permission boundary and give a reason —
+    /// allowed or not. This is the call a pre-tool-use hook makes before
+    /// letting an edit land: `check_resource` in permissions.rs, the same
+    /// hardcoded-denial-first logic `resource_allowed`/`register` already
+    /// use, just surfaced with the reason a blocked caller is owed. See
+    /// SYSTEM_MEMORY.md's "Instruction files vs. memory vs. enforcement".
+    PermissionsCheck {
+        /// Path to check (absolute or relative to --root).
+        #[arg(long)]
+        path: PathBuf,
+        /// Which domain this path is being read/written under. Defaults to
+        /// "code" — the domain every existing command already treats as
+        /// enabled by default, and the one a file-edit hook cares about.
+        #[arg(long, default_value = "code")]
+        domain: String,
+    },
     /// The map of the bag: what this memory knows about this repository,
     /// what it does NOT know and why (unsupported languages, disabled or
     /// unconfirmed domains, evidence tiers no extractor can produce, declared
@@ -449,6 +465,18 @@ fn main() -> anyhow::Result<()> {
             let global_path = archietect::permissions::default_global_config_path()?;
             let cfg = archietect::permissions::load(&global_path, &root)?;
             archietect::permissions::report(&cfg)
+        }
+        Cmd::PermissionsCheck { path, domain } => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            let full_path = if path.is_absolute() { path.clone() } else { root.join(&path) };
+            let decision = archietect::permissions::check_resource(&cfg, &domain, &full_path);
+            serde_json::json!({
+                "path": full_path.display().to_string(),
+                "domain": domain,
+                "allowed": decision.allowed,
+                "reason": decision.reason,
+            })
         }
         Cmd::Register => { let (idx, g) = index_for(&root); archietect::register::register(&idx, &g, &root) }
         Cmd::Documents(DocumentsCmd::Scan { dir }) => {

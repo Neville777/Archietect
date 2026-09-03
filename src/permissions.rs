@@ -346,29 +346,60 @@ pub fn domain_allowed_with_confirmation(
 /// hardcoded denial list is checked FIRST, unconditionally, before any
 /// config is even consulted; no config, project or global, can override it.
 pub fn resource_allowed(cfg: &PermissionConfig, domain: &str, path: &Path) -> bool {
-    if is_hardcoded_denied(path) {
-        return false;
-    }
-    domain_allowed(cfg, domain)
+    check_resource(cfg, domain, path).allowed
 }
 
-fn is_hardcoded_denied(path: &Path) -> bool {
+/// A decision with a REASON — what `resource_allowed` collapses to a bool,
+/// kept structured because a consumer that enforces this decision (a
+/// pre-tool hook denying a Write, not just a query answering a question)
+/// has to tell whoever it blocked WHY, not just that it did. See
+/// SYSTEM_MEMORY.md's "Instruction files vs. memory vs. enforcement": a
+/// boundary that can reject an operation owes the rejected party a reason,
+/// the same way `proposal.rs`'s `check_scope` never just fails, it names
+/// the forbidden path it matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceDecision {
+    pub allowed: bool,
+    /// Always present, allowed or not — "why" is not only owed to a denial.
+    pub reason: String,
+}
+
+pub fn check_resource(cfg: &PermissionConfig, domain: &str, path: &Path) -> ResourceDecision {
+    if let Some(rule) = hardcoded_denial_reason(path) {
+        return ResourceDecision {
+            allowed: false,
+            reason: format!("hardcoded denial — {rule} — no config, project or global, can override this"),
+        };
+    }
+    if domain_allowed(cfg, domain) {
+        ResourceDecision { allowed: true, reason: format!("domain '{domain}' is allowed") }
+    } else {
+        let (_, source) = resolve_with_source(cfg, &domain.to_lowercase());
+        ResourceDecision { allowed: false, reason: format!("domain '{domain}' is disabled ({source})") }
+    }
+}
+
+/// The specific hardcoded rule a path matched, or `None` if it matched
+/// nothing. Returning WHICH rule (not just that one fired) is what lets a
+/// denial message say something a person can act on instead of a bare "no".
+fn hardcoded_denial_reason(path: &Path) -> Option<String> {
     for comp in path.components() {
         if let std::path::Component::Normal(c) = comp {
             let c = c.to_string_lossy().to_lowercase();
-            if FORBIDDEN_PATH_COMPONENTS.iter().any(|f| c == *f)
-                || FORBIDDEN_PREFIX_DIRS.iter().any(|f| c == f.to_lowercase())
-            {
-                return true;
+            if let Some(f) = FORBIDDEN_PATH_COMPONENTS.iter().find(|f| c == **f) {
+                return Some(format!("path contains '{f}'"));
+            }
+            if let Some(f) = FORBIDDEN_PREFIX_DIRS.iter().find(|f| c == f.to_lowercase()) {
+                return Some(format!("path contains browser-profile directory '{f}'"));
             }
         }
     }
     if let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_lowercase()) {
-        if FORBIDDEN_FILENAME_PATTERNS.iter().any(|p| name.contains(p)) {
-            return true;
+        if let Some(p) = FORBIDDEN_FILENAME_PATTERNS.iter().find(|p| name.contains(**p)) {
+            return Some(format!("filename matches credential/secret pattern '{p}'"));
         }
     }
-    false
+    None
 }
 
 /// Whether `attribute` (e.g. "filename", "metadata", "content") may be read
@@ -502,6 +533,32 @@ mod tests {
 
         let _ = std::fs::remove_file(&global);
         let _ = std::fs::remove_dir_all(&project_dir);
+    }
+
+    #[test]
+    fn check_resource_names_the_hardcoded_rule_it_matched() {
+        let empty = PermissionConfig::default();
+        let decision = check_resource(&empty, "code", &PathBuf::from("/home/x/.ssh/id_rsa"));
+        assert!(!decision.allowed);
+        assert!(decision.reason.contains("hardcoded denial"), "got: {}", decision.reason);
+        assert!(decision.reason.contains(".ssh"), "must name the actual rule matched, got: {}", decision.reason);
+    }
+
+    #[test]
+    fn check_resource_names_a_disabled_domain_with_its_source() {
+        let empty = PermissionConfig::default();
+        let decision = check_resource(&empty, "docker", &PathBuf::from("/tmp/whatever/Dockerfile"));
+        assert!(!decision.allowed);
+        assert!(decision.reason.contains("disabled"), "got: {}", decision.reason);
+        assert!(decision.reason.contains("default-disabled"), "must name WHY, got: {}", decision.reason);
+    }
+
+    #[test]
+    fn check_resource_allows_a_plain_code_path_with_a_reason_too() {
+        let empty = PermissionConfig::default();
+        let decision = check_resource(&empty, "code", &PathBuf::from("/tmp/whatever/main.rs"));
+        assert!(decision.allowed);
+        assert!(!decision.reason.is_empty(), "a reason is owed on allow too, not just on denial");
     }
 
     #[test]

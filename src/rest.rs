@@ -31,6 +31,7 @@
 //!   GET /history[?q=concept][&limit=50]      GET /permissions[&root=/path]
 //!   GET /system/list                         GET /system/query?q=Widget
 //!   GET /system/status                       GET /register[&root=/path]
+//!   GET /permissions/check?path=...&domain=code[&root=/path]
 //!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!
@@ -362,6 +363,29 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             Ok(cfg) => permissions::report(&cfg),
                             Err(e) => json!({ "error": e.to_string() }),
                         },
+                        // Read-only, no token: answers one path/domain pair
+                        // with a reason (`?path=...&domain=code`, domain
+                        // defaults to "code"). Same check_resource() a
+                        // pre-tool-use hook calls locally over the CLI,
+                        // exposed here so a remote MCP/REST client can ask
+                        // the same boundary question, not just a local
+                        // process.
+                        "/permissions/check" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                            Ok(cfg) => {
+                                let path_str = p.get("path").map(|s| s.as_str()).unwrap_or("");
+                                let domain = p.get("domain").map(|s| s.as_str()).unwrap_or("code");
+                                let candidate = std::path::PathBuf::from(path_str);
+                                let full_path = if candidate.is_absolute() { candidate } else { root.join(&candidate) };
+                                let decision = permissions::check_resource(&cfg, domain, &full_path);
+                                json!({
+                                    "path": full_path.display().to_string(),
+                                    "domain": domain,
+                                    "allowed": decision.allowed,
+                                    "reason": decision.reason,
+                                })
+                            }
+                            Err(e) => json!({ "error": e.to_string() }),
+                        },
                         // Read-only, no token: the map of the bag — see
                         // src/register.rs. Composes over the same warm idx.
                         "/register" => crate::register::register(&idx, &graph, &root),
@@ -398,7 +422,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
-                                          "/history", "/ci", "/laws", "/permissions", "/register",
+                                          "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",

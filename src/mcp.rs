@@ -197,6 +197,15 @@ fn tool_defs_inner() -> Value {
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
+            "name": "permissions_check",
+            "description": "Check ONE path against the permission boundary and get a reason, allowed or not — hardcoded denials (.ssh, .aws, credential/secret filenames, browser profiles) are checked first and are never overridable by any config. This is the call a pre-tool-use hook makes before letting a Read/Edit/Write land.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": { "type": "string", "description": "Path to check (absolute, or relative to root)." },
+                "domain": { "type": "string", "description": "Domain this path is being accessed under. Defaults to \"code\"." },
+                "root": root_prop
+            }, "required": ["path"] }
+        },
+        {
             "name": "system_list",
             "description": "SYSTEM MEMORY. List every project registered in the machine-wide pointer registry (~/.archietect/system.db) — root path, display name, and when it was first/last registered. Stores pointers only, never any project's actual architectural facts.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -361,6 +370,22 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             },
                             "permissions" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
                                 Ok(cfg) => permissions::report(&cfg),
+                                Err(e) => json!({ "error": e.to_string() }),
+                            },
+                            "permissions_check" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                                Ok(cfg) => {
+                                    let path_str = args["path"].as_str().unwrap_or("");
+                                    let domain = args["domain"].as_str().unwrap_or("code");
+                                    let candidate = PathBuf::from(path_str);
+                                    let full_path = if candidate.is_absolute() { candidate } else { root.join(&candidate) };
+                                    let decision = permissions::check_resource(&cfg, domain, &full_path);
+                                    json!({
+                                        "path": full_path.display().to_string(),
+                                        "domain": domain,
+                                        "allowed": decision.allowed,
+                                        "reason": decision.reason,
+                                    })
+                                }
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
                             "register" => crate::register::register(&idx, &graph, &root),
