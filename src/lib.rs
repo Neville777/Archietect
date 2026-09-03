@@ -24,6 +24,7 @@ pub mod rest;
 pub mod scan;
 pub mod shape;
 pub mod scoring;
+pub mod seed;
 pub mod store;
 pub mod structural;
 pub mod system_db;

@@ -103,6 +103,18 @@ pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<ser
 /// automatically; it exists only because a human asked `archietect
 /// history-archive` to run.
 ///
+/// Event kinds NEVER moved by `archive_events_before`, regardless of age —
+/// the declared-ontology audit trail (watch.rs's own "ONTOLOGY changes —
+/// the declared layer has its own event vocabulary"). These record when a
+/// human-declared decision or alias was added/removed/went stale; unlike
+/// `concept_appeared`/`ci_passed`/etc. (routine, high-volume, fine to
+/// relocate), losing quick visibility into "when was this decision
+/// recorded" behind an extra `--include-archived` flag defeats the point of
+/// a governance record. The decision/alias TEXT itself always lives in
+/// archietect.toml, never in this table — this only protects the audit
+/// trail of when it changed.
+const PROTECTED_KINDS: &[&str] = &["decision_added", "decision_removed", "alias_introduced", "alias_removed", "stale_alias"];
+
 /// Atomic via SQLite's own `ATTACH DATABASE`: the copy into the archive and
 /// the delete from the live table happen in ONE transaction on one
 /// connection, so a crash mid-operation leaves either the pre-archive state
@@ -136,12 +148,17 @@ pub fn archive_events_before(root: &Path, cutoff_ms: i64) -> Result<(usize, std:
          BEGIN;"
     ))?;
 
+    // PROTECTED_KINDS values are a fixed, hardcoded compile-time constant —
+    // never external input — so interpolating them into the IN (...) list
+    // carries no injection risk; rusqlite has no bind-parameter form for a
+    // variable-length list.
+    let protected_sql = PROTECTED_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+    let where_clause = format!("ts_ms < ?1 AND kind NOT IN ({protected_sql})");
     let inserted = conn.execute(
-        "INSERT INTO archive.events (ts_ms, kind, concept, detail)
-             SELECT ts_ms, kind, concept, detail FROM events WHERE ts_ms < ?1",
+        &format!("INSERT INTO archive.events (ts_ms, kind, concept, detail) SELECT ts_ms, kind, concept, detail FROM events WHERE {where_clause}"),
         [cutoff_ms],
     )?;
-    conn.execute("DELETE FROM events WHERE ts_ms < ?1", [cutoff_ms])?;
+    conn.execute(&format!("DELETE FROM events WHERE {where_clause}"), [cutoff_ms])?;
     conn.execute_batch("COMMIT; DETACH DATABASE archive;")?;
 
     Ok((inserted, archive_db))
@@ -457,6 +474,31 @@ mod archive_tests {
 
         let archived = read_archived_history(&root, None, 100);
         assert_eq!(archived.len(), 2, "second archive call must ADD to the archive, not replace it");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn protected_ontology_events_never_get_archived_regardless_of_age() {
+        let root = tmp_project("protected");
+        append_events(&root, &[
+            (1000, "concept_appeared".into(), "Old".into(), "{}".into()),
+            (1000, "decision_added".into(), "widget-is-canonical".into(), "{}".into()),
+            (1000, "decision_removed".into(), "old-decision".into(), "{}".into()),
+            (1000, "alias_introduced".into(), "gadget".into(), "{}".into()),
+            (1000, "alias_removed".into(), "thing".into(), "{}".into()),
+            (1000, "stale_alias".into(), "ghost".into(), "{}".into()),
+        ]).unwrap();
+
+        let (moved, _archive_path) = archive_events_before(&root, 3000).unwrap();
+        assert_eq!(moved, 1, "only the non-protected concept_appeared event should move");
+
+        let live = read_history(&root, None, 100);
+        assert_eq!(live.len(), 5, "the five protected ontology events must remain live despite being old: {live:?}");
+        let live_kinds: std::collections::BTreeSet<String> = live.iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect();
+        for k in PROTECTED_KINDS {
+            assert!(live_kinds.contains(*k), "{k} must still be live, got {live_kinds:?}");
+        }
 
         let _ = std::fs::remove_dir_all(&root);
     }

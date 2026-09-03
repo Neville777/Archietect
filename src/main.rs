@@ -97,6 +97,16 @@ enum Cmd {
         #[arg(long)]
         digest: bool,
     },
+    /// Cold-start fix: scan README.md for constraint/decision-shaped bullet
+    /// points and propose them as `[[decision]]` entries, VERBATIM — no
+    /// LLM, no rephrasing. Dry-run by default (prints candidates, writes
+    /// nothing); --write appends new ones to archietect.toml. Human-invoked
+    /// only, same shape as `history-archive` — never wired into REST/MCP,
+    /// never run automatically. See src/seed.rs.
+    Seed {
+        #[arg(long)]
+        write: bool,
+    },
     /// Move events older than a cutoff out of the live archietect.db into a
     /// permanent, append-only archive file (.archietect/history-archive.db)
     /// — never deletes a record, only relocates it. A human-invoked
@@ -428,6 +438,10 @@ fn main() -> anyhow::Result<()> {
                 "events": events,
                 "note": "Append-only architectural timeline, newest first, written only by the daemon. Pass --include-archived to also see events moved by `history-archive`.",
             })
+        }
+        Cmd::Seed { write } => {
+            let (idx, _g) = index_for(&root);
+            archietect::seed::seed(&root, &idx, write)?
         }
         Cmd::HistoryArchive { before_days, before_ms } => {
             let cutoff = match (before_days, before_ms) {
