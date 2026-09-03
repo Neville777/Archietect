@@ -254,7 +254,7 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     }
     for d in &new.decisions {
         if !old.decisions.iter().any(|o| o.id == d.id) {
-            event(&mut out, "decision_added", &d.id, json!({ "decision": d.decision }));
+            event(&mut out, "decision_added", &d.id, json!({ "decision": d.decision, "proposed_by": d.proposed_by }));
         }
     }
     for d in &old.decisions {
@@ -393,4 +393,49 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         current_graph = next_graph;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Decision, Index};
+
+    #[test]
+    fn decision_added_event_carries_proposed_by() {
+        let old = Index::default();
+        let mut new = Index::default();
+        new.decisions.push(Decision {
+            id: "widget-is-canonical".into(),
+            decision: "Widgets are canonical, not Gadget".into(),
+            because: "test fixture".into(),
+            proposed_by: "claude-sonnet-5".into(),
+            ..Default::default()
+        });
+
+        let events = diff_findings(&old, &new);
+        let ev = events
+            .iter()
+            .find(|(_, kind, concept, _)| kind == "decision_added" && concept == "widget-is-canonical")
+            .expect("decision_added event must fire");
+        assert_eq!(ev.3["proposed_by"], "claude-sonnet-5", "{:?}", ev.3);
+    }
+
+    #[test]
+    fn decision_added_event_carries_empty_proposed_by_when_unattributed() {
+        let old = Index::default();
+        let mut new = Index::default();
+        new.decisions.push(Decision {
+            id: "some-decision".into(),
+            decision: "text".into(),
+            because: "test fixture".into(),
+            ..Default::default()
+        });
+
+        let events = diff_findings(&old, &new);
+        let ev = events
+            .iter()
+            .find(|(_, kind, concept, _)| kind == "decision_added" && concept == "some-decision")
+            .expect("decision_added event must fire");
+        assert_eq!(ev.3["proposed_by"], "", "an unattributed decision must not fabricate a proposer: {:?}", ev.3);
+    }
 }

@@ -213,6 +213,7 @@ pub fn scan_with_prior(
                         because: g("because"),
                         rejected: arr("rejected"),
                         links: arr("links"),
+                        proposed_by: g("proposed_by"),
                     });
                 }
             }

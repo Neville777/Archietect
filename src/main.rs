@@ -121,6 +121,12 @@ enum Cmd {
     Seed {
         #[arg(long)]
         write: bool,
+        /// Self-reported attribution written onto each new [[decision]]
+        /// entry's `proposed_by` field — free text, "claude-sonnet-5",
+        /// "human", a tool name. Omitted entirely (no field written at all)
+        /// when not given.
+        #[arg(long)]
+        proposed_by: Option<String>,
     },
     /// Move events older than a cutoff out of the live archietect.db into a
     /// permanent, append-only archive file (.archietect/history-archive.db)
@@ -466,9 +472,9 @@ fn main() -> anyhow::Result<()> {
                 "note": "Append-only architectural timeline, newest first, written only by the daemon. Pass --include-archived to also see events moved by `history-archive`.",
             })
         }
-        Cmd::Seed { write } => {
+        Cmd::Seed { write, proposed_by } => {
             let (idx, _g) = index_for(&root);
-            archietect::seed::seed(&root, &idx, write)?
+            archietect::seed::seed(&root, &idx, write, proposed_by.as_deref())?
         }
         Cmd::HistoryArchive { before_days, before_ms } => {
             let cutoff = match (before_days, before_ms) {

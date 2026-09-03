@@ -153,6 +153,15 @@ pub struct Decision {
     pub rejected: Vec<String>,
     #[serde(default)]
     pub links: Vec<String>,
+    /// Who/what proposed this decision — "claude-sonnet-5", "human", a tool
+    /// name, or empty when not stated. Free text, self-reported by whatever
+    /// wrote it (archietect has no way to verify who's actually calling it,
+    /// same honor-system as a git commit's author field) — same pattern
+    /// already used for proposal.rs's `source` field. Empty string means
+    /// "not specified," never "unknown AI" — archietect does not guess who
+    /// wrote something any more than it guesses what a concept means.
+    #[serde(default)]
+    pub proposed_by: String,
 }
 
 /// Everything the scan learned about one repository.
