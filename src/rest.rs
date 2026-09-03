@@ -83,8 +83,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
-    documents_domain, laws, model::Index, permissions, photos_domain, query, root, scan, store, system_db,
-    structural::StructuralGraph,
+    docker_domain, documents_domain, laws, model::Index, permissions, photos_domain, query, root, scan, store,
+    system_db, structural::StructuralGraph,
 };
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
@@ -449,13 +449,24 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                 }
                             }
                         },
+                        // LIVE — shells out to `docker compose ps`, unlike
+                        // every other endpoint here. Same
+                        // `permissions::domain_allowed` gate the declarative
+                        // docker scan uses. See `docker_domain::scan_observed`.
+                        "/docker/observe" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                            Ok(cfg) => {
+                                let resources = docker_domain::scan_observed(&cfg, &root);
+                                json!({ "resources": resources })
+                            }
+                            Err(e) => json!({ "error": e.to_string() }),
+                        },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
                                           "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
-                                          "/documents/scan", "/photos/scan",
+                                          "/documents/scan", "/photos/scan", "/docker/observe",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),

@@ -187,6 +187,25 @@ enum Cmd {
     /// contract. See src/photos_domain.rs.
     #[command(subcommand)]
     Photos(PhotosCmd),
+    /// LIVE container state — shells out to `docker compose ps`, unlike
+    /// every other command in this binary. Deliberately its own explicit
+    /// subcommand, never folded into `status`/`init`: a routine index build
+    /// must never pay the cost or risk of a live process call (daemon down,
+    /// `docker` missing, a hung engine). Same `permissions::domain_allowed`
+    /// gate the declarative docker scan uses. See
+    /// `docker_domain::scan_observed`.
+    #[command(subcommand)]
+    Docker(DockerCmd),
+}
+
+#[derive(Subcommand)]
+enum DockerCmd {
+    /// For each root-level compose file, observe each DECLARED service's
+    /// real, current state right now (running / not running) via `docker
+    /// compose ps --format json --all`. Silent (no resources) for a compose
+    /// file the command can't be run against — missing `docker`, unreachable
+    /// daemon, timeout — never a guessed or stale state.
+    Observe,
 }
 
 #[derive(Subcommand)]
@@ -582,6 +601,12 @@ fn main() -> anyhow::Result<()> {
                 "enabled": enabled,
                 "resources": resources,
             })
+        }
+        Cmd::Docker(DockerCmd::Observe) => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            let resources = archietect::docker_domain::scan_observed(&cfg, &root);
+            serde_json::json!({ "resources": resources })
         }
     };
     println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);

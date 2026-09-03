@@ -27,8 +27,14 @@
 //! - code — Declared, Used, Named (static analysis; scan.rs/structural.rs)
 //! - git — Declared (repository: git_domain.rs:76; remotes: :115);
 //!   Observed for the current branch only (git_domain.rs:94)
-//! - docker — Declared only (Dockerfile FROM: docker_domain.rs:78; compose
-//!   services: :111); nothing observes a live container
+//! - docker — Declared (Dockerfile FROM: docker_domain.rs:78; compose
+//!   services: :111) from `scan`/`scan_if_allowed`, PLUS Observed via the
+//!   separate, explicit `docker_domain::scan_observed` (`archietect docker
+//!   observe` / `/docker/observe` / `docker_observe`) — not automatic, so it
+//!   earns no NOT_PRODUCIBLE row below (the tier is producible, just not
+//!   free): the honest per-service gap when it IS unavailable (docker
+//!   missing, daemon unreachable) is silence, not a blanket "docker has no
+//!   Observed tier" claim that would now be false
 //! - documents — Derived only (documents_domain.rs:158); content is never
 //!   read, so Inferred is impossible by design, and no tagging mechanism
 //!   exists, so Explicit is impossible today
@@ -67,12 +73,6 @@ const NOT_PRODUCIBLE: &[(&str, Tier, &str, &str)] = &[
         Tier::Observed,
         "remotes are Declared from .git/config (git_domain.rs); only the current branch is Observed (.git/HEAD). Whether a remote is reachable, or whether the local branch is ahead of/behind it, is never observed — unknown here by construction, not 'in sync'",
         "observe it yourself: `git fetch --dry-run` / `git status -sb`. Such a fact would be Observed-tier and is not established by archietect today",
-    ),
-    (
-        "docker",
-        Tier::Observed,
-        "the docker extractor reads Dockerfile/compose DECLARATIONS only (docker_domain.rs); no extractor observes live containers — whether a declared service is actually running is unknowable here by construction, not false",
-        "observe it yourself: `docker ps` / `docker inspect`. Such a fact would be Observed-tier and is not established by archietect today",
     ),
     (
         "documents",
@@ -364,7 +364,14 @@ mod tests {
     }
 
     #[test]
-    fn enabling_docker_swaps_disabled_entry_for_observed_tier_entry() {
+    fn enabling_docker_swaps_disabled_entry_for_nothing_since_observed_is_now_producible() {
+        // Was `..._swaps_disabled_entry_for_observed_tier_entry` — deliberate,
+        // disclosed behavior change: `docker_domain::scan_observed`
+        // (`archietect docker observe`) now makes the Observed tier
+        // genuinely producible for an enabled docker domain, just not
+        // automatically. A NOT_PRODUCIBLE row would be a stale, now-false
+        // claim, so enabling docker must swap the disabled entry for
+        // NOTHING, not for a replacement tier_not_producible row.
         let _g = HOME_LOCK.lock().unwrap();
         let root = fixture("docker-enabled");
         let home = root.join("home");
@@ -377,10 +384,10 @@ mod tests {
         let ks = kinds(&out);
 
         assert!(!ks.contains(&("domain_disabled".into(), "docker".into())), "{ks:?}");
-        let docker_tier = out["not_known"].as_array().unwrap().iter()
-            .find(|e| e["kind"] == "tier_not_producible" && e["domain"] == "docker")
-            .expect("docker Observed entry");
-        assert_eq!(docker_tier["tier"], "Observed");
+        assert!(
+            !ks.contains(&("tier_not_producible".into(), "docker".into())),
+            "docker's Observed tier is producible via scan_observed now — a tier_not_producible row would be stale, got: {ks:?}"
+        );
         assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "docker"));
 
         let _ = std::fs::remove_dir_all(&root);

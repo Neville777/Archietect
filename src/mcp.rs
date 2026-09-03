@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::{documents_domain, permissions, photos_domain, query, root, scan, system_db};
+use crate::{docker_domain, documents_domain, permissions, photos_domain, query, root, scan, system_db};
 
 fn tool_defs() -> Value {
     let mut tools = tool_defs_inner();
@@ -251,6 +251,11 @@ fn tool_defs_inner() -> Value {
                 "dir": { "type": "string", "description": "Absolute path to the directory to scan." },
                 "root": root_prop
             }, "required": ["dir"] }
+        },
+        {
+            "name": "docker_observe",
+            "description": "LIVE container state — the one tool in this server that shells out (to `docker compose ps --format json --all`), unlike every other tool here which only reads what's already indexed. For each root-level compose file, reports each DECLARED service's real, current state right now: running, or observed NOT running. Requires 'docker' to already be enabled via [domains.docker], same gate the declarative docker scan uses. Silent (no resources) for a compose file the command can't be run against — missing `docker`, unreachable daemon, timeout — never a guessed or stale state.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         }
     ])
 }
@@ -536,6 +541,19 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         Ok(v) => v,
                                         Err(e) => json!({ "error": e.to_string() }),
                                     }
+                                }
+                            }
+                            // LIVE — shells out to `docker compose ps`, see
+                            // tool_defs()'s description. Same
+                            // `permissions::domain_allowed` gate the
+                            // declarative docker scan uses.
+                            "docker_observe" => {
+                                match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                                    Ok(cfg) => {
+                                        let resources = docker_domain::scan_observed(&cfg, &root);
+                                        json!({ "resources": resources })
+                                    }
+                                    Err(e) => json!({ "error": e.to_string() }),
                                 }
                             }
                             other => json!({ "error": format!("unknown tool {other}") }),
