@@ -95,12 +95,32 @@ pub fn scan(root: &Path) -> Vec<Resource> {
             if !service.ports.is_empty() {
                 attrs.insert("ports".to_string(), service.ports.join(","));
             }
-            let what = match &service.image {
-                Some(image) => format!(
+            // `build_context`/`build_dockerfile`: what THIS service declares,
+            // verbatim, as written — no path resolution, no filesystem check,
+            // no identity claim. That's query.rs::built_from_relationships'
+            // job (it has the project root; this module doesn't concern
+            // itself with cross-domain identity at all, same separation
+            // git_domain.rs keeps from same_project_relationships).
+            if let Some(context) = &service.build_context {
+                attrs.insert("build_context".to_string(), context.clone());
+            }
+            if let Some(dockerfile) = &service.build_dockerfile {
+                attrs.insert("build_dockerfile".to_string(), dockerfile.clone());
+            }
+            let what = match (&service.image, &service.build_context) {
+                (Some(image), Some(context)) => format!(
+                    "service '{}' (image '{image}', build context '{context}') declared in {compose_name}",
+                    service.name
+                ),
+                (Some(image), None) => format!(
                     "service '{}' (image '{image}') declared in {compose_name}",
                     service.name
                 ),
-                None => format!("service '{}' declared in {compose_name}", service.name),
+                (None, Some(context)) => format!(
+                    "service '{}' (build context '{context}') declared in {compose_name}",
+                    service.name
+                ),
+                (None, None) => format!("service '{}' declared in {compose_name}", service.name),
             };
             resources.push(Resource {
                 id: Identity(format!("{repo_name}:{compose_name}:service:{}", service.name)),
@@ -179,6 +199,14 @@ struct ComposeService {
     name: String,
     image: Option<String>,
     ports: Vec<String>,
+    /// `build.context` — either the shorthand scalar form (`build: ./dir`)
+    /// or the block form's `context:` key. Verbatim, as written — see this
+    /// module's own doc for why no YAML-aware resolution happens here.
+    build_context: Option<String>,
+    /// `build.dockerfile`, block form only. Captured alongside `context`
+    /// since it's free to parse once already inside the `build:` block, but
+    /// not required by anything that consumes it yet.
+    build_dockerfile: Option<String>,
 }
 
 /// Hand-parses the common, simple block-style subset of a compose file's
@@ -221,8 +249,11 @@ fn compose_services(compose_path: &Path) -> Vec<ComposeService> {
             if !name.is_empty() && !name.contains(' ') {
                 let mut image = None;
                 let mut ports = Vec::new();
+                let mut build_context = None;
+                let mut build_dockerfile = None;
                 let mut j = i + 1;
                 let mut in_ports = false;
+                let mut in_build = false;
                 while j < lines.len() {
                     let inner = lines[j];
                     if inner.trim().is_empty() {
@@ -237,18 +268,53 @@ fn compose_services(compose_path: &Path) -> Vec<ComposeService> {
                     if let Some(val) = inner_trimmed.strip_prefix("image:") {
                         image = Some(strip_yaml_quotes(val.trim()));
                         in_ports = false;
+                        in_build = false;
                     } else if inner_trimmed == "ports:" {
                         in_ports = true;
+                        in_build = false;
                     } else if let Some(item) = inner_trimmed.strip_prefix("- ") {
                         if in_ports {
                             ports.push(strip_yaml_quotes(item.trim()));
                         }
+                    } else if in_build && inner_trimmed.strip_prefix("context:").is_some() {
+                        let val = inner_trimmed.strip_prefix("context:").unwrap().trim();
+                        if !val.is_empty() {
+                            build_context = Some(strip_yaml_quotes(val));
+                        }
+                    } else if in_build && inner_trimmed.strip_prefix("dockerfile:").is_some() {
+                        let val = inner_trimmed.strip_prefix("dockerfile:").unwrap().trim();
+                        if !val.is_empty() {
+                            build_dockerfile = Some(strip_yaml_quotes(val));
+                        }
+                    } else if inner_trimmed == "build:" {
+                        // Block form: `context:`/`dockerfile:` follow, nested
+                        // one level deeper — matches `ports:`'s own list-item
+                        // pattern above, same flat-state-machine style.
+                        in_build = true;
+                        in_ports = false;
+                    } else if let Some(val) = inner_trimmed.strip_prefix("build:") {
+                        // Shorthand scalar form: `build: ./some/dir` IS the
+                        // context directly — compose spec allows this as an
+                        // alternative to the block form.
+                        let val = val.trim();
+                        if !val.is_empty() {
+                            build_context = Some(strip_yaml_quotes(val));
+                        }
+                        in_ports = false;
+                        in_build = false;
                     } else if inner_trimmed.ends_with(':') {
                         in_ports = false; // moved to some other key we don't parse
+                        in_build = false;
                     }
                     j += 1;
                 }
-                services.push(ComposeService { name: name.to_string(), image, ports });
+                services.push(ComposeService {
+                    name: name.to_string(),
+                    image,
+                    ports,
+                    build_context,
+                    build_dockerfile,
+                });
                 i = j;
                 continue;
             }
@@ -365,6 +431,32 @@ mod tests {
             !scan_if_allowed(&cfg, &root).is_empty(),
             "an explicit project-level enable must permit scanning"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_captures_build_context_block_form_and_shorthand() {
+        let root = tmp_project("build-context");
+        std::fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  api:\n    build:\n      context: ./backend\n      dockerfile: Dockerfile.prod\n  worker:\n    build: ./worker-src\n  cache:\n    image: redis:7\n",
+        )
+        .unwrap();
+
+        let resources = scan(&root);
+        let services: Vec<_> = resources.iter().filter(|r| r.kind == "docker_service").collect();
+        assert_eq!(services.len(), 3, "expected three services, got: {services:?}");
+
+        let api = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("api")).unwrap();
+        assert_eq!(api.attributes.get("build_context").map(String::as_str), Some("./backend"));
+        assert_eq!(api.attributes.get("build_dockerfile").map(String::as_str), Some("Dockerfile.prod"));
+
+        let worker = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("worker")).unwrap();
+        assert_eq!(worker.attributes.get("build_context").map(String::as_str), Some("./worker-src"), "shorthand `build: ./dir` form must be captured as the context");
+
+        let cache = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("cache")).unwrap();
+        assert!(cache.attributes.get("build_context").is_none(), "a plain image: service must have no build_context");
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

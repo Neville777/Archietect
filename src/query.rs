@@ -593,6 +593,8 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         .map(|(n, _)| n)
         .take(25)
         .collect();
+    let mut relationships = same_project_relationships(idx);
+    relationships.extend(built_from_relationships(idx));
     json!({
         "root": idx.root,
         "files_scanned": idx.files_scanned,
@@ -603,7 +605,7 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         "structural_coverage": crate::structural::coverage_report(idx, graph),
         "git": git_status_section(idx),
         "docker": docker_status_section(idx),
-        "relationships": same_project_relationships(idx),
+        "relationships": relationships,
         "note": "'never observed in use' is evidence of absence at USED tier only — access styles v0 doesn't parse (raw drivers, GraphQL resolvers, services in other repos) are invisible. Stated so it cannot be mistaken for proof of death. See structural_coverage for which languages/frameworks in THIS repo Archietect can actually see structurally.",
     })
 }
@@ -654,6 +656,70 @@ fn same_project_relationships(idx: &Index) -> Vec<crate::resource::Relationship>
             ),
         },
     }]
+}
+
+/// The second real cross-domain identity link — one step more specific than
+/// `same_project_relationships`'s bare same-root co-location. A compose
+/// service's `build.context` (docker_domain.rs, captured verbatim, no
+/// resolution attempted there — see its own doc) names a REAL FILESYSTEM
+/// PATH, not an identifier: whether it resolves to a genuine, existing
+/// directory under this project's root is a structural fact check, exactly
+/// like `Import::relationship` (structural.rs) resolving a relative import
+/// path — not a comparison of the service's name, image tag, or any other
+/// string against anything. No `names_concept`/string-equality of any kind
+/// appears in this function; only path resolution and existence checks.
+///
+/// Uses real filesystem access (`canonicalize`) rather than the lexical-only
+/// resolution `Import::relationship` uses for module specifiers — correct
+/// here because a compose build context IS a real path on disk today, not a
+/// virtual module specifier resolved by a bundler/runtime.
+///
+/// Emits nothing (silence, never a guess) when: no `build_context` is
+/// declared; the context doesn't exist as a real directory; the context
+/// resolves to a path OUTSIDE this project's root (`../elsewhere` — never
+/// claim identity across an out-of-scope path); or the context IS the
+/// project's own root (`context: .` or equivalent) — that trivial case is
+/// already fully covered by `same_project_relationships` above, so emitting
+/// a second, redundant relationship for it would be noise, not a new fact.
+fn built_from_relationships(idx: &Index) -> Vec<crate::resource::Relationship> {
+    let root = std::path::Path::new(&idx.root);
+    let Ok(canon_root) = root.canonicalize() else { return Vec::new() };
+    let cfg = crate::permissions::default_global_config_path()
+        .and_then(|p| crate::permissions::load(&p, root))
+        .unwrap_or_default();
+    if !crate::permissions::domain_allowed(&cfg, "docker") {
+        return Vec::new();
+    }
+    let resources = crate::docker_domain::scan_if_allowed(&cfg, root);
+    let mut rels = Vec::new();
+    for r in resources.iter().filter(|r| r.kind == "docker_service") {
+        let Some(context) = r.attributes.get("build_context") else { continue };
+        let Ok(canon_candidate) = root.join(context).canonicalize() else { continue };
+        if !canon_candidate.starts_with(&canon_root) {
+            continue; // escapes root — never claim identity across it
+        }
+        if canon_candidate == canon_root {
+            continue; // trivial "this is the project root" — same_project_as already covers it
+        }
+        if !canon_candidate.is_dir() {
+            continue;
+        }
+        let Ok(relative) = canon_candidate.strip_prefix(&canon_root) else { continue };
+        let relative_display = relative.display().to_string();
+        rels.push(crate::resource::Relationship {
+            from: r.id.clone(),
+            kind: "built_from".to_string(),
+            to: crate::resource::Identity(relative_display.clone()),
+            evidence: Evidence {
+                tier: Tier::Declared,
+                what: format!(
+                    "'{}' declares build.context '{}' in {}, which resolves to the real, existing directory '{}' under this project's root",
+                    r.id.0, context, r.location.file, relative_display
+                ),
+            },
+        });
+    }
+    rels
 }
 
 /// The first real (non-test) call site for `git_domain`'s gated scan — see
@@ -1391,5 +1457,126 @@ mod impact_structural_only_tests {
         assert!(out["declared_dependents"].as_array().unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod built_from_relationship_tests {
+    use super::*;
+
+    fn tmp_project(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir()
+            .join(format!("archietect-built-from-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// A real docker-compose service whose build.context names a real,
+    /// existing, DISTINCT subdirectory must produce a `built_from`
+    /// relationship, alongside the unaffected `same_project_as` link.
+    #[test]
+    fn built_from_relationship_appears_for_a_real_distinct_build_context() {
+        let root = tmp_project("real-context");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::create_dir_all(root.join("backend")).unwrap();
+        std::fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  api:\n    build:\n      context: ./backend\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+
+        let same_project = rels.iter().find(|r| r["kind"] == "same_project_as");
+        assert!(same_project.is_none(), "sanity: no git repo here, so same_project_as legitimately absent — this fixture isolates built_from");
+
+        let built_from = rels.iter().find(|r| r["kind"] == "built_from").expect("expected a built_from relationship");
+        assert_eq!(built_from["to"], "backend");
+        assert_eq!(built_from["evidence"]["tier"], "Declared");
+        let what = built_from["evidence"]["what"].as_str().unwrap();
+        assert!(what.contains("./backend"), "evidence must cite the literal declared context, got: {what}");
+        assert!(what.contains("backend"), "evidence must cite the resolved directory, got: {what}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A build context that does not exist on disk must produce NO
+    /// relationship — silence, never a guess.
+    #[test]
+    fn no_relationship_when_build_context_does_not_exist() {
+        let root = tmp_project("missing-context");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  api:\n    build:\n      context: ./does-not-exist\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert!(
+            rels.iter().all(|r| r["kind"] != "built_from"),
+            "a non-existent build context must never produce a relationship, got: {rels:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `context: .` (the trivial "this service builds from the project's
+    /// own root" case) must NOT produce a built_from relationship — that
+    /// fact is already fully covered by same_project_as; a second,
+    /// redundant relationship for it would be noise, not a new fact.
+    #[test]
+    fn no_built_from_relationship_for_trivial_root_context() {
+        let root = tmp_project("root-context");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  api:\n    build:\n      context: .\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert!(
+            rels.iter().all(|r| r["kind"] != "built_from"),
+            "context: . (the project's own root) must not produce a redundant built_from relationship, got: {rels:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// docker disabled (default, no config) must never produce a
+    /// built_from relationship, even with a real, resolvable build context
+    /// on disk — matches docker_domain.rs's own default-disabled contract.
+    #[test]
+    fn no_built_from_relationship_when_docker_domain_disabled() {
+        let root = tmp_project("docker-disabled");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::create_dir_all(root.join("backend")).unwrap();
+        std::fs::write(
+            root.join("docker-compose.yml"),
+            "services:\n  api:\n    build:\n      context: ./backend\n",
+        )
+        .unwrap();
+        // No archietect.toml at all — docker defaults to disabled.
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        assert!(
+            rels.iter().all(|r| r["kind"] != "built_from"),
+            "docker disabled by default must yield no built_from relationship, got: {rels:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
