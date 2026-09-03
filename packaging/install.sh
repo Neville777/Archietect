@@ -121,10 +121,19 @@ ARCHIETECT_MCP_CMD="$INSTALL_DIR/archietect"
 # entire install on network conditions that have nothing to do with
 # archietect. Found by actually timing a rerun: `list` hung past two
 # minutes in this environment, `get` returns instantly either way.
+# `--scope user` is REQUIRED, not optional: the default `--scope local`
+# registers private to whatever directory this installer happened to be
+# run from, not globally — found by installing, then checking from a
+# second, unrelated directory and getting "No MCP server named archietect"
+# despite the install script having just printed "registered." An install
+# script inherently runs from an arbitrary cwd, so silently defaulting to
+# per-directory scope would make this feature not actually work for
+# anyone whose install command wasn't run from inside a project they
+# intended to use archietect on.
 if command -v claude >/dev/null 2>&1; then
     if claude mcp get archietect >/dev/null 2>&1; then
         : # already registered — nothing to do
-    elif claude mcp add archietect -- "$ARCHIETECT_MCP_CMD" mcp >/dev/null 2>&1; then
+    elif claude mcp add --scope user archietect -- "$ARCHIETECT_MCP_CMD" mcp >/dev/null 2>&1; then
         echo "archietect: registered as an MCP server for Claude Code (every project, automatically)"
     fi
 fi

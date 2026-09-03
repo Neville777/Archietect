@@ -197,9 +197,11 @@ cargo install archietect
 
 `cargo install` has no post-install hook, so the automatic MCP
 registration above is specific to the curl script — run it once
-yourself here: `claude mcp add archietect -- "$(which archietect)" mcp`.
-Then `cd` into a project and run `archietect` — same first-run
-auto-index as above.
+yourself here: `claude mcp add --scope user archietect -- "$(which archietect)" mcp`
+(`--scope user` matters — the default scope registers private to
+whatever directory you happen to run this from, not globally). Then
+`cd` into a project and run `archietect` — same first-run auto-index as
+above.
 
 **Option C — build from source** (needed for `packaging/onboard.sh`'s
 one-command flow, the systemd/launchd daemon install, or running the test

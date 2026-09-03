@@ -108,20 +108,31 @@ fi
 echo "== 3/8  MCP registration (global — every project reuses this one entry) =="
 MCP_OK=0
 if command -v claude >/dev/null 2>&1; then
-    if claude mcp list 2>/dev/null | grep -q "^archietect:"; then
+    # `--scope user` is required for this to actually BE global — the
+    # default `--scope local` registers private to whichever directory
+    # this script happens to be run from, contradicting this exact step's
+    # own "every project reuses this" label. Found by actually checking
+    # from a second, unrelated directory after a plain `claude mcp add`,
+    # not by reading `claude mcp add --help` and assuming the default was
+    # sane. `mcp get` (not `mcp list`) for the same reason as elsewhere in
+    # this project: `list` runs a live health check against every
+    # configured server, including unrelated remote ones, and can stall
+    # this step on network conditions that have nothing to do with
+    # archietect.
+    if claude mcp get archietect >/dev/null 2>&1; then
         echo "   already registered: archietect -> $BIN mcp"
         MCP_OK=1
     else
-        if claude mcp add archietect -- "$BIN" mcp >/dev/null 2>&1; then
+        if claude mcp add --scope user archietect -- "$BIN" mcp >/dev/null 2>&1; then
             echo "   registered: archietect -> $BIN mcp"
             MCP_OK=1
         else
-            echo "   registration failed — register manually with: claude mcp add archietect -- $BIN mcp"
+            echo "   registration failed — register manually with: claude mcp add --scope user archietect -- $BIN mcp"
         fi
     fi
 else
     echo "   'claude' CLI not found on PATH — skipping; register manually with:"
-    echo "     claude mcp add archietect -- $BIN mcp"
+    echo "     claude mcp add --scope user archietect -- $BIN mcp"
 fi
 
 echo "== 4/8  agent instructions =="
