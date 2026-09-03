@@ -98,13 +98,19 @@ if command -v "$INSTALL_DIR/archietect" >/dev/null 2>&1 || "$INSTALL_DIR/archiet
     echo "archietect: $("$INSTALL_DIR/archietect" --version 2>/dev/null || echo installed)"
 fi
 
-# One-time, global, idempotent, best-effort MCP registration — attempted
-# for EVERY MCP-speaking client this script has a verified mechanism for,
-# not just one. Each client's own real command/config format was checked
-# live before being written here (see each block's own comment) rather
-# than assumed from another client's shape. A failure in any one of these
-# never fails the install itself, and never blocks the others from being
-# tried.
+# One-time, global, idempotent, best-effort MCP registration — but
+# deliberately capped in SCOPE, not just in what's currently written: only
+# for a client with its own OFFICIAL CLI COMMAND to add a server. That
+# command is a stable, versioned public API that fails loudly if this
+# script gets it wrong. A client with no CLI — only a proprietary config
+# file to hand-edit — does NOT get a bespoke JSON-merge guessed at here,
+# because that guess breaks silently the moment that file's schema drifts,
+# and every new AI tool that appears would need its own hand-verified
+# special case forever. That doesn't scale to the dozens of MCP clients
+# that already exist, let alone however many show up next. The one thing
+# that DOES scale is printing the actual universal fact — archietect
+# speaks MCP over stdio — and letting every such tool's own (however it
+# works) config step consume that. See the generic fallback line below.
 ARCHIETECT_MCP_CMD="$INSTALL_DIR/archietect"
 
 # Claude Code — `claude mcp add` exits 1 if already registered (checked
@@ -140,51 +146,14 @@ if command -v gemini >/dev/null 2>&1; then
     fi
 fi
 
-# Cursor — has no CLI for this at all (confirmed against cursor.com/docs/mcp:
-# the only documented paths are one-click marketplace install or hand-editing
-# ~/.cursor/mcp.json — no `cursor mcp add`). Detected by the presence of
-# ~/.cursor/ rather than by running the `cursor` binary, which launches the
-# GUI app itself rather than behaving as a scriptable CLI. Written as a
-# real JSON merge (jq preferred, python3 fallback — same dual-path already
-# used for Claude's settings.json elsewhere in this project), never a
-# blind overwrite of a file that may hold a human's other servers.
-if [ -d "$HOME/.cursor" ] && ! grep -q "\"archietect\"" "$HOME/.cursor/mcp.json" 2>/dev/null; then
-    CURSOR_MCP_JSON="$HOME/.cursor/mcp.json"
-    if command -v jq >/dev/null 2>&1; then
-        TMP_MCP="$(mktemp)"
-        if [ -f "$CURSOR_MCP_JSON" ]; then
-            EXISTING="$(cat "$CURSOR_MCP_JSON")"
-        else
-            EXISTING='{}'
-        fi
-        if echo "$EXISTING" | jq --arg cmd "$ARCHIETECT_MCP_CMD" \
-            '.mcpServers = ((.mcpServers // {}) + {"archietect": {"command": $cmd, "args": ["mcp"]}})' \
-            > "$TMP_MCP" 2>/dev/null; then
-            mv "$TMP_MCP" "$CURSOR_MCP_JSON"
-            echo "archietect: registered as an MCP server for Cursor (every project, automatically)"
-        else
-            rm -f "$TMP_MCP"
-        fi
-    elif command -v python3 >/dev/null 2>&1; then
-        python3 - "$CURSOR_MCP_JSON" "$ARCHIETECT_MCP_CMD" <<'PYEOF' 2>/dev/null && echo "archietect: registered as an MCP server for Cursor (every project, automatically)"
-import json, sys
-path, cmd = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as fh:
-        data = json.load(fh)
-except (FileNotFoundError, json.JSONDecodeError):
-    data = {}
-data.setdefault("mcpServers", {})["archietect"] = {"command": cmd, "args": ["mcp"]}
-with open(path, "w") as fh:
-    json.dump(data, fh, indent=2)
-    fh.write("\n")
-PYEOF
-    fi
-fi
-
 echo
-echo "archietect: for any other MCP-speaking tool (Codex CLI, Windsurf, ...), the stdio command is:"
+echo "archietect speaks MCP over stdio — that's the one universal fact every"
+echo "MCP-speaking tool can use, regardless of how it registers a server:"
 echo "  $ARCHIETECT_MCP_CMD mcp"
+echo "(Claude Code and Gemini CLI above were done for you, via their own"
+echo "official CLI commands. Cursor, Kiro, and anything else with only a"
+echo "config file to hand-edit: paste the command above into it yourself —"
+echo "see that tool's own MCP docs for the exact file/format.)"
 echo
 echo "next: cd into a project and run: archietect"
 echo "  (first run there indexes it automatically — no separate init step)"
