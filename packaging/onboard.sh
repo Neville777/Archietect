@@ -117,8 +117,17 @@ echo "== 4/7  agent instructions =="
 # Registering the MCP server makes archietect *available*; it doesn't make
 # an agent reach for it instead of grepping/reading the tree by hand — an
 # agent that isn't told to check first, won't. Non-destructive: append-only,
-# marked so a re-run never duplicates the block, and an existing AGENTS.md/
-# CLAUDE.md is never overwritten past that one marked section.
+# marked so a re-run never duplicates the block, and an existing AGENTS.md
+# is never overwritten past that one marked section.
+#
+# AGENTS.md only, deliberately — not also a CLAUDE.md. The content is
+# generic (no Claude-specific wording at all), and AGENTS.md is already the
+# vendor-neutral convention several tools read directly (including Codex).
+# Writing a second, identically-worded CLAUDE.md file gave a Claude-only
+# impression to a project that in fact has nothing Claude-specific in it —
+# found by a direct question about exactly that. The Claude-SPECIFIC piece
+# of this script is the separate, explicitly opt-in --claude-hook flag
+# below, which is honestly named for what it is.
 AGENT_INSTRUCTIONS='<!-- archietect:agent-instructions:begin -->
 ## Before you create something new
 
@@ -154,7 +163,6 @@ write_agent_instructions() {
     echo "   written: $f"
 }
 write_agent_instructions "$TARGET/AGENTS.md"
-write_agent_instructions "$TARGET/CLAUDE.md"
 
 echo "== 5/7  commit gate (pre-commit hook) =="
 # The instructions above are advisory — an agent that doesn't feel like
@@ -249,8 +257,10 @@ CLAUDE_HOOK_STATE="not installed"
 if [[ "$CLAUDE_HOOK_FLAG" == "yes" ]]; then
     HOOKS_DIR="$TARGET/.claude/hooks"
     GUARD_SCRIPT="$HOOKS_DIR/archietect-guard.sh"
+    BOUNDARY_SCRIPT="$HOOKS_DIR/archietect-boundary.sh"
     SETTINGS_FILE="$TARGET/.claude/settings.json"
-    HOOK_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-guard.sh'
+    GUARD_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-guard.sh'
+    BOUNDARY_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-boundary.sh'
     mkdir -p "$HOOKS_DIR"
 
     sed -e "s|__ARCHIETECT_BIN__|${BIN}|g" > "$GUARD_SCRIPT" <<'GUARD'
@@ -290,26 +300,91 @@ esac
 GUARD
     chmod +x "$GUARD_SCRIPT"
 
-    if [[ -f "$SETTINGS_FILE" ]] && grep -q "archietect-guard.sh" "$SETTINGS_FILE" 2>/dev/null; then
+    # The second hook: the Claude Code ADAPTER for archietect's permission
+    # boundary — not the boundary itself. The boundary
+    # (permissions::check_resource, src/permissions.rs) is vendor-neutral
+    # and already reachable by any tool via CLI/REST/MCP; this script's only
+    # job is translating Claude Code's specific pre-action moment
+    # (a PreToolUse hook) into one `archietect permissions-check` call and
+    # translating its {allowed, reason} back into Claude Code's specific
+    # blocking mechanism (stderr + exit 2). No denial logic is reimplemented
+    # here — an adapter is plumbing, not policy, so a Cursor/Codex/future
+    # adapter is a new translation of the same call, not a re-design. See
+    # SYSTEM_MEMORY.md's "Instruction files vs. memory vs. enforcement" for
+    # the full one-bag-many-adapters shape this fits into. CLAUDE.md can be
+    # forgotten, misread, or skipped; this cannot, because it runs before
+    # Claude's Read/Edit/Write is allowed to land, and a denial here is not
+    # a request. Fails open on anything ambiguous (missing jq/binary, no
+    # archietect.db, a permissions-check error) — this hook exists to
+    # enforce an ESTABLISHED denial, never to become a general nuisance that
+    # blocks on uncertainty. Bash's own arbitrary shell commands are outside
+    # this hook's reach on purpose: a path buried inside a shell pipeline
+    # isn't reliably parseable, so this covers Read/Edit/Write only and does
+    # not claim to cover Bash.
+    sed -e "s|__ARCHIETECT_BIN__|${BIN}|g" > "$BOUNDARY_SCRIPT" <<'BOUNDARY'
+#!/bin/bash
+# archietect:managed — the Claude Code ADAPTER for archietect's permission
+# boundary (see onboard.sh's comment above this heredoc, and
+# SYSTEM_MEMORY.md's "Instruction files vs. memory vs. enforcement"). This
+# script owns zero policy: it only translates a PreToolUse call into
+# `archietect permissions-check` and translates the JSON answer into Claude
+# Code's own block signal (stderr + exit 2). Any other tool's adapter
+# should look like this shape, translated to that tool's own mechanism.
+ARCHIETECT_BIN="__ARCHIETECT_BIN__"
+INPUT="$(cat)"
+command -v jq >/dev/null 2>&1 || exit 0
+FILE_PATH="$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')"
+[ -n "$FILE_PATH" ] || exit 0
+
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
+BIN_TO_USE="$ARCHIETECT_BIN"
+[ -x "$BIN_TO_USE" ] || BIN_TO_USE="archietect"
+command -v "$BIN_TO_USE" >/dev/null 2>&1 || [ -x "$BIN_TO_USE" ] || exit 0
+
+DECISION_JSON="$("$BIN_TO_USE" permissions-check --path "$FILE_PATH" --domain code --root "$PROJECT_ROOT" 2>/dev/null)" || exit 0
+# NOT `.allowed // empty` — jq's `//` treats JSON `false` as falsy, so a
+# real denial (allowed: false) silently became the empty string here and
+# this hook fail-opened on every single denial it existed to catch. Found
+# live by actually running the hook against a real .ssh path, not by
+# reading the jq expression and assuming it did what it looked like it did.
+ALLOWED="$(echo "$DECISION_JSON" | jq -r 'if has("allowed") then (.allowed | tostring) else "true" end' 2>/dev/null)"
+REASON="$(echo "$DECISION_JSON" | jq -r '.reason // empty' 2>/dev/null)"
+[ "$ALLOWED" = "false" ] || exit 0
+
+echo "archietect: access to '$FILE_PATH' is denied by the permission boundary — $REASON. This is not a request; the operation is rejected." >&2
+exit 2
+BOUNDARY
+    chmod +x "$BOUNDARY_SCRIPT"
+
+    if [[ -f "$SETTINGS_FILE" ]] && grep -q "archietect-guard.sh" "$SETTINGS_FILE" 2>/dev/null && grep -q "archietect-boundary.sh" "$SETTINGS_FILE" 2>/dev/null; then
         echo "   already present: $SETTINGS_FILE"
         CLAUDE_HOOK_STATE="installed"
     elif [[ -f "$SETTINGS_FILE" ]]; then
         if command -v jq >/dev/null 2>&1; then
             TMP_SETTINGS="$(mktemp)"
-            jq --arg cmd "$HOOK_CMD" \
-                '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": "Write", "hooks": [{"type": "command", "command": $cmd}]}])' \
-                "$SETTINGS_FILE" > "$TMP_SETTINGS" && mv "$TMP_SETTINGS" "$SETTINGS_FILE"
+            jq --arg guard "$GUARD_CMD" --arg boundary "$BOUNDARY_CMD" '
+                .hooks.PreToolUse = (
+                    (.hooks.PreToolUse // [])
+                    + (if any(.hooks.PreToolUse[]?; .hooks[]?.command == $guard) then [] else
+                        [{"matcher": "Write", "hooks": [{"type": "command", "command": $guard}]}] end)
+                    + (if any(.hooks.PreToolUse[]?; .hooks[]?.command == $boundary) then [] else
+                        [{"matcher": "Read|Edit|Write", "hooks": [{"type": "command", "command": $boundary}]}] end)
+                )
+            ' "$SETTINGS_FILE" > "$TMP_SETTINGS" && mv "$TMP_SETTINGS" "$SETTINGS_FILE"
             echo "   updated: $SETTINGS_FILE"
             CLAUDE_HOOK_STATE="installed"
         elif command -v python3 >/dev/null 2>&1; then
-            python3 - "$SETTINGS_FILE" "$HOOK_CMD" <<'PYEOF'
+            python3 - "$SETTINGS_FILE" "$GUARD_CMD" "$BOUNDARY_CMD" <<'PYEOF'
 import json, sys
-path, cmd = sys.argv[1], sys.argv[2]
+path, guard_cmd, boundary_cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as fh:
     data = json.load(fh)
-data.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
-    {"matcher": "Write", "hooks": [{"type": "command", "command": cmd}]}
-)
+pre = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
+existing_cmds = {h.get("command") for entry in pre for h in entry.get("hooks", [])}
+if guard_cmd not in existing_cmds:
+    pre.append({"matcher": "Write", "hooks": [{"type": "command", "command": guard_cmd}]})
+if boundary_cmd not in existing_cmds:
+    pre.append({"matcher": "Read|Edit|Write", "hooks": [{"type": "command", "command": boundary_cmd}]})
 with open(path, "w") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
@@ -318,8 +393,9 @@ PYEOF
             CLAUDE_HOOK_STATE="installed"
         else
             echo "   $SETTINGS_FILE already exists and neither jq nor python3 is available to merge safely — skipping."
-            echo "   add this manually to its \"hooks\".\"PreToolUse\" array:"
-            echo "     {\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$HOOK_CMD\"}]}"
+            echo "   add these manually to its \"hooks\".\"PreToolUse\" array:"
+            echo "     {\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$GUARD_CMD\"}]}"
+            echo "     {\"matcher\": \"Read|Edit|Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$BOUNDARY_CMD\"}]}"
         fi
     else
         cat > "$SETTINGS_FILE" <<EOF
@@ -331,7 +407,16 @@ PYEOF
         "hooks": [
           {
             "type": "command",
-            "command": "$HOOK_CMD"
+            "command": "$GUARD_CMD"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$BOUNDARY_CMD"
           }
         ]
       }
@@ -443,7 +528,7 @@ echo
 echo "Integrations"
 echo "  ✓ CLI"
 echo "  $(mcp_mark) MCP"
-echo "  ✓ Agent instructions (AGENTS.md / CLAUDE.md)"
+echo "  ✓ Agent instructions (AGENTS.md)"
 echo "  $(git_hook_mark) Commit gate (pre-commit hook)"
 echo "  $(claude_hook_mark) Claude Code edit gate"
 echo "  $(daemon_mark) Watch daemon"

@@ -56,7 +56,7 @@ check "readiness report printed"      "grep -q 'ARCHIETECT READY' \"$TMP/run1.lo
 echo
 echo "== Test 1b: agent instructions written =="
 check "AGENTS.md written"                  "grep -q 'archietect:agent-instructions:begin' \"$PROJECT/AGENTS.md\""
-check "CLAUDE.md written"                  "grep -q 'archietect:agent-instructions:begin' \"$PROJECT/CLAUDE.md\""
+check "no CLAUDE.md written (AGENTS.md only — see onboard.sh's own comment)" "[[ ! -f \"$PROJECT/CLAUDE.md\" ]]"
 
 echo
 echo "== Test 1c: commit gate actually blocks a real duplicate =="
@@ -89,6 +89,21 @@ REWRITE_RC=0
 CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/Widget.ts\"}}' | \"$GUARD\"" >/dev/null 2>&1 || REWRITE_RC=$?
 check "guard allows rewriting a file that already exists" "[[ \"$REWRITE_RC\" -eq 0 ]]"
 rm -f "$PROJECT/Widget.ts"
+
+echo
+echo "== Test 1e: Claude Code boundary hook enforces the permission boundary =="
+BOUNDARY="$PROJECT/.claude/hooks/archietect-boundary.sh"
+check "boundary script installed"      "[[ -x \"$BOUNDARY\" ]]"
+check "settings.json references it"    "grep -q archietect-boundary.sh \"$PROJECT/.claude/settings.json\""
+DENY_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/.ssh/id_rsa\"}}' | \"$BOUNDARY\"" >/dev/null 2>&1 || DENY_RC=$?
+check "boundary blocks a .ssh path (exit 2)" "[[ \"$DENY_RC\" -eq 2 ]]"
+DENY2_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/config/secrets.json\"}}' | \"$BOUNDARY\"" >/dev/null 2>&1 || DENY2_RC=$?
+check "boundary blocks a credential-shaped filename (exit 2)" "[[ \"$DENY2_RC\" -eq 2 ]]"
+ALLOW2_RC=0
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/src/main.rs\"}}' | \"$BOUNDARY\"" >/dev/null 2>&1 || ALLOW2_RC=$?
+check "boundary allows a plain source path (exit 0)" "[[ \"$ALLOW2_RC\" -eq 0 ]]"
 
 echo
 echo "== Test 2: existing architecture memory survives re-onboarding =="

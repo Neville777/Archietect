@@ -318,13 +318,57 @@ Two consequences, both already partly real in this codebase:
    `Write` lands) turns "please don't touch `production.env`" into an
    operation that is rejected. The AI does not get a vote.
 
-This is why the integration deliberately narrows to **Claude Code** rather
-than staying vendor-generic: advisory text can be generic precisely because
-it is ignorable; enforcement has to hook into one tool's real execution
-path, and Claude Code's hooks are that path. `CLAUDE.md` still tells the AI
-what you want. Archietect tells it what the world establishes — and, where
-hooked in, what it is structurally allowed to do. Neither replaces the
-other; they answer different questions.
+**Correction, made during implementation, kept here so the mistake doesn't
+get repeated:** an earlier draft of this section said the boundary
+integration "narrows to Claude Code." That conflated two different things
+that must stay separate:
+
+- **The decision is universal.** `permissions::check_resource` and its
+  exposure as CLI (`archietect permissions-check`), REST
+  (`GET /permissions/check`, no auth), and MCP (`permissions_check`) are not
+  Claude-specific at all — any tool that can run a subprocess, make an HTTP
+  call, or speak MCP already gets the same evidence-backed allow/deny/reason
+  today. Claude, Cursor, Codex, a CI job, a human at a terminal: same
+  question, same answer, same boundary.
+- **Only enforcement — making a denial actually stop an operation inside one
+  specific tool — is per-tool, and it has to be, because that's an adapter
+  into whatever pre-action mechanism that tool happens to expose (Claude
+  Code's `PreToolUse` hooks; Cursor's own rules mechanism; whatever a future
+  tool ships). There is no vendor-neutral hook format to target, so
+  pretending enforcement could be generic would mean it stays advisory
+  everywhere — the exact CLAUDE.md-can-be-ignored problem this section
+  exists to move past.
+
+So the right shape is: **one bag, one boundary, many thin adapters** —
+
+```
+                         ARCHIETECT
+                    permissions::check_resource
+                             │
+                  CLI · REST · MCP (vendor-neutral)
+                             │
+          ┌──────────────────┼──────────────────┐
+          │                  │                  │
+   Claude Code          Cursor              (future tool)
+     adapter            adapter                adapter
+   (PreToolUse           (its own              (its own
+    hook, built)      rules mechanism)      mechanism)
+```
+
+An adapter's entire job, and nothing more: translate that tool's
+"about to act" moment into one `permissions-check`-shaped call, and
+translate the returned `{allowed, reason}` into whatever that tool's own
+blocking mechanism is. An adapter must never reimplement denial logic
+itself (no adapter should have its own idea of what `.ssh` means) — it is
+plumbing, not policy. The Claude Code adapter (`packaging/onboard.sh
+--claude-hook`'s `archietect-boundary.sh`) is the first instance of this
+shape, not a Claude-specific design — a Cursor or Codex adapter is future
+work following the same contract, not a re-design.
+
+`CLAUDE.md`/`AGENTS.md` still tell an AI what you want. Archietect tells it
+what the world establishes — and, wherever an adapter exists, what it is
+structurally allowed to do. Neither replaces the other; they answer
+different questions.
 
 ## Where the laws model actually stands (correction from design discussion)
 
