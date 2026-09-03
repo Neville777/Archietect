@@ -244,13 +244,22 @@ Full command reference:
 | `archietect doctor --root DIR` | repository summary for someone who just cloned it |
 | `archietect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
 | `archietect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
-| `archietect history --root DIR [TERM]` | the architectural timeline (what git can't say) |
+| `archietect verdicts --root DIR` | every declared concept bucketed by verdict (ACTIVE vs DECLARED_ONLY), project-wide |
+| `archietect register --root DIR [--since-last]` | the map of the bag: what's known, not known, and why — see below |
+| `archietect history --root DIR [TERM] [--digest]` | the architectural timeline (what git can't say); `--digest` narrates it instead of listing raw events |
+| `archietect concept-at --root DIR TERM --version N` | episodic replay: what `TERM` looked like at a past architecture version (needs `watch` to have run) |
+| `archietect seed --root DIR [--write] [--proposed-by WHO]` | cold-start fix: propose `[[decision]]` entries from README.md bullet points, verbatim |
+| `archietect history-archive --root DIR --before-days N` | move old events into a permanent archive file — never deletes |
 | `archietect ci` | pipe a diff in, get an exit code out |
 | `archietect laws` | the language specification, from `laws/*.toml` |
 | `archietect watch --root DIR` | daemon: observe → notify, never act |
 | `archietect serve --port 7373` | REST API (127.0.0.1, read-only except `/proposal/*`) |
 | `archietect mcp` | MCP server over stdio |
 | `archietect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
+| `archietect permissions[-check] --root DIR` | the domain permission boundary, and whether one path is allowed |
+| `archietect docker observe --root DIR` | LIVE container state via `docker compose ps` — explicit, opt-in, never automatic |
+| `archietect documents\|photos scan --root DIR --dir PATH` | the unstructured domains — metadata only, content never read |
+| `archietect system register\|list\|status\|query TERM` | the cross-project registry (`~/.archietect/system.db`) |
 
 ### Clients: the same engine, three transports
 
