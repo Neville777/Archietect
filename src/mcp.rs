@@ -111,6 +111,11 @@ fn tool_defs_inner() -> Value {
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
+            "name": "verdicts",
+            "description": "Every declared concept bucketed by verdict — ACTIVE (declared and observably used) vs DECLARED_ONLY (declared, never observed in use) — with counts, instead of querying one concept name at a time. UNKNOWN and ABSENT are deliberately not listable here: those describe a search TERM's outcome, not a property a declared concept holds on its own.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
             "name": "status",
             "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, concepts declared but never observed in use, and structural_coverage (which languages/frameworks in THIS repo Archietect can actually see) — with an honest note about what the scan cannot see.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -333,6 +338,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
+                            "verdicts" => query::verdicts(&idx),
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),
                             "tour" => query::tour(&idx, &graph),

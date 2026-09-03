@@ -615,6 +615,40 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
     })
 }
 
+/// Confidence as a structured, filterable field instead of prose buried in
+/// one concept's `verdict` string — "show me every DECLARED_ONLY concept in
+/// this project" without querying each name individually. Deliberately only
+/// ACTIVE and DECLARED_ONLY: those are real properties of a STORED concept
+/// (used vs. never observed in use). UNKNOWN and ABSENT are not — they only
+/// ever arise from a specific search TERM that fails to resolve to anything
+/// declared, so there is no set of "the UNKNOWN concepts" to enumerate; the
+/// honest answer to "show me all UNKNOWN verdicts" is that verdict has no
+/// existence independent of a query, and pretending otherwise here would be
+/// exactly the confident-wrong-shape answer this tool exists to refuse.
+pub fn verdicts(idx: &Index) -> Value {
+    const CAP: usize = 25;
+    let mut active: Vec<&String> = Vec::new();
+    let mut declared_only: Vec<&String> = Vec::new();
+    for (name, c) in &idx.concepts {
+        if c.usage.is_empty() {
+            declared_only.push(name);
+        } else {
+            active.push(name);
+        }
+    }
+    let bucket = |names: &[&String]| {
+        json!({
+            "count": names.len(),
+            "concepts": names.iter().take(CAP).collect::<Vec<_>>(),
+        })
+    };
+    json!({
+        "ACTIVE": bucket(&active),
+        "DECLARED_ONLY": bucket(&declared_only),
+        "note": "UNKNOWN and ABSENT are not listed here — they describe a query TERM's outcome, not a property a declared concept holds independent of being asked about. Lists capped at 25 each; see 'count' for the real total.",
+    })
+}
+
 /// The first real cross-domain identity link — see SYSTEM_MEMORY.md's
 /// "Identity is a link, and the mechanism for it already exists". This is
 /// deliberately the ONE safe case that needs no name-matching at all: the
@@ -1680,5 +1714,54 @@ mod built_from_relationship_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod verdicts_tests {
+    use super::*;
+
+    #[test]
+    fn buckets_by_usage_with_correct_counts() {
+        let tmp = std::env::temp_dir().join(format!("archietect-verdicts-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\nmodel Gadget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.join("use.ts"), "db.widget.findMany()\n").unwrap();
+
+        let (idx, _graph) = crate::scan::scan(&tmp);
+        assert!(!idx.concepts["Widget"].usage.is_empty(), "sanity: Widget must be observed used");
+        assert!(idx.concepts["Gadget"].usage.is_empty(), "sanity: Gadget must be declared-only");
+
+        let out = verdicts(&idx);
+        assert_eq!(out["ACTIVE"]["count"], json!(1));
+        assert!(out["ACTIVE"]["concepts"].as_array().unwrap().iter().any(|c| c == "Widget"), "{out}");
+        assert_eq!(out["DECLARED_ONLY"]["count"], json!(1));
+        assert!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().iter().any(|c| c == "Gadget"), "{out}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn lists_are_capped_but_count_reflects_the_real_total() {
+        let tmp = std::env::temp_dir().join(format!("archietect-verdicts-cap-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut schema = String::new();
+        for i in 0..30 {
+            schema.push_str(&format!("model Widget{i} {{\n  id Int @id\n}}\n"));
+        }
+        std::fs::write(tmp.join("schema.prisma"), schema).unwrap();
+
+        let (idx, _graph) = crate::scan::scan(&tmp);
+        let out = verdicts(&idx);
+        assert_eq!(out["DECLARED_ONLY"]["count"], json!(30), "{out}");
+        assert_eq!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().len(), 25, "list must be capped even though count is real");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

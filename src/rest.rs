@@ -285,6 +285,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         "/doctor" => query::doctor(&idx, &graph, &root),
                         "/tour" => query::tour(&idx, &graph),
                         "/duplicates" => query::duplicates(&idx),
+                        "/verdicts" => query::verdicts(&idx),
                         // ?digest=true returns store::history_digest instead
                         // of the raw event list — a narrative-quality
                         // summary of the window, still fully deterministic.
@@ -480,7 +481,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-                                          "/status", "/doctor", "/tour", "/duplicates",
+                                          "/status", "/doctor", "/tour", "/duplicates", "/verdicts",
                                           "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan", "/photos/scan", "/docker/observe",
