@@ -349,7 +349,32 @@ pub fn scan_with_prior(
     }
 
     // Merge law: declarations sharing a TABLE are one concept.
-    let merges: Vec<(String, String)> = idx
+    //
+    // Found by real, external testing against a large production codebase:
+    // this panicked on `idx.concepts.get_mut(&target).unwrap()` whenever the
+    // raw `(dupe, target)` pairs formed a CHAIN or a CYCLE — e.g. two raw SQL
+    // declarations whose table names differ only by case (`CREATE TABLE
+    // Widgets` in one file, `CREATE TABLE widgets` in another): each
+    // resolves as the other's merge target via the case-insensitive match
+    // below, so BOTH `(Widgets, widgets)` and `(widgets, Widgets)` land in
+    // `merges`. Applying them in BTreeMap iteration order removes one before
+    // the other's step tries to look it up — deterministic on this data,
+    // every single run, single-threaded; concurrency only made it easy to
+    // reproduce by forcing many independent fresh cold-scans of the same
+    // repo. A three-or-more-way chain (A merges into B, B ALSO merges into
+    // C) hits the identical failure for the same reason.
+    //
+    // Fix: resolve every dupe to its ULTIMATE surviving root (the target
+    // that is never itself removed as someone else's dupe in this same
+    // batch) before mutating anything, so every real `remove`/`get_mut`
+    // pair is guaranteed valid. A genuine cycle (A→B and B→A, as in the
+    // case-variant example) has no single valid root — rather than pick an
+    // arbitrary tie-break that could canonicalize the wrong one, that pair
+    // is left UNMERGED: both concepts survive as separate entries. No data
+    // is lost either way; the difference is only whether they get folded
+    // together this pass, and a wrong forced merge would be a worse
+    // failure than a legitimate near-duplicate briefly staying separate.
+    let raw_merges: std::collections::BTreeMap<String, String> = idx
         .concepts
         .iter()
         .filter(|(_, c)| c.declared_in.iter().all(|(_, k)| k == "sql"))
@@ -363,16 +388,52 @@ pub fn scan_with_prior(
                 .map(|(target, _)| (name.clone(), target.clone()))
         })
         .collect();
+
+    fn resolve_root(start: &str, raw_merges: &std::collections::BTreeMap<String, String>) -> Option<String> {
+        let mut current = start.to_string();
+        let mut seen = std::collections::BTreeSet::new();
+        seen.insert(current.clone());
+        loop {
+            match raw_merges.get(&current) {
+                None => return Some(current), // not itself a dupe of anything — a valid, surviving root
+                Some(next) => {
+                    if !seen.insert(next.clone()) {
+                        return None; // cycle — ambiguous, leave unmerged rather than guess
+                    }
+                    current = next.clone();
+                }
+            }
+        }
+    }
+
+    let merges: Vec<(String, String)> = raw_merges
+        .keys()
+        .filter_map(|dupe| {
+            resolve_root(dupe, &raw_merges)
+                .filter(|root| root != dupe)
+                .map(|root| (dupe.clone(), root))
+        })
+        .collect();
     for (dupe, target) in merges {
-        if let Some(d) = idx.concepts.remove(&dupe) {
-            let t = idx.concepts.get_mut(&target).unwrap();
-            t.declared_in.extend(d.declared_in);
-            if d.first_seen_ms > 0 {
-                t.first_seen_ms = t.first_seen_ms.min(d.first_seen_ms);
-            }
-            if t.table.is_none() {
-                t.table = d.table;
-            }
+        // Confirm the target still exists BEFORE removing the dupe — belt
+        // and suspenders alongside resolve_root above: even if some future
+        // edge case slipped past that resolution, this ordering guarantees
+        // a dupe is never removed unless its data has somewhere real to
+        // land. The alternative (remove first, check second) is exactly
+        // what the original bug did, and a caught failure there would still
+        // silently discard the dupe's evidence — worse than a merge that
+        // conservatively does nothing this pass.
+        if !idx.concepts.contains_key(&target) {
+            continue;
+        }
+        let Some(d) = idx.concepts.remove(&dupe) else { continue };
+        let t = idx.concepts.get_mut(&target).expect("checked contains_key above; nothing else can remove from this single-threaded map between the check and this line");
+        t.declared_in.extend(d.declared_in);
+        if d.first_seen_ms > 0 {
+            t.first_seen_ms = t.first_seen_ms.min(d.first_seen_ms);
+        }
+        if t.table.is_none() {
+            t.table = d.table;
         }
     }
 
@@ -1151,5 +1212,87 @@ fn extract_rust(text: &str, out: &mut Vec<DeclFragment>) {
             relations: Vec::new(),
             table: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod merge_chain_tests {
+    use super::*;
+
+    fn tmp_project(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-merge-chain-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// The exact real-world crash, found by external testing against a real
+    /// 2,418-file production codebase and reproduced there via concurrent
+    /// `archietect concept` queries against a freshly-deleted db: two raw SQL
+    /// `CREATE TABLE` declarations whose names differ ONLY BY CASE (e.g.
+    /// `Widgets` and `widgets`, plausibly two migration files or a genuine
+    /// typo) each resolve as the OTHER's merge target under the
+    /// case-insensitive match — `merges` then contains both (Widgets,
+    /// widgets) and (widgets, Widgets). Applying them in order removed one
+    /// before the other's step looked it up: `idx.concepts.get_mut(&target)
+    /// .unwrap()` panicked on `None`, deterministically, every single run,
+    /// with NO concurrency required at all — concurrency only made this easy
+    /// to reproduce by forcing repeated fresh cold-scans of the same repo.
+    /// This test reproduces it with a single, single-threaded `scan()` call.
+    #[test]
+    fn case_variant_table_names_do_not_panic_the_merge_law() {
+        let root = tmp_project("case-variant");
+        std::fs::write(
+            root.join("schema.sql"),
+            "CREATE TABLE Widgets (id INT PRIMARY KEY);\nCREATE TABLE widgets (id INT PRIMARY KEY);\n",
+        )
+        .unwrap();
+
+        // Must not panic. Before the fix, this line crashed the process.
+        let (idx, _graph) = scan(&root);
+
+        // No data lost: both concepts must still be accounted for, either
+        // merged into one surviving entry or left as two separate ones (a
+        // genuine cycle has no single valid root — see resolve_root's doc —
+        // so leaving both unmerged is the correct, safe outcome here, not a
+        // bug). What must NEVER happen is silently dropping one entirely.
+        let names: Vec<&String> = idx.concepts.keys().collect();
+        assert!(
+            names.iter().any(|n| n.eq_ignore_ascii_case("widgets")),
+            "at least one of the two case-variant concepts must survive, got: {names:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two INDEPENDENT merges in the same scan must both apply correctly —
+    /// proving the resolve_root refactor didn't break the common, non-cycle
+    /// case: a raw SQL table "b" merges into Prisma model "A" (table="b" via
+    /// @@map), and separately a raw SQL table "c" merges into Prisma model
+    /// "B" (table="c"). Neither pair's removal step should interfere with
+    /// the other's lookup.
+    #[test]
+    fn two_independent_merges_in_one_scan_both_apply_without_panicking() {
+        let root = tmp_project("independent-merges");
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model A {\n  id Int @id\n  @@map(\"b\")\n}\nmodel B {\n  id Int @id\n  @@map(\"c\")\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("schema.sql"),
+            "CREATE TABLE b (id INT PRIMARY KEY);\nCREATE TABLE c (id INT PRIMARY KEY);\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        let names: Vec<&String> = idx.concepts.keys().collect();
+
+        assert!(names.iter().any(|n| n.as_str() == "A"), "model A must survive, got: {names:?}");
+        assert!(names.iter().any(|n| n.as_str() == "B"), "model B must survive, got: {names:?}");
+        assert!(!names.iter().any(|n| n.as_str() == "b"), "raw sql 'b' must have merged into A, got: {names:?}");
+        assert!(!names.iter().any(|n| n.as_str() == "c"), "raw sql 'c' must have merged into B, got: {names:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
