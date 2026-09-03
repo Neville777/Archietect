@@ -372,7 +372,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
-        Cmd::Owner { term } => { let (idx, _g) = index_for(&root); query::owner(&idx, &term) }
+        Cmd::Owner { term } => { let (idx, g) = index_for(&root); query::owner(&idx, &g, &term) }
         Cmd::History { concept, limit, include_archived } => {
             let mut events = store::read_history(&root, concept.as_deref(), limit);
             if include_archived {

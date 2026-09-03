@@ -1032,19 +1032,55 @@ pub fn duplicates(idx: &Index) -> Value {
 /// Who owns a concept — the directory that DECLARES it, then the directories
 /// that use it. Declarations outweigh usage 2:1: maintaining the contract is
 /// ownership; calling it is only interest.
-pub fn owner(idx: &Index, term: &str) -> Value {
+pub fn owner(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // LAW-010, generalized: a known concept name is an EXACT key, not a
     // search term. plan() passed canonical names back through term search
     // and multi-token names matched nothing — the alias bug's twin.
+    //
+    // Two real bugs fixed here together, found by auditing every caller of
+    // the same pattern after `impact` was fixed for the first one
+    // (idx.concepts[&canon] panicking on a STRUCTURAL-only canonical name
+    // that was never inserted into the schema-layer map — see
+    // impact_structural_only_tests). This function had BOTH bugs at once,
+    // and the first one was masking the second:
+    //   1. `StructuralGraph::default()` was passed to concept()/concept_card
+    //      instead of the REAL graph this function receives — so the
+    //      structural-symbol search inside concept() always ran against an
+    //      EMPTY graph. `owner <any-structural-only-symbol>` silently
+    //      returned ABSENT/owner:null for something that plainly exists —
+    //      not a crash, a confident WRONG ANSWER, worse than a panic for a
+    //      tool whose entire premise is never doing that. Fixed by actually
+    //      using the `graph` parameter.
+    //   2. With (1) fixed, a structural-only canonical name can genuinely
+    //      reach this function now (it couldn't before, because the empty
+    //      graph meant concept() could never RETURN a STRUCTURAL verdict
+    //      here) — so `idx.concepts[&canon]` needed the same fix impact()
+    //      already got: look it up in the structural graph instead of
+    //      assuming a schema-layer entry exists.
     let r = if idx.concepts.contains_key(term) {
-        concept_card(idx, &StructuralGraph::default(), term, term)
+        concept_card(idx, graph, term, term)
     } else {
-        concept(idx, &StructuralGraph::default(), term)
+        concept(idx, graph, term)
     };
     let Some(canon) = r["canonical"].as_str().map(String::from) else {
         return json!({ "target": term, "owner": null, "detail": r });
     };
-    let c = &idx.concepts[&canon];
+    let Some(c) = idx.concepts.get(&canon) else {
+        // Structural-only: ownership is simply its one real declaration
+        // site — no schema-layer declared_in/usage to weigh against
+        // anything else, so there is nothing to rank.
+        let sym = graph.symbols.values().find(|s| s.name == canon);
+        let owner_dir = sym.map(|s| top_segment(&s.file));
+        return json!({
+            "target": canon,
+            "owner_directory": owner_dir,
+            "because": owner_dir.as_ref().map(|d| format!(
+                "'{d}' declares this structural symbol — its only known declaration site"
+            )),
+            "declared_in": sym.map(|s| vec![json!({ "file": s.file, "kind": format!("{:?}", s.kind) })]).unwrap_or_default(),
+            "ranked_directories": owner_dir.map(|d| vec![json!({ "dir": d, "weight": 1 })]).unwrap_or_default(),
+        });
+    };
     // Ownership comes from DECLARING directories ONLY — found on TITAN:
     // three readers outvoted the single declaring directory under a weighted
     // sum, contradicting the stated principle. Interest must never outvote
@@ -1263,7 +1299,7 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     let mut planned = Vec::new();
     for e in it["extend"].as_array().cloned().unwrap_or_default().iter().take(3) {
         let Some(canon) = e["canonical"].as_str() else { continue };
-        let own = owner(idx, canon);
+        let own = owner(idx, graph, canon);
         let imp = impact(idx, graph, canon);
         // governing decisions: any declared decision linking this concept
         let decisions: Vec<Value> = idx
@@ -1455,6 +1491,67 @@ mod impact_structural_only_tests {
         assert_eq!(out["target"], "GovernanceClient");
         assert!(out["used_by_files"].as_array().unwrap().is_empty());
         assert!(out["declared_dependents"].as_array().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod owner_structural_only_tests {
+    use super::*;
+
+    /// `owner()` had TWO bugs at once, found by auditing every caller of the
+    /// same `idx.concepts[&canon]` pattern after `impact` was fixed for the
+    /// first instance of it: (1) it called concept()/concept_card with
+    /// `StructuralGraph::default()` instead of the real graph it receives,
+    /// so a structural-only symbol could never be found at all — a
+    /// confident WRONG ANSWER (owner: null), not a crash, worse for a tool
+    /// whose whole premise is never doing that; (2) once the real graph is
+    /// used, a structural-only canonical name reaches `idx.concepts[&canon]`
+    /// exactly like impact() did, and needed the identical fix. This test
+    /// pins both: the real declaring directory must be found and reported.
+    #[test]
+    fn owner_on_structural_only_concept_finds_its_real_declaring_directory() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-owner-structural-only-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("services")).unwrap();
+        std::fs::write(
+            tmp.join("services").join("governance-client.ts"),
+            "export class GovernanceClient {\n  evaluate() {}\n}\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        assert!(!idx.concepts.contains_key("GovernanceClient"), "sanity: must be structural-only, not a schema concept");
+
+        let out = owner(&idx, &graph, "GovernanceClient");
+        assert_eq!(out["target"], "GovernanceClient");
+        assert_eq!(
+            out["owner_directory"], "services",
+            "must find the real declaring directory, not silently report null, got: {out}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A normal schema-layer concept's ownership must be completely
+    /// unaffected by this fix — same ranked-directory behavior as before.
+    #[test]
+    fn owner_on_schema_concept_is_unaffected() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-owner-schema-unaffected-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n  name String\n}\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&tmp);
+        let out = owner(&idx, &graph, "Widget");
+        assert_eq!(out["owner_directory"], "schema.prisma");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

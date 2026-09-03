@@ -325,7 +325,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "imports" => query::imports(&graph, args["file"].as_str().unwrap_or("")),
                             "guard" => query::guard(&idx, args["sql"].as_str().unwrap_or("")),
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
-                            "owner" => query::owner(&idx, args["term"].as_str().unwrap_or("")),
+                            "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),

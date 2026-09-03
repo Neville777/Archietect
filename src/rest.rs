@@ -278,7 +278,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         "/intent" => query::intent(&idx, q),
                         "/impact" => query::impact(&idx, &graph, q),
                         "/imports" => query::imports(&graph, p.get("file").map(|s| s.as_str()).unwrap_or("")),
-                        "/owner" => query::owner(&idx, q),
+                        "/owner" => query::owner(&idx, &graph, q),
                         "/guard" => query::guard(&idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
                         "/plan" => query::plan(&idx, &graph, q),
                         "/status" => query::status(&idx, &graph),
