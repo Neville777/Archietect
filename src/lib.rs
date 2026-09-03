@@ -19,6 +19,7 @@ pub mod resource;
 pub mod root;
 pub mod rest;
 pub mod scan;
+pub mod shape;
 pub mod scoring;
 pub mod store;
 pub mod structural;

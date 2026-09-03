@@ -33,6 +33,15 @@ struct Cli {
     /// they are the scripting/agent surface; pipe them to jq)
     #[arg(long)]
     json: bool,
+    /// Keep only these top-level keys of the JSON result (comma-separated),
+    /// e.g. `status --only git`. Nothing else about the output changes. See
+    /// src/shape.rs for why this exists — measured, not guessed.
+    #[arg(long, global = true)]
+    only: Option<String>,
+    /// Drop the explanatory prose fields (`note`, `evidence_note`) from the
+    /// result, recursively. Evidence, tiers, files and lines are all kept.
+    #[arg(long, global = true)]
+    compact: bool,
 }
 
 #[derive(Subcommand)]
@@ -252,6 +261,10 @@ fn reset_sigpipe() {}
 fn main() -> anyhow::Result<()> {
     reset_sigpipe();
     let cli = Cli::parse();
+    // Output shaping (src/shape.rs): parsed once, applied at every print
+    // site below. Both default to "change nothing".
+    let only = archietect::shape::parse_only(cli.only.as_deref());
+    let compact = cli.compact;
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
 
@@ -260,7 +273,7 @@ fn main() -> anyhow::Result<()> {
         let (idx, graph) = index_for(&root);
         let out = query::glance(&idx, &graph, &root);
         if cli.json {
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
         } else {
             print_glance(&out);
         }
@@ -301,7 +314,7 @@ fn main() -> anyhow::Result<()> {
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
             let (idx, _g) = index_for(&root);
             let out = query::ci(&idx, &diff, strict);
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
 
             // Record the outcome. query::ci() itself stays read-only — REST
             // or MCP could call the same query to CHECK a diff without
@@ -365,7 +378,7 @@ fn main() -> anyhow::Result<()> {
             ProposalCmd::Test { id } => {
                 let out = proposal::test(&root, id)?;
                 let passed = out["result"]["passed"] == true;
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
                 if !passed {
                     std::process::exit(1);
                 }
@@ -445,6 +458,6 @@ fn main() -> anyhow::Result<()> {
             })
         }
     };
-    println!("{}", serde_json::to_string_pretty(&out)?);
+    println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
     Ok(())
 }

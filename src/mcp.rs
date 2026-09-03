@@ -21,6 +21,29 @@ use std::path::PathBuf;
 use crate::{documents_domain, permissions, query, root, scan, system_db};
 
 fn tool_defs() -> Value {
+    let mut tools = tool_defs_inner();
+    // Every tool accepts the two output-shaping arguments (src/shape.rs):
+    // `only` selects top-level keys of the result, `compact` drops
+    // explanatory prose. Advertised generically here rather than repeated in
+    // each literal below, so a new tool can't forget them.
+    if let Some(arr) = tools.as_array_mut() {
+        for t in arr {
+            if let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(|p| p.as_object_mut()) {
+                props.insert("only".to_string(), json!({
+                    "type": "array", "items": { "type": "string" },
+                    "description": "Return only these top-level keys of the result (e.g. [\"git\"] on `status`). Saves tokens when you need one slice of a large answer."
+                }));
+                props.insert("compact".to_string(), json!({
+                    "type": "boolean",
+                    "description": "Drop explanatory prose fields (`note`, `evidence_note`) from the result. Evidence, tiers, files and lines are all kept."
+                }));
+            }
+        }
+    }
+    tools
+}
+
+fn tool_defs_inner() -> Value {
     let root_prop = json!({
         "type": "string",
         "description": "Repository root to answer about. Optional if the server was started with --root."
@@ -448,6 +471,18 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 }
                             }
                         }
+                        // Output shaping (src/shape.rs). `only` may arrive as a
+                        // JSON array of strings or a comma-separated string.
+                        let only: Option<Vec<String>> = match &args["only"] {
+                            Value::Array(items) => {
+                                let keys: Vec<String> = items.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+                                if keys.is_empty() { None } else { Some(keys) }
+                            }
+                            Value::String(s) => crate::shape::parse_only(Some(s)),
+                            _ => None,
+                        };
+                        let compact = args["compact"].as_bool().unwrap_or(false);
+                        let out = crate::shape::apply(out, only.as_deref(), compact);
                         Ok(json!({
                             "content": [ { "type": "text", "text": serde_json::to_string_pretty(&out)? } ],
                             "isError": false

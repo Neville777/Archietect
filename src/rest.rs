@@ -418,6 +418,14 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             }
         }
 
+        // Output shaping (src/shape.rs): `?only=a,b` and `?compact=true`.
+        // Applied here, at the one serialization point, so no endpoint's
+        // output changes unless the caller asks.
+        let body = crate::shape::apply(
+            body,
+            crate::shape::parse_only(p.get("only").map(|s| s.as_str())).as_deref(),
+            p.get("compact").map(|s| s == "true" || s == "1").unwrap_or(false),
+        );
         let data = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
         // No Access-Control-Allow-Origin header: the embedded GUI at "/" is
         // same-origin and needs none; a page on any OTHER origin has no
