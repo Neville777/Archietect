@@ -1,0 +1,1670 @@
+[
+  {
+    "term": "ArticleEntity",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "declared article.entity.ts, used in 6 files",
+    "archietect": {
+      "elapsed_s": 0.0137,
+      "result": {
+        "canonical": "ArticleEntity",
+        "competing": [],
+        "concept": "ArticleEntity",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "typeorm declaration in src/article/article.entity.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/article/article.controller.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/article/article.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/article/article.service.ts"
+          }
+        ],
+        "fields": [
+          "id",
+          "slug",
+          "title",
+          "description",
+          "body",
+          "tagList",
+          "favoriteCount"
+        ],
+        "first_seen_label": "4 hours ago",
+        "first_seen_ms": 1788424573474,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441985862,
+        "recommendation": "'ArticleEntity' already exists as 'ArticleEntity'. Extend it; do not create a second implementation.",
+        "relations": [
+          "Comment",
+          "UserEntity"
+        ],
+        "table": "article",
+        "used_by_files": [
+          "src/article/article.controller.ts",
+          "src/article/article.service.ts",
+          "src/article/article.service.ts"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1882,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 9,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 15,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';\nimport { ArticleEntity } from './article.entity';\n\n@Entity()\nexport class Comment {"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 39,
+          "snippet": "import {Entity, PrimaryGeneratedColumn, Column, BeforeInsert, JoinTable, ManyToMany, OneToMany} from 'typeorm';\nimport { IsEmail } from 'class-validator';\nimpor"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 32,
+          "snippet": "import { UserData } from '../user/user.interface';\nimport { ArticleEntity } from './article.entity';\ninterface Comment {\n  body: string;\n}\n\ninterface ArticleDat"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 204,
+          "snippet": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository, getRepository, DeleteResult } from 'typeor"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1653
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1633
+        },
+        {
+          "path": "src/article/comment.entity.ts",
+          "start_line": 1,
+          "end_line": 15,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.entity.ts",
+          "start_line": 1,
+          "end_line": 39,
+          "score": 0.1631
+        },
+        {
+          "path": "src/article/article.interface.ts",
+          "start_line": 1,
+          "end_line": 32,
+          "score": 0.1629
+        },
+        {
+          "path": "src/article/article.service.ts",
+          "start_line": 1,
+          "end_line": 204,
+          "score": 0.1627
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1626
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1625
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1624
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1146,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 9,
+      "multigranular_results_count": 6,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 15,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';\nimport { ArticleEntity } from './article.entity';\n\n@Entity()\nexport class Comment {"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 39,
+          "snippet": "import {Entity, PrimaryGeneratedColumn, Column, BeforeInsert, JoinTable, ManyToMany, OneToMany} from 'typeorm';\nimport { IsEmail } from 'class-validator';\nimpor"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 32,
+          "snippet": "import { UserData } from '../user/user.interface';\nimport { ArticleEntity } from './article.entity';\ninterface Comment {\n  body: string;\n}\n\ninterface ArticleDat"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 204,
+          "snippet": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository, getRepository, DeleteResult } from 'typeor"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1653
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1633
+        },
+        {
+          "path": "src/article/comment.entity.ts",
+          "start_line": 1,
+          "end_line": 15,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.entity.ts",
+          "start_line": 1,
+          "end_line": 39,
+          "score": 0.1631
+        },
+        {
+          "path": "src/article/article.interface.ts",
+          "start_line": 1,
+          "end_line": 32,
+          "score": 0.1629
+        },
+        {
+          "path": "src/article/article.service.ts",
+          "start_line": 1,
+          "end_line": 204,
+          "score": 0.1627
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1626
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1625
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1624
+        }
+      ]
+    }
+  },
+  {
+    "term": "UserEntity",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "declared user.entity.ts, used in 8 files",
+    "archietect": {
+      "elapsed_s": 0.0138,
+      "result": {
+        "canonical": "UserEntity",
+        "competing": [],
+        "concept": "UserEntity",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "typeorm declaration in src/user/user.entity.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/article/article.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/profile/profile.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/user/user.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/user/user.service.ts"
+          }
+        ],
+        "fields": [
+          "id",
+          "username",
+          "bio",
+          "image",
+          "password"
+        ],
+        "first_seen_label": "4 hours ago",
+        "first_seen_ms": 1788424573474,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441986179,
+        "recommendation": "'UserEntity' already exists as 'UserEntity'. Extend it; do not create a second implementation.",
+        "relations": [
+          "ArticleEntity"
+        ],
+        "table": "user",
+        "used_by_files": [
+          "src/article/article.service.ts",
+          "src/profile/profile.service.ts",
+          "src/user/user.service.ts",
+          "src/user/user.service.ts"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1103,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 7,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 46,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column, OneToOne, ManyToOne, OneToMany, JoinColumn, AfterUpdate, BeforeUpdate } from 'typeorm';\nimport { UserEntity } f"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 128,
+          "snippet": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository, getRepository, DeleteResult } from 'typeor"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Build Status](https://travis-ci.org/anishkny/node-express-realworld-example-app.svg?branch=master)](https://travis-ci.org/anishkny/node-express-realworld-exa"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "const jwt = require('jsonwebtoken');"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1633
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1632
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1631
+        },
+        {
+          "path": "src/article/article.entity.ts",
+          "start_line": 1,
+          "end_line": 46,
+          "score": 0.1628
+        },
+        {
+          "path": "src/user/user.service.ts",
+          "start_line": 1,
+          "end_line": 128,
+          "score": 0.1627
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1086,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 46,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column, OneToOne, ManyToOne, OneToMany, JoinColumn, AfterUpdate, BeforeUpdate } from 'typeorm';\nimport { UserEntity } f"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 128,
+          "snippet": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository, getRepository, DeleteResult } from 'typeor"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "import { HttpException } from '@nestjs/common/exceptions/http.exception';\nimport { NestMiddleware, HttpStatus, Injectable } from '@nestjs/common';\nimport { Extr"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository, getRepository, DeleteResult } from 'typeor"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1633
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1632
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1631
+        },
+        {
+          "path": "src/article/article.entity.ts",
+          "start_line": 1,
+          "end_line": 46,
+          "score": 0.1628
+        },
+        {
+          "path": "src/user/user.service.ts",
+          "start_line": 1,
+          "end_line": 128,
+          "score": 0.1627
+        }
+      ]
+    }
+  },
+  {
+    "term": "TagEntity",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "declared tag.entity.ts, used in 5 files",
+    "archietect": {
+      "elapsed_s": 0.0138,
+      "result": {
+        "canonical": "TagEntity",
+        "competing": [],
+        "concept": "TagEntity",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "typeorm declaration in src/tag/tag.entity.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/tag/tag.controller.spec.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/tag/tag.service.ts"
+          }
+        ],
+        "fields": [
+          "id",
+          "tag"
+        ],
+        "first_seen_label": "4 hours ago",
+        "first_seen_ms": 1788424573474,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441986413,
+        "recommendation": "'TagEntity' already exists as 'TagEntity'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": "tag",
+        "used_by_files": [
+          "src/tag/tag.controller.spec.ts",
+          "src/tag/tag.service.ts"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1215,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 12,
+      "multigranular_results_count": 9,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 17,
+          "snippet": "import { Injectable} from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { TagEntity } from "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 40,
+          "snippet": "import { Test } from '@nestjs/testing';\nimport { TagController } from './tag.controller';\nimport { TagService } from './tag.service';\nimport {TypeOrmModule} fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {Get, Controller } from '@nestjs/common';\n\nimport { TagEntity } from './tag.entity';\nimport { TagService } from './tag.service';\n\nimport {\n  ApiBearerAut"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';\n\n@Entity('tag')\nexport class TagEntity {\n\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @Column"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1652
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1633
+        },
+        {
+          "path": "src/tag/tag.service.ts",
+          "start_line": 1,
+          "end_line": 17,
+          "score": 0.1632
+        },
+        {
+          "path": "src/tag/tag.controller.spec.ts",
+          "start_line": 1,
+          "end_line": 40,
+          "score": 0.1631
+        },
+        {
+          "path": "src/tag/tag.controller.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1629
+        },
+        {
+          "path": "src/tag/tag.entity.ts",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1628
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1626
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1625
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1624
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1621
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1116,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 12,
+      "multigranular_results_count": 3,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 17,
+          "snippet": "import { Injectable} from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { TagEntity } from "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 40,
+          "snippet": "import { Test } from '@nestjs/testing';\nimport { TagController } from './tag.controller';\nimport { TagService } from './tag.service';\nimport {TypeOrmModule} fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {Get, Controller } from '@nestjs/common';\n\nimport { TagEntity } from './tag.entity';\nimport { TagService } from './tag.service';\n\nimport {\n  ApiBearerAut"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';\n\n@Entity('tag')\nexport class TagEntity {\n\n  @PrimaryGeneratedColumn()\n  id: number;\n\n  @Column"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1652
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1633
+        },
+        {
+          "path": "src/tag/tag.service.ts",
+          "start_line": 1,
+          "end_line": 17,
+          "score": 0.1632
+        },
+        {
+          "path": "src/tag/tag.controller.spec.ts",
+          "start_line": 1,
+          "end_line": 40,
+          "score": 0.1631
+        },
+        {
+          "path": "src/tag/tag.controller.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1629
+        },
+        {
+          "path": "src/tag/tag.entity.ts",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1628
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1626
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1625
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1624
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1621
+        }
+      ]
+    }
+  },
+  {
+    "term": "FollowsEntity",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "declared profile/follows.entity.ts, used in article.module.ts + article.service.ts",
+    "archietect": {
+      "elapsed_s": 0.0135,
+      "result": {
+        "canonical": "FollowsEntity",
+        "competing": [],
+        "concept": "FollowsEntity",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "typeorm declaration in src/profile/follows.entity.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/article/article.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/profile/profile.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/profile/profile.service.ts"
+          }
+        ],
+        "fields": [
+          "id",
+          "followerId",
+          "followingId"
+        ],
+        "first_seen_label": "4 hours ago",
+        "first_seen_ms": 1788424573474,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441986660,
+        "recommendation": "'FollowsEntity' already exists as 'FollowsEntity'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": "follows",
+        "used_by_files": [
+          "src/article/article.service.ts",
+          "src/profile/profile.service.ts",
+          "src/profile/profile.service.ts"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1112,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 7,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 15,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column } from \"typeorm\";\n\n@Entity('follows')\nexport class FollowsEntity {\n\n  @PrimaryGeneratedColumn()\n  id: number;\n\n "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 104,
+          "snippet": "import { HttpStatus, Injectable} from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { UserE"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Build Status](https://travis-ci.org/anishkny/node-express-realworld-example-app.svg?branch=master)](https://travis-ci.org/anishkny/node-express-realworld-exa"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "imports: [TypeOrmModule.forFeature([TagEntity]), UserModule],"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1633
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1632
+        },
+        {
+          "path": "src/profile/follows.entity.ts",
+          "start_line": 1,
+          "end_line": 15,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.service.ts",
+          "start_line": 1,
+          "end_line": 104,
+          "score": 0.1628
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1627
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.107,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 3,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 15,
+          "snippet": "import { Entity, PrimaryGeneratedColumn, Column } from \"typeorm\";\n\n@Entity('follows')\nexport class FollowsEntity {\n\n  @PrimaryGeneratedColumn()\n  id: number;\n\n "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 104,
+          "snippet": "import { HttpStatus, Injectable} from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { UserE"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "import {PipeTransform, ArgumentMetadata, BadRequestException, HttpStatus, Injectable} from '@nestjs/common';\nimport { validate } from 'class-validator';\nimport "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1633
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1632
+        },
+        {
+          "path": "src/profile/follows.entity.ts",
+          "start_line": 1,
+          "end_line": 15,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.service.ts",
+          "start_line": 1,
+          "end_line": 104,
+          "score": 0.1628
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1627
+        }
+      ]
+    }
+  },
+  {
+    "term": "Payment",
+    "ground_truth": "ABSENT",
+    "note": "no payment/subscription/notification code anywhere",
+    "archietect": {
+      "elapsed_s": 0.0135,
+      "result": {
+        "canonical": null,
+        "concept": "Payment",
+        "confidence": "unknown \u2014 this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
+        "evidence": [],
+        "next_action": {
+          "escalation": "If this language has no structural extractor at all, propose one via `archietect proposal submit --kind extractor` \u2014 it will be validated against the existing laws + invariants suite before anyone applies it.",
+          "if_universal_defect": "That's for a missing extractor \u2014 a coverage gap, fixable locally. If instead this looks like a defect in Archietect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+          "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict \u2014 that only happens if a human adds an extractor, an alias, or a decision.",
+          "question": "Do any of these files implement or represent 'Payment'?",
+          "read": [
+            ".memory-engine/project.fingerprint"
+          ],
+          "type": "ai_investigation"
+        },
+        "recommendation": "No declared, structural, or named evidence for 'Payment' \u2014 but Archietect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action.",
+        "verdict": "INSUFFICIENT_COVERAGE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1131,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 8,
+      "multigranular_results_count": 8,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 31,
+          "snippet": "import { HttpException } from '@nestjs/common/exceptions/http.exception';\nimport { NestMiddleware, HttpStatus, Injectable } from '@nestjs/common';\nimport { Extr"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 41,
+          "snippet": "import {PipeTransform, ArgumentMetadata, BadRequestException, HttpStatus, Injectable} from '@nestjs/common';\nimport { validate } from 'class-validator';\nimport "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1629
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1628
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1626
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1625
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1577
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1083,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 8,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 31,
+          "snippet": "import { HttpException } from '@nestjs/common/exceptions/http.exception';\nimport { NestMiddleware, HttpStatus, Injectable } from '@nestjs/common';\nimport { Extr"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 41,
+          "snippet": "import {PipeTransform, ArgumentMetadata, BadRequestException, HttpStatus, Injectable} from '@nestjs/common';\nimport { validate } from 'class-validator';\nimport "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1629
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1628
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1626
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1625
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1577
+        }
+      ]
+    }
+  },
+  {
+    "term": "CommentEntity",
+    "ground_truth": "AMBIGUOUS",
+    "note": "real class is named 'Comment' (comment.entity.ts:5), not CommentEntity -- name-only mismatch",
+    "archietect": {
+      "elapsed_s": 0.0156,
+      "result": {
+        "canonical": null,
+        "concept": "CommentEntity",
+        "confidence": "unknown \u2014 this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
+        "evidence": [],
+        "next_action": {
+          "escalation": "If this language has no structural extractor at all, propose one via `archietect proposal submit --kind extractor` \u2014 it will be validated against the existing laws + invariants suite before anyone applies it.",
+          "if_universal_defect": "That's for a missing extractor \u2014 a coverage gap, fixable locally. If instead this looks like a defect in Archietect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+          "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict \u2014 that only happens if a human adds an extractor, an alias, or a decision.",
+          "question": "Do any of these files implement or represent 'CommentEntity'?",
+          "read": [
+            ".memory-engine/project.fingerprint"
+          ],
+          "type": "ai_investigation"
+        },
+        "recommendation": "No declared, structural, or named evidence for 'CommentEntity' \u2014 but Archietect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action.",
+        "verdict": "INSUFFICIENT_COVERAGE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.105,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 8,
+      "multigranular_results_count": 8,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 31,
+          "snippet": "import { HttpException } from '@nestjs/common/exceptions/http.exception';\nimport { NestMiddleware, HttpStatus, Injectable } from '@nestjs/common';\nimport { Extr"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 41,
+          "snippet": "import {PipeTransform, ArgumentMetadata, BadRequestException, HttpStatus, Injectable} from '@nestjs/common';\nimport { validate } from 'class-validator';\nimport "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1629
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1628
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1626
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1625
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1577
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1903,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 8,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Database\n\nThe codebase contains examples of two different database abstractions, namely [TypeORM](http://typeorm.io/) and [Prisma](https://www.prisma.io/). \n"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 19,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { UserModule } fro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 22,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { UserController } from './user.controller';\nimport { TypeOrmModule"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 24,
+          "snippet": "import {MiddlewareConsumer, Module, NestModule, RequestMethod} from '@nestjs/common';\nimport { ProfileController } from './profile.controller';\nimport { TypeOrm"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 31,
+          "snippet": "import { HttpException } from '@nestjs/common/exceptions/http.exception';\nimport { NestMiddleware, HttpStatus, Injectable } from '@nestjs/common';\nimport { Extr"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 41,
+          "snippet": "import {PipeTransform, ArgumentMetadata, BadRequestException, HttpStatus, Injectable} from '@nestjs/common';\nimport { validate } from 'class-validator';\nimport "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 33,
+          "snippet": "import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';\nimport { ArticleController } from './article.controller';\nimport { TypeO"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "src/tag/tag.module.ts",
+          "start_line": 1,
+          "end_line": 19,
+          "score": 0.1632
+        },
+        {
+          "path": "src/user/user.module.ts",
+          "start_line": 1,
+          "end_line": 22,
+          "score": 0.1631
+        },
+        {
+          "path": "src/profile/profile.module.ts",
+          "start_line": 1,
+          "end_line": 24,
+          "score": 0.1629
+        },
+        {
+          "path": "src/user/auth.middleware.ts",
+          "start_line": 1,
+          "end_line": 31,
+          "score": 0.1628
+        },
+        {
+          "path": "src/shared/pipes/validation.pipe.ts",
+          "start_line": 1,
+          "end_line": 41,
+          "score": 0.1626
+        },
+        {
+          "path": "src/article/article.module.ts",
+          "start_line": 1,
+          "end_line": 33,
+          "score": 0.1625
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1577
+        }
+      ]
+    }
+  },
+  {
+    "term": "Comment",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "the real class name; used in article.entity.ts, article.service.ts, article.interface.ts, article.module.ts",
+    "archietect": {
+      "elapsed_s": 0.0134,
+      "result": {
+        "canonical": "Comment",
+        "competing": [],
+        "concept": "Comment",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "typeorm declaration in src/article/comment.entity.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/article/article.service.ts"
+          },
+          {
+            "tier": "Used",
+            "what": "typeorm-repository access in src/article/article.service.ts"
+          }
+        ],
+        "fields": [
+          "id",
+          "body"
+        ],
+        "first_seen_label": "4 hours ago",
+        "first_seen_ms": 1788424573474,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441987440,
+        "recommendation": "'Comment' already exists as 'Comment'. Extend it; do not create a second implementation.",
+        "relations": [
+          "ArticleEntity"
+        ],
+        "table": null,
+        "used_by_files": [
+          "src/article/article.service.ts",
+          "src/article/article.service.ts"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.0765,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 0,
+      "multigranular_results_count": 0,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [],
+      "trace_paths": []
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.0713,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 0,
+      "multigranular_results_count": 0,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [],
+      "trace_paths": []
+    }
+  }
+]

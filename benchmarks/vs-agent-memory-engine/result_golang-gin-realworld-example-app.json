@@ -1,0 +1,1513 @@
+[
+  {
+    "term": "ArticleModel",
+    "ground_truth": "EXISTS",
+    "note": "struct declared articles/models.go:11",
+    "archietect": {
+      "elapsed_s": 0.0096,
+      "result": {
+        "canonical": "ArticleModel",
+        "competing": [],
+        "concept": "ArticleModel",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "gorm declaration in articles/models.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/routers.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/unit_test.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in hello.go"
+          }
+        ],
+        "fields": [
+          "Slug",
+          "Title",
+          "Description",
+          "Body",
+          "Author",
+          "AuthorID",
+          "Tags",
+          "Comments"
+        ],
+        "first_seen_label": "1 hour ago",
+        "first_seen_ms": 1788436543869,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441982265,
+        "recommendation": "'ArticleModel' already exists as 'ArticleModel'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": null,
+        "used_by_files": [
+          "articles/routers.go",
+          "articles/unit_test.go",
+          "hello.go"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1991,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 3,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "articleModelValidator := NewArticleModelValidatorFillWith(articleModel)\n\tif err := articleModelValidator.Bind(c); err != nil {\n\t\tc.JSON(http.StatusUnprocessable"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 72,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "package articles\n\nimport (\n\t\"errors\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.com/gothinkster/gola"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "foundArticle, _ = FindOneArticle(&ArticleModel{Slug: article.Slug})\n\tasserts.Equal(\"Updated Title\", foundArticle.Title, \"Title should be updated\")"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/validators.go",
+          "start_line": 1,
+          "end_line": 72,
+          "score": 0.1629
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1628
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1153,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 3,
+      "multigranular_results_count": 2,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "articleModelValidator := NewArticleModelValidatorFillWith(articleModel)\n\tif err := articleModelValidator.Bind(c); err != nil {\n\t\tc.JSON(http.StatusUnprocessable"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 72,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "package articles\n\nimport (\n\t\"errors\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.com/gothinkster/gola"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "foundArticle, _ = FindOneArticle(&ArticleModel{Slug: article.Slug})\n\tasserts.Equal(\"Updated Title\", foundArticle.Title, \"Title should be updated\")"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/validators.go",
+          "start_line": 1,
+          "end_line": 72,
+          "score": 0.1629
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1628
+        }
+      ]
+    }
+  },
+  {
+    "term": "UserModel",
+    "ground_truth": "EXISTS",
+    "note": "struct declared users/models.go:16",
+    "archietect": {
+      "elapsed_s": 0.0098,
+      "result": {
+        "canonical": "UserModel",
+        "competing": [],
+        "concept": "UserModel",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "gorm declaration in users/models.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/models.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/unit_test.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in users/routers.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in users/unit_test.go"
+          }
+        ],
+        "fields": [
+          "ID",
+          "Username",
+          "Email",
+          "Bio",
+          "Image",
+          "PasswordHash"
+        ],
+        "first_seen_label": "1 hour ago",
+        "first_seen_ms": 1788436543869,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441982589,
+        "recommendation": "'UserModel' already exists as 'UserModel'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": null,
+        "used_by_files": [
+          "articles/models.go",
+          "articles/unit_test.go",
+          "users/routers.go",
+          "users/unit_test.go"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1141,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 3,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "// You could check whether  userModel1 following userModel2\n//\n//\tfollowingBool = myUserModel.isFollowing(self.UserModel)\nfunc (u UserModel) isFollowing(v UserM"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 137,
+          "snippet": "package users\n\nimport (\n\t\"errors\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"net/http\"\n)\n\nfunc UsersRegiste"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 85,
+          "snippet": "package users\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n)\n\n// *ModelValidator containing two parts"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package users"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "func createTestUser() users.UserModel {\n\t// Generate a proper password hash to satisfy NOT NULL constraint\n\tpasswordHash, _ := bcrypt.GenerateFromPassword([]byt"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// You could get a following list of userModel\n//\n//\tfollowings := userModel.GetFollowings()\nfunc (u UserModel) GetFollowings() []UserModel {\n\tdb := common.GetD"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1631
+        },
+        {
+          "path": "users/routers.go",
+          "start_line": 1,
+          "end_line": 137,
+          "score": 0.1629
+        },
+        {
+          "path": "users/validators.go",
+          "start_line": 1,
+          "end_line": 85,
+          "score": 0.1628
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1137,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 3,
+      "multigranular_results_count": 9,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "// You could check whether  userModel1 following userModel2\n//\n//\tfollowingBool = myUserModel.isFollowing(self.UserModel)\nfunc (u UserModel) isFollowing(v UserM"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 137,
+          "snippet": "package users\n\nimport (\n\t\"errors\"\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"net/http\"\n)\n\nfunc UsersRegiste"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 85,
+          "snippet": "package users\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n)\n\n// *ModelValidator containing two parts"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "func createTestUser() users.UserModel {\n\t// Generate a proper password hash to satisfy NOT NULL constraint\n\tpasswordHash, _ := bcrypt.GenerateFromPassword([]byt"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// You could get a following list of userModel\n//\n//\tfollowings := userModel.GetFollowings()\nfunc (u UserModel) GetFollowings() []UserModel {\n\tdb := common.GetD"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "userModel = newUserModel()\n\terr = userModel.setPassword(\"asd123!@#ASD\")\n\tasserts.NoError(err, \"password should be set successful\")\n\tasserts.Len(userModel.Passwo"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "userModel = newUserModel()\n\terr = userModel.setPassword(\"\")\n\tasserts.Error(err, \"empty password can not be set null\")"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "articleUserModel := GetArticleUserModel(userModel)"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1631
+        },
+        {
+          "path": "users/routers.go",
+          "start_line": 1,
+          "end_line": 137,
+          "score": 0.1629
+        },
+        {
+          "path": "users/validators.go",
+          "start_line": 1,
+          "end_line": 85,
+          "score": 0.1628
+        }
+      ]
+    }
+  },
+  {
+    "term": "CommentModel",
+    "ground_truth": "EXISTS",
+    "note": "struct declared articles/models.go:45",
+    "archietect": {
+      "elapsed_s": 0.0094,
+      "result": {
+        "canonical": "CommentModel",
+        "competing": [],
+        "concept": "CommentModel",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "gorm declaration in articles/models.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/routers.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/unit_test.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in hello.go"
+          }
+        ],
+        "fields": [
+          "Article",
+          "ArticleID",
+          "Author",
+          "AuthorID",
+          "Body"
+        ],
+        "first_seen_label": "1 hour ago",
+        "first_seen_ms": 1788436543869,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441982827,
+        "recommendation": "'CommentModel' already exists as 'CommentModel'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": null,
+        "used_by_files": [
+          "articles/routers.go",
+          "articles/unit_test.go",
+          "hello.go"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.112,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 5,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 180,
+          "snippet": "myUserModel := s.C.MustGet(\"my_user_model\").(users.UserModel)\n\tarticleUserModel := GetArticleUserModel(myUserModel)\n\tfavoriteStatus := BatchGetFavoriteStatus(ar"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 72,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "func ArticleCommentDelete(c *gin.Context) {\n\tid64, err := strconv.ParseUint(c.Param(\"id\"), 10, 32)\n\tif err != nil {\n\t\tc.JSON(http.StatusNotFound, common.NewErro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 1605,
+          "snippet": "// This is a hack way to add test database for each case\nfunc TestMain(m *testing.M) {\n\ttest_db = common.TestDBInit()\n\tusers.AutoMigrate()\n\ttest_db.AutoMigrate("
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "articleModelValidator := NewArticleModelValidatorFillWith(articleModel)\n\tif err := articleModelValidator.Bind(c); err != nil {\n\t\tc.JSON(http.StatusUnprocessable"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Create a comment\n\tcomment := CommentModel{\n\t\tArticleID: article.ID,\n\t\tAuthorID:  articleUserModel.ID,\n\t\tBody:      \"Test comment for list\",\n\t}\n\ttest_db.Creat"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/serializers.go",
+          "start_line": 1,
+          "end_line": 180,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/validators.go",
+          "start_line": 1,
+          "end_line": 72,
+          "score": 0.1629
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1628
+        },
+        {
+          "path": "articles/unit_test.go",
+          "start_line": 1,
+          "end_line": 1605,
+          "score": 0.1627
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1626
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1067,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 5,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 180,
+          "snippet": "myUserModel := s.C.MustGet(\"my_user_model\").(users.UserModel)\n\tarticleUserModel := GetArticleUserModel(myUserModel)\n\tfavoriteStatus := BatchGetFavoriteStatus(ar"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 72,
+          "snippet": "package articles\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gosimple/slug\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"github.co"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "func ArticleCommentDelete(c *gin.Context) {\n\tid64, err := strconv.ParseUint(c.Param(\"id\"), 10, 32)\n\tif err != nil {\n\t\tc.JSON(http.StatusNotFound, common.NewErro"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 1605,
+          "snippet": "// This is a hack way to add test database for each case\nfunc TestMain(m *testing.M) {\n\ttest_db = common.TestDBInit()\n\tusers.AutoMigrate()\n\ttest_db.AutoMigrate("
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 251,
+          "snippet": "articleModelValidator := NewArticleModelValidatorFillWith(articleModel)\n\tif err := articleModelValidator.Bind(c); err != nil {\n\t\tc.JSON(http.StatusUnprocessable"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Create a comment\n\tcomment := CommentModel{\n\t\tArticleID: article.ID,\n\t\tAuthorID:  articleUserModel.ID,\n\t\tBody:      \"Test comment for list\",\n\t}\n\ttest_db.Creat"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Create a comment\n\tcomment := CommentModel{\n\t\tArticleID: article.ID,\n\t\tAuthorID:  articleUserModel.ID,\n\t\tBody:      \"Test comment for deletion\",\n\t}\n\ttest_db.C"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "func DeleteCommentModel(condition interface{}) error {\n\tdb := common.GetDB()\n\terr := db.Where(condition).Delete(&CommentModel{}).Error\n\treturn err\n}"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/serializers.go",
+          "start_line": 1,
+          "end_line": 180,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/validators.go",
+          "start_line": 1,
+          "end_line": 72,
+          "score": 0.1629
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1628
+        },
+        {
+          "path": "articles/unit_test.go",
+          "start_line": 1,
+          "end_line": 1605,
+          "score": 0.1627
+        },
+        {
+          "path": "articles/routers.go",
+          "start_line": 1,
+          "end_line": 251,
+          "score": 0.1626
+        }
+      ]
+    }
+  },
+  {
+    "term": "TagModel",
+    "ground_truth": "EXISTS",
+    "note": "struct declared articles/models.go:39",
+    "archietect": {
+      "elapsed_s": 0.0093,
+      "result": {
+        "canonical": "TagModel",
+        "competing": [],
+        "concept": "TagModel",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "gorm declaration in articles/models.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in articles/unit_test.go"
+          },
+          {
+            "tier": "Used",
+            "what": "gorm-literal access in hello.go"
+          }
+        ],
+        "fields": [
+          "Tag",
+          "ArticleModels"
+        ],
+        "first_seen_label": "1 hour ago",
+        "first_seen_ms": 1788436543869,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441983056,
+        "recommendation": "'TagModel' already exists as 'TagModel'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": null,
+        "used_by_files": [
+          "articles/unit_test.go",
+          "hello.go"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.166,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 2,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "tx := db.Begin()\n\tfollowings := self.UserModel.GetFollowings()\n\n\t// Batch get ArticleUserModel IDs to avoid N+1 query\n\tif len(followings) > 0 {\n\t\tvar followingU"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "func FindOneComment(condition *CommentModel) (CommentModel, error) {\n\tdb := common.GetDB()\n\tvar model CommentModel\n\terr := db.Preload(\"Author.UserModel\").Preloa"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Batch fetch existing tags\n\tvar existingTags []TagModel\n\tdb.Where(\"tag IN ?\", tags).Find(&existingTags)"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "func (s *TagSerializer) Response() string {\n\treturn s.TagModel.Tag\n}"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "type TagsSerializer struct {\n\tC    *gin.Context\n\tTags []TagModel\n}"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "type TagSerializer struct {\n\tC *gin.Context\n\tTagModel\n}"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/models.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/models.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1629
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1061,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 2,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "tx := db.Begin()\n\tfollowings := self.UserModel.GetFollowings()\n\n\t// Batch get ArticleUserModel IDs to avoid N+1 query\n\tif len(followings) > 0 {\n\t\tvar followingU"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "func FindOneComment(condition *CommentModel) (CommentModel, error) {\n\tdb := common.GetDB()\n\tvar model CommentModel\n\terr := db.Preload(\"Author.UserModel\").Preloa"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Batch fetch existing tags\n\tvar existingTags []TagModel\n\tdb.Where(\"tag IN ?\", tags).Find(&existingTags)"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "func (s *TagSerializer) Response() string {\n\treturn s.TagModel.Tag\n}"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "type TagsSerializer struct {\n\tC    *gin.Context\n\tTags []TagModel\n}"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "type TagSerializer struct {\n\tC *gin.Context\n\tTagModel\n}"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Create some test tags\n\ttag1 := TagModel{Tag: fmt.Sprintf(\"listtag1-%d\", common.RandInt())}\n\ttag2 := TagModel{Tag: fmt.Sprintf(\"listtag2-%d\", common.RandInt()"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "articles/models.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1631
+        },
+        {
+          "path": "articles/models.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1629
+        }
+      ]
+    }
+  },
+  {
+    "term": "Payment",
+    "ground_truth": "ABSENT",
+    "note": "no matches anywhere in repo",
+    "archietect": {
+      "elapsed_s": 0.0096,
+      "result": {
+        "canonical": null,
+        "concept": "Payment",
+        "confidence": "unknown \u2014 this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
+        "evidence": [],
+        "next_action": {
+          "escalation": "If this language has no structural extractor at all, propose one via `archietect proposal submit --kind extractor` \u2014 it will be validated against the existing laws + invariants suite before anyone applies it.",
+          "if_universal_defect": "That's for a missing extractor \u2014 a coverage gap, fixable locally. If instead this looks like a defect in Archietect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+          "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict \u2014 that only happens if a human adds an extractor, an alias, or a decision.",
+          "question": "Do any of these files implement or represent 'Payment'?",
+          "read": [
+            ".memory-engine/project.fingerprint"
+          ],
+          "type": "ai_investigation"
+        },
+        "recommendation": "No declared, structural, or named evidence for 'Payment' \u2014 but Archietect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action.",
+        "verdict": "INSUFFICIENT_COVERAGE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1027,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 2,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Project Overview\n\nThis is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application. It demonstrates a"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This project uses [Agent Memory Engine](https://github.com/uudam42/agent-memory-engine)"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Project Overview\n\nThis is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application. It demonstrates a"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "AGENTS.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1583
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1582
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1051,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 2,
+      "multigranular_results_count": 3,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Project Overview\n\nThis is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application. It demonstrates a"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### `memory-engine:retrieve_agent_context` \u2014 BEFORE non-trivial work\n\n**Call when the task involves any of:**\n- Editing production code, tests, CI, build script"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Project Overview\n\nThis is a **Golang/Gin** implementation of the [RealWorld](https://github.com/gothinkster/realworld) example application. It demonstrates a"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "AGENTS.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1583
+        },
+        {
+          "path": "CLAUDE.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1582
+        }
+      ]
+    }
+  },
+  {
+    "term": "Validator",
+    "ground_truth": "AMBIGUOUS",
+    "note": "no type literally named Validator; UserModelValidator/ArticleModelValidator/CommentModelValidator exist instead",
+    "archietect": {
+      "elapsed_s": 0.0092,
+      "result": {
+        "canonical": "TestArticleCreateValidation",
+        "concept": "Validator",
+        "confidence": "high \u2014 found in source as a real symbol, not a declared data/schema model",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/unit_test.go:1450"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/unit_test.go:1169"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/unit_test.go:1134"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in articles/validators.go:10"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in articles/validators.go:51"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/validators.go:20"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/validators.go:24"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/validators.go:58"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in common/unit_test.go:188"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in common/utils.go:68"
+          }
+        ],
+        "recommendation": "'Validator' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply.",
+        "routes": [],
+        "source": [
+          {
+            "excerpt": "1448: }\n1449: \n1450: func TestArticleCreateValidation(t *testing.T) {\n1451: \tasserts := assert.New(t)\n1452: ",
+            "file": "articles/unit_test.go",
+            "line": 1450
+          },
+          {
+            "excerpt": "1167: }\n1168: \n1169: func TestArticleUpdateValidationErrors(t *testing.T) {\n1170: \tasserts := assert.New(t)\n1171: ",
+            "file": "articles/unit_test.go",
+            "line": 1169
+          },
+          {
+            "excerpt": "1132: }\n1133: \n1134: func TestArticleValidationErrors(t *testing.T) {\n1135: \tasserts := assert.New(t)\n1136: ",
+            "file": "articles/unit_test.go",
+            "line": 1134
+          }
+        ],
+        "verdict": "STRUCTURAL"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1131,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 9,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Recent Updates\n\nThis project has been modernized with the following updates:\n- **Go 1.21+**: Updated from Go 1.15 to require Go 1.21 or higher\n- **GORM v2**:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "# Directory structure\n```\n.\n\u251c\u2500\u2500 gorm.db\n\u251c\u2500\u2500 hello.go\n\u251c\u2500\u2500 common\n\u2502   \u251c\u2500\u2500 utils.go        //small tools function\n\u2502   \u2514\u2500\u2500 database.go     //DB connect manager\n\u251c\u2500\u2500 "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Dependencies (2025 Stable Versions)\n\n| Package | Version | Release Date | Known Issues |\n|---------|---------|--------------|--------------|\n| [gin-gonic/gin"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "/*\nThe user module containing the user CRU operation.\n\nmodel.go: definition of orm based data model\n\nrouters.go: router binding and core logic\n\nserializers.go: "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "/*\nThe article module containing the article CRUD operation and relationship CRUD.\n\nmodel.go: definition of orm based data model\n\nrouters.go: router binding and"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 85,
+          "snippet": "package users\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n)\n\n// *ModelValidator containing two parts"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "req, _ := http.NewRequest(\"GET\", \"/test\", nil)\n\ttoken := GenToken(5)\n\tHeaderTokenMock(req, 5)\n\n\tauthHeader := req.Header.Get(\"Authorization\")\n\tasserts.Equal(fmt"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1646
+        },
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "users/doc.go",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1627
+        },
+        {
+          "path": "articles/doc.go",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1626
+        },
+        {
+          "path": "users/validators.go",
+          "start_line": 1,
+          "end_line": 85,
+          "score": 0.1625
+        },
+        {
+          "path": "common/unit_test.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1619
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1188,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 6,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Recent Updates\n\nThis project has been modernized with the following updates:\n- **Go 1.21+**: Updated from Go 1.15 to require Go 1.21 or higher\n- **GORM v2**:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "# Directory structure\n```\n.\n\u251c\u2500\u2500 gorm.db\n\u251c\u2500\u2500 hello.go\n\u251c\u2500\u2500 common\n\u2502   \u251c\u2500\u2500 utils.go        //small tools function\n\u2502   \u2514\u2500\u2500 database.go     //DB connect manager\n\u251c\u2500\u2500 "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Dependencies (2025 Stable Versions)\n\n| Package | Version | Release Date | Known Issues |\n|---------|---------|--------------|--------------|\n| [gin-gonic/gin"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "/*\nThe user module containing the user CRU operation.\n\nmodel.go: definition of orm based data model\n\nrouters.go: router binding and core logic\n\nserializers.go: "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 12,
+          "snippet": "/*\nThe article module containing the article CRUD operation and relationship CRUD.\n\nmodel.go: definition of orm based data model\n\nrouters.go: router binding and"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 85,
+          "snippet": "package users\n\nimport (\n\t\"github.com/gin-gonic/gin\"\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n)\n\n// *ModelValidator containing two parts"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 368,
+          "snippet": "req, _ := http.NewRequest(\"GET\", \"/test\", nil)\n\ttoken := GenToken(5)\n\tHeaderTokenMock(req, 5)\n\n\tauthHeader := req.Header.Get(\"Authorization\")\n\tasserts.Equal(fmt"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Security Considerations\n\n- JWT secret is defined in `common/utils.go` - do not expose in production\n- Always validate user input using validator tags\n- Use p"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1646
+        },
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "users/doc.go",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1627
+        },
+        {
+          "path": "articles/doc.go",
+          "start_line": 1,
+          "end_line": 12,
+          "score": 0.1626
+        },
+        {
+          "path": "users/validators.go",
+          "start_line": 1,
+          "end_line": 85,
+          "score": 0.1625
+        },
+        {
+          "path": "common/unit_test.go",
+          "start_line": 1,
+          "end_line": 368,
+          "score": 0.1619
+        }
+      ]
+    }
+  },
+  {
+    "term": "Follow",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "used across users/routers.go, users/serializers.go, users/models.go, articles/models.go, both unit_test.go files",
+    "archietect": {
+      "elapsed_s": 0.011,
+      "result": {
+        "canonical": "TestArticleFeedWithFollowing",
+        "concept": "Follow",
+        "confidence": "high \u2014 found in source as a real symbol, not a declared data/schema model",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "Function declared in articles/unit_test.go:1007"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in users/models.go:36"
+          },
+          {
+            "tier": "Declared",
+            "what": "Function declared in users/routers.go:43"
+          }
+        ],
+        "recommendation": "'Follow' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply.",
+        "routes": [],
+        "source": [
+          {
+            "excerpt": "1005: }\n1006: \n1007: func TestArticleFeedWithFollowing(t *testing.T) {\n1008: \tasserts := assert.New(t)\n1009: ",
+            "file": "articles/unit_test.go",
+            "line": 1007
+          },
+          {
+            "excerpt": "34: //\n35: // More details about gorm.Model: http://jinzhu.me/gorm/models.html#conventions\n36: type FollowModel struct {\n37: \tgorm.Model\n38: \tFollowing    UserModel",
+            "file": "users/models.go",
+            "line": 36
+          },
+          {
+            "excerpt": "41: }\n42: \n43: func ProfileFollow(c *gin.Context) {\n44: \tusername := c.Param(\"username\")\n45: \tuserModel, err := FindOneUser(&UserModel{Username: username})",
+            "file": "users/routers.go",
+            "line": 43
+          }
+        ],
+        "verdict": "STRUCTURAL"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1074,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 4,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Recent Updates\n\nThis project has been modernized with the following updates:\n- **Go 1.21+**: Updated from Go 1.15 to require Go 1.21 or higher\n- **GORM v2**:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "// You could check whether  userModel1 following userModel2\n//\n//\tfollowingBool = myUserModel.isFollowing(self.UserModel)\nfunc (u UserModel) isFollowing(v UserM"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 554,
+          "snippet": "test_db.AutoMigrate(&UserModel{})\n\t\t\tuserModelMocker(3)\n\t\t\tcommon.HeaderTokenMock(req, 2)\n\t\t},\n\t\t\"/profiles/user1/follow\",\n\t\t\"POST\",\n\t\t``,\n\t\thttp.StatusUnproces"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "package users\n\nimport (\n\t\"errors\"\n\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"golang.org/x/crypto/bcrypt\"\n\t\"gorm.io/gorm\"\n)\n\n// Models "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This document provides instructions for AI coding agents working on this repository."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package users"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "package articles"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "test_db.AutoMigrate(&UserModel{})\n\t\t\tuserModelMocker(3)\n\t\t\tcommon.HeaderTokenMock(req, 2)\n\t\t},\n\t\t\"/profiles/user1/follow\",\n\t\t\"POST\",\n\t\t``,\n\t\thttp.StatusUnproces"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1642
+        },
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1631
+        },
+        {
+          "path": "users/unit_test.go",
+          "start_line": 1,
+          "end_line": 554,
+          "score": 0.1629
+        },
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1628
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1172,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 4,
+      "multigranular_results_count": 8,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Recent Updates\n\nThis project has been modernized with the following updates:\n- **Go 1.21+**: Updated from Go 1.15 to require Go 1.21 or higher\n- **GORM v2**:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "// You could check whether  userModel1 following userModel2\n//\n//\tfollowingBool = myUserModel.isFollowing(self.UserModel)\nfunc (u UserModel) isFollowing(v UserM"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 554,
+          "snippet": "test_db.AutoMigrate(&UserModel{})\n\t\t\tuserModelMocker(3)\n\t\t\tcommon.HeaderTokenMock(req, 2)\n\t\t},\n\t\t\"/profiles/user1/follow\",\n\t\t\"POST\",\n\t\t``,\n\t\thttp.StatusUnproces"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 154,
+          "snippet": "package users\n\nimport (\n\t\"errors\"\n\n\t\"github.com/gothinkster/golang-gin-realworld-example-app/common\"\n\t\"golang.org/x/crypto/bcrypt\"\n\t\"gorm.io/gorm\"\n)\n\n// Models "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "test_db.AutoMigrate(&UserModel{})\n\t\t\tuserModelMocker(3)\n\t\t\tcommon.HeaderTokenMock(req, 2)\n\t\t},\n\t\t\"/profiles/user1/follow\",\n\t\t\"POST\",\n\t\t``,\n\t\thttp.StatusUnproces"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// You could check whether  userModel1 following userModel2\n//\n//\tfollowingBool = myUserModel.isFollowing(self.UserModel)\nfunc (u UserModel) isFollowing(v UserM"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// Batch get ArticleUserModel IDs to avoid N+1 query\n\tif len(followings) > 0 {\n\t\tvar followingUserIDs []uint\n\t\tfor _, following := range followings {\n\t\t\tfollowi"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "// User1 follows User2\n\tfollowUser(user1, user2)"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "readme.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1642
+        },
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1631
+        },
+        {
+          "path": "users/unit_test.go",
+          "start_line": 1,
+          "end_line": 554,
+          "score": 0.1629
+        },
+        {
+          "path": "users/models.go",
+          "start_line": 1,
+          "end_line": 154,
+          "score": 0.1628
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,1905 @@
+[
+  {
+    "term": "Owner",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "@Entity Owner.java + OwnerRepository + OwnerController",
+    "archietect": {
+      "elapsed_s": 0.0173,
+      "result": {
+        "canonical": "Owner",
+        "competing": [],
+        "concept": "Owner",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "jpa declaration in src/main/java/org/springframework/samples/petclinic/owner/Owner.java"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/h2/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/mysql/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/postgres/schema.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/h2/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/postgres/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/VisitControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/service/ClinicServiceTests.java"
+          }
+        ],
+        "fields": [],
+        "first_seen_label": "4 minutes ago",
+        "first_seen_ms": 1788441738626,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441984040,
+        "recommendation": "'Owner' already exists as 'Owner'. Extend it; do not create a second implementation.",
+        "relations": [
+          "final"
+        ],
+        "table": "owners",
+        "used_by_files": [
+          "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "src/main/resources/db/h2/data.sql",
+          "src/main/resources/db/postgres/data.sql",
+          "src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/owner/VisitControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/service/ClinicServiceTests.java"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1376,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 7,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 64,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 49,
+          "end_line": 179,
+          "snippet": "class OwnerController {\n\n\tprivate static final String VIEWS_OWNER_CREATE_OR_UPDATE_FORM = \"owners/createOrUpdateOwnerForm\";\n\n\tprivate final OwnerRepository owne"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic) [![Open in GitHub Codes"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "id 'checkstyle'"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1652
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java",
+          "start_line": 1,
+          "end_line": 64,
+          "score": 0.1632
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1628
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "start_line": 49,
+          "end_line": 179,
+          "score": 0.1625
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1148,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 3,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 64,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 49,
+          "end_line": 179,
+          "snippet": "class OwnerController {\n\n\tprivate static final String VIEWS_OWNER_CREATE_OR_UPDATE_FORM = \"owners/createOrUpdateOwnerForm\";\n\n\tprivate final OwnerRepository owne"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1652
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java",
+          "start_line": 1,
+          "end_line": 64,
+          "score": 0.1632
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1628
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java",
+          "start_line": 49,
+          "end_line": 179,
+          "score": 0.1625
+        }
+      ]
+    }
+  },
+  {
+    "term": "Pet",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "@Entity Pet.java + PetController, referenced by Owner/Visit",
+    "archietect": {
+      "elapsed_s": 0.0171,
+      "result": {
+        "canonical": "Pet",
+        "competing": [
+          "PetType"
+        ],
+        "concept": "Pet",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "jpa declaration in src/main/java/org/springframework/samples/petclinic/owner/Pet.java"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/h2/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/mysql/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/postgres/schema.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/h2/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/postgres/data.sql"
+          }
+        ],
+        "fields": [],
+        "first_seen_label": "4 minutes ago",
+        "first_seen_ms": 1788441738626,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441984311,
+        "recommendation": "'Pet' already exists as 'Pet'. Extend it; do not create a second implementation.",
+        "relations": [
+          "PetType",
+          "final"
+        ],
+        "table": "pets",
+        "used_by_files": [
+          "src/main/resources/db/h2/data.sql",
+          "src/main/resources/db/postgres/data.sql"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1182,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 64,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 41,
+          "end_line": 127,
+          "snippet": "class PetValidatorTests {\n\n\tprivate PetValidator petValidator;\n\n\tprivate Pet pet;\n\n\tprivate PetType petType;\n\n\tprivate Errors errors;\n\n\tprivate static final Str"
+        },
+        {
+          "path": null,
+          "start_line": 49,
+          "end_line": 207,
+          "snippet": "/**\n\t * Updates the pet details if it exists or adds a new pet to the owner.\n\t * @param owner The owner of the pet\n\t * @param pet The pet with updated details\n\t"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic) [![Open in GitHub Codes"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "id 'checkstyle'"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1638
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java",
+          "start_line": 1,
+          "end_line": 64,
+          "score": 0.1632
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1631
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java",
+          "start_line": 41,
+          "end_line": 127,
+          "score": 0.1629
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetController.java",
+          "start_line": 49,
+          "end_line": 207,
+          "score": 0.1628
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1905,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 5,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 64,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 41,
+          "end_line": 127,
+          "snippet": "class PetValidatorTests {\n\n\tprivate PetValidator petValidator;\n\n\tprivate Pet pet;\n\n\tprivate PetType petType;\n\n\tprivate Errors errors;\n\n\tprivate static final Str"
+        },
+        {
+          "path": null,
+          "start_line": 49,
+          "end_line": 207,
+          "snippet": "/**\n\t * Updates the pet details if it exists or adds a new pet to the owner.\n\t * @param owner The owner of the pet\n\t * @param pet The pet with updated details\n\t"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "Owner owner = new Owner();\n\t\tPet pet = new Pet();\n\t\tPet dog = new Pet();\n\t\towner.addPet(pet);\n\t\towner.addPet(dog);\n\t\tpet.setId(TEST_PET_ID);\n\t\tdog.setId(TEST_PE"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "/**\n\t * Updates the pet details if it exists or adds a new pet to the owner.\n\t * @param owner The owner of the pet\n\t * @param pet The pet with updated details\n\t"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1638
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetValidator.java",
+          "start_line": 1,
+          "end_line": 64,
+          "score": 0.1632
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1631
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java",
+          "start_line": 41,
+          "end_line": 127,
+          "score": 0.1629
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetController.java",
+          "start_line": 49,
+          "end_line": 207,
+          "score": 0.1628
+        }
+      ]
+    }
+  },
+  {
+    "term": "Vet",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "@Entity Vet.java + VetRepository + VetController",
+    "archietect": {
+      "elapsed_s": 0.017,
+      "result": {
+        "canonical": "Vet",
+        "competing": [
+          "vet_specialties"
+        ],
+        "concept": "Vet",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "jpa declaration in src/main/java/org/springframework/samples/petclinic/vet/Vet.java"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/h2/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/mysql/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/postgres/schema.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/h2/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/postgres/data.sql"
+          }
+        ],
+        "fields": [],
+        "first_seen_label": "4 minutes ago",
+        "first_seen_ms": 1788441738626,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441984637,
+        "recommendation": "'Vet' already exists as 'Vet'. Extend it; do not create a second implementation.",
+        "relations": [
+          "Specialty"
+        ],
+        "table": "vets",
+        "used_by_files": [
+          "src/main/resources/db/h2/data.sql",
+          "src/main/resources/db/postgres/data.sql"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.121,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 9,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 38,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 26,
+          "end_line": 41,
+          "snippet": "class VetTests {\n\n\t@Test\n\tvoid serialization() {\n\t\tVet vet = new Vet();\n\t\tvet.setFirstName(\"Zaphod\");\n\t\tvet.setLastName(\"Beeblebrox\");\n\t\tvet.setId(123);\n\t\t@Supp"
+        },
+        {
+          "path": null,
+          "start_line": 36,
+          "end_line": 74,
+          "snippet": "class VetController {\n\n\tprivate final VetRepository vetRepository;\n\n\tpublic VetController(VetRepository vetRepository) {\n\t\tthis.vetRepository = vetRepository;\n\t"
+        },
+        {
+          "path": null,
+          "start_line": 46,
+          "end_line": 100,
+          "snippet": "class VetControllerTests {\n\n\t@Autowired\n\tprivate MockMvc mockMvc;\n\n\t@MockitoBean\n\tprivate VetRepository vets;\n\n\tprivate Vet james() {\n\t\tVet james = new Vet();\n\t"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1653
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1642
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1634
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1633
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java",
+          "start_line": 1,
+          "end_line": 38,
+          "score": 0.1632
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/vet/VetTests.java",
+          "start_line": 26,
+          "end_line": 41,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/vet/VetController.java",
+          "start_line": 36,
+          "end_line": 74,
+          "score": 0.1626
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/vet/VetControllerTests.java",
+          "start_line": 46,
+          "end_line": 100,
+          "score": 0.1625
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/MySqlIntegrationTests.java",
+          "start_line": 46,
+          "end_line": 74,
+          "score": 0.162
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1117,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 9,
+      "multigranular_results_count": 4,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 38,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 26,
+          "end_line": 41,
+          "snippet": "class VetTests {\n\n\t@Test\n\tvoid serialization() {\n\t\tVet vet = new Vet();\n\t\tvet.setFirstName(\"Zaphod\");\n\t\tvet.setLastName(\"Beeblebrox\");\n\t\tvet.setId(123);\n\t\t@Supp"
+        },
+        {
+          "path": null,
+          "start_line": 36,
+          "end_line": 74,
+          "snippet": "class VetController {\n\n\tprivate final VetRepository vetRepository;\n\n\tpublic VetController(VetRepository vetRepository) {\n\t\tthis.vetRepository = vetRepository;\n\t"
+        },
+        {
+          "path": null,
+          "start_line": 46,
+          "end_line": 100,
+          "snippet": "class VetControllerTests {\n\n\t@Autowired\n\tprivate MockMvc mockMvc;\n\n\t@MockitoBean\n\tprivate VetRepository vets;\n\n\tprivate Vet james() {\n\t\tVet james = new Vet();\n\t"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1653
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1642
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1634
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1633
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java",
+          "start_line": 1,
+          "end_line": 38,
+          "score": 0.1632
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/vet/VetTests.java",
+          "start_line": 26,
+          "end_line": 41,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/vet/VetController.java",
+          "start_line": 36,
+          "end_line": 74,
+          "score": 0.1626
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/vet/VetControllerTests.java",
+          "start_line": 46,
+          "end_line": 100,
+          "score": 0.1625
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/MySqlIntegrationTests.java",
+          "start_line": 46,
+          "end_line": 74,
+          "score": 0.162
+        }
+      ]
+    }
+  },
+  {
+    "term": "Visit",
+    "ground_truth": "EXISTS_MULTI",
+    "note": "@Entity Visit.java + VisitController",
+    "archietect": {
+      "elapsed_s": 0.0182,
+      "result": {
+        "canonical": "Visit",
+        "competing": [],
+        "concept": "Visit",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "jpa declaration in src/main/java/org/springframework/samples/petclinic/owner/Visit.java"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/h2/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/mysql/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/postgres/schema.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/main/java/org/springframework/samples/petclinic/owner/VisitController.java"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/h2/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/postgres/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/service/ClinicServiceTests.java"
+          }
+        ],
+        "fields": [],
+        "first_seen_label": "4 minutes ago",
+        "first_seen_ms": 1788441738626,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441984888,
+        "recommendation": "'Visit' already exists as 'Visit'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": "visits",
+        "used_by_files": [
+          "src/main/java/org/springframework/samples/petclinic/owner/VisitController.java",
+          "src/main/resources/db/h2/data.sql",
+          "src/main/resources/db/postgres/data.sql",
+          "src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/service/ClinicServiceTests.java"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1157,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### Steps\n\n1. On the command line run:\n\n    ```bash\n    git clone https://github.com/spring-projects/spring-petclinic.git\n    ```\n\n1. Inside Eclipse or STS:\n\n  "
+        },
+        {
+          "path": null,
+          "start_line": 43,
+          "end_line": 114,
+          "snippet": "class VisitController {\n\n\tprivate final OwnerRepository owners;\n\n\tpublic VisitController(OwnerRepository owners) {\n\t\tthis.owners = owners;\n\t}\n\n\t@InitBinder\n\tpub"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 176,
+          "snippet": "@Override\n\tpublic String toString() {\n\t\treturn new ToStringCreator(this).append(\"id\", this.getId())\n\t\t\t.append(\"new\", this.isNew())\n\t\t\t.append(\"lastName\", this."
+        },
+        {
+          "path": null,
+          "start_line": 47,
+          "end_line": 109,
+          "snippet": "class VisitControllerTests {\n\n\tprivate static final int TEST_OWNER_ID = 1;\n\n\tprivate static final int TEST_PET_ID = 1;\n\n\t@Autowired\n\tprivate MockMvc mockMvc;\n\n\t"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "This project uses [Agent Memory Engine](https://github.com/uudam42/agent-memory-engine)"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1643
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1639
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1637
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/VisitController.java",
+          "start_line": 43,
+          "end_line": 114,
+          "score": 0.1632
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/Owner.java",
+          "start_line": 1,
+          "end_line": 176,
+          "score": 0.1631
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/VisitControllerTests.java",
+          "start_line": 47,
+          "end_line": 109,
+          "score": 0.1628
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1145,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 6,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "### Steps\n\n1. On the command line run:\n\n    ```bash\n    git clone https://github.com/spring-projects/spring-petclinic.git\n    ```\n\n1. Inside Eclipse or STS:\n\n  "
+        },
+        {
+          "path": null,
+          "start_line": 43,
+          "end_line": 114,
+          "snippet": "class VisitController {\n\n\tprivate final OwnerRepository owners;\n\n\tpublic VisitController(OwnerRepository owners) {\n\t\tthis.owners = owners;\n\t}\n\n\t@InitBinder\n\tpub"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 176,
+          "snippet": "@Override\n\tpublic String toString() {\n\t\treturn new ToStringCreator(this).append(\"id\", this.getId())\n\t\t\t.append(\"new\", this.isNew())\n\t\t\t.append(\"lastName\", this."
+        },
+        {
+          "path": null,
+          "start_line": 47,
+          "end_line": 109,
+          "snippet": "class VisitControllerTests {\n\n\tprivate static final int TEST_OWNER_ID = 1;\n\n\tprivate static final int TEST_PET_ID = 1;\n\n\t@Autowired\n\tprivate MockMvc mockMvc;\n\n\t"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "<!DOCTYPE html>\n\n<html xmlns:th=\"https://www.thymeleaf.org\" th:replace=\"~{fragments/layout :: layout (~{::body},'owners')}\">\n\n<body>\n\n  <h2>\n    <th:block th:if"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1643
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1639
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1637
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/VisitController.java",
+          "start_line": 43,
+          "end_line": 114,
+          "score": 0.1632
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/Owner.java",
+          "start_line": 1,
+          "end_line": 176,
+          "score": 0.1631
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/VisitControllerTests.java",
+          "start_line": 47,
+          "end_line": 109,
+          "score": 0.1628
+        }
+      ]
+    }
+  },
+  {
+    "term": "PetType",
+    "ground_truth": "EXISTS",
+    "note": "@Entity PetType.java + PetTypeRepository",
+    "archietect": {
+      "elapsed_s": 0.0186,
+      "result": {
+        "canonical": "PetType",
+        "competing": [],
+        "concept": "PetType",
+        "confidence": "high",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "jpa declaration in src/main/java/org/springframework/samples/petclinic/owner/PetType.java"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/h2/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/mysql/schema.sql"
+          },
+          {
+            "tier": "Declared",
+            "what": "sql declaration in src/main/resources/db/postgres/schema.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/h2/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "raw-sql access in src/main/resources/db/postgres/data.sql"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/PetTypeFormatterTests.java"
+          },
+          {
+            "tier": "Used",
+            "what": "constructed access in src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java"
+          }
+        ],
+        "fields": [],
+        "first_seen_label": "4 minutes ago",
+        "first_seen_ms": 1788441738626,
+        "last_verified_label": "just now",
+        "last_verified_ms": 1788441985138,
+        "recommendation": "'PetType' already exists as 'PetType'. Extend it; do not create a second implementation.",
+        "relations": [],
+        "table": "types",
+        "used_by_files": [
+          "src/main/resources/db/h2/data.sql",
+          "src/main/resources/db/postgres/data.sql",
+          "src/test/java/org/springframework/samples/petclinic/owner/OwnerControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java",
+          "src/test/java/org/springframework/samples/petclinic/owner/PetTypeFormatterTests.java",
+          "src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java"
+        ],
+        "verdict": "ACTIVE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1108,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 10,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 62,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 43,
+          "end_line": 97,
+          "snippet": "class PetTypeFormatterTests {\n\n\t@Mock\n\tprivate PetTypeRepository types;\n\n\tprivate PetTypeFormatter petTypeFormatter;\n\n\t@BeforeEach\n\tvoid setup() {\n\t\tthis.petTyp"
+        },
+        {
+          "path": null,
+          "start_line": 41,
+          "end_line": 127,
+          "snippet": "class PetValidatorTests {\n\n\tprivate PetValidator petValidator;\n\n\tprivate Pet pet;\n\n\tprivate PetType petType;\n\n\tprivate Errors errors;\n\n\tprivate static final Str"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "* Copyright 2012-2025 the original author or authors."
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "* Copyright 2012-2025 the original author or authors. Key components: PetController."
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1639
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+          "start_line": 1,
+          "end_line": 62,
+          "score": 0.1633
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetTypeFormatterTests.java",
+          "start_line": 43,
+          "end_line": 97,
+          "score": 0.1632
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java",
+          "start_line": 41,
+          "end_line": 127,
+          "score": 0.1631
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.119,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 6,
+      "multigranular_results_count": 5,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 62,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 43,
+          "end_line": 97,
+          "snippet": "class PetTypeFormatterTests {\n\n\t@Mock\n\tprivate PetTypeRepository types;\n\n\tprivate PetTypeFormatter petTypeFormatter;\n\n\t@BeforeEach\n\tvoid setup() {\n\t\tthis.petTyp"
+        },
+        {
+          "path": null,
+          "start_line": 41,
+          "end_line": 127,
+          "snippet": "class PetValidatorTests {\n\n\tprivate PetValidator petValidator;\n\n\tprivate Pet pet;\n\n\tprivate PetType petType;\n\n\tprivate Errors errors;\n\n\tprivate static final Str"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "@BeforeEach\n\tvoid setup() {\n\t\tPetType cat = new PetType();\n\t\tcat.setId(3);\n\t\tcat.setName(\"hamster\");\n\t\tgiven(this.types.findPetTypes()).willReturn(List.of(cat))"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1645
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1639
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+          "start_line": 1,
+          "end_line": 62,
+          "score": 0.1633
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetTypeFormatterTests.java",
+          "start_line": 43,
+          "end_line": 97,
+          "score": 0.1632
+        },
+        {
+          "path": "src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java",
+          "start_line": 41,
+          "end_line": 127,
+          "score": 0.1631
+        }
+      ]
+    }
+  },
+  {
+    "term": "Payment",
+    "ground_truth": "ABSENT",
+    "note": "no invoice/billing/payment code anywhere",
+    "archietect": {
+      "elapsed_s": 0.0208,
+      "result": {
+        "canonical": null,
+        "concept": "Payment",
+        "confidence": "unknown \u2014 this repository contains files in a language with no structural extractor; absence of evidence there is not evidence of absence",
+        "evidence": [],
+        "next_action": {
+          "escalation": "If this language has no structural extractor at all, propose one via `archietect proposal submit --kind extractor` \u2014 it will be validated against the existing laws + invariants suite before anyone applies it.",
+          "if_universal_defect": "That's for a missing extractor \u2014 a coverage gap, fixable locally. If instead this looks like a defect in Archietect itself (it should have understood this and didn't, in a way that would misfire on any codebase, not just this one), a local fix can't correct that. Report it: https://github.com/Neville777/Archietect/issues, with this query and its evidence attached.",
+          "note": "Any finding from reading these files is provisional. It is not an Archietect fact, is not persisted, and does not change this verdict \u2014 that only happens if a human adds an extractor, an alias, or a decision.",
+          "question": "Do any of these files implement or represent 'Payment'?",
+          "read": [
+            ".memory-engine/project.fingerprint",
+            ".mvn/wrapper/maven-wrapper.properties",
+            "build.gradle",
+            "gradle/wrapper/gradle-wrapper.jar",
+            "gradle/wrapper/gradle-wrapper.properties",
+            "mvnw.cmd",
+            "settings.gradle",
+            "src/main/resources/application-mysql.properties",
+            "src/main/resources/application-postgres.properties",
+            "src/main/resources/application.properties",
+            "src/main/resources/messages/messages.properties",
+            "src/main/resources/messages/messages_de.properties",
+            "src/main/resources/messages/messages_en.properties",
+            "src/main/resources/messages/messages_es.properties",
+            "src/main/resources/messages/messages_fa.properties"
+          ],
+          "type": "ai_investigation"
+        },
+        "recommendation": "No declared, structural, or named evidence for 'Payment' \u2014 but Archietect cannot see into some of this repo's source at all. This is not a confirmed absence; see next_action.",
+        "verdict": "INSUFFICIENT_COVERAGE"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1075,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 8,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 51,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 60,
+          "snippet": "package org.springframework.samples.petclinic.system;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configu"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "plugins {\n  id 'java'\n  id 'checkstyle'\n  id 'org.springframework.boot' version '4.1.0'\n  id 'io.spring.dependency-management' version '1.1.7'\n  id 'org.graalvm"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic) [![Open in GitHub Codes"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1657
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+          "start_line": 1,
+          "end_line": 51,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+          "start_line": 1,
+          "end_line": 60,
+          "score": 0.1625
+        },
+        {
+          "path": "build.gradle",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1583
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1058,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 2,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 51,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 60,
+          "snippet": "package org.springframework.samples.petclinic.system;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configu"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "plugins {\n  id 'java'\n  id 'checkstyle'\n  id 'org.springframework.boot' version '4.1.0'\n  id 'io.spring.dependency-management' version '1.1.7'\n  id 'org.graalvm"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1657
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+          "start_line": 1,
+          "end_line": 51,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+          "start_line": 1,
+          "end_line": 60,
+          "score": 0.1625
+        },
+        {
+          "path": "build.gradle",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1583
+        }
+      ]
+    }
+  },
+  {
+    "term": "Clinic",
+    "ground_truth": "AMBIGUOUS",
+    "note": "no class literally named Clinic; only PetClinicApplication/PetClinicRuntimeHints filename resemblance",
+    "archietect": {
+      "elapsed_s": 0.0175,
+      "result": {
+        "canonical": "PetClinicApplication",
+        "concept": "Clinic",
+        "confidence": "high \u2014 found in source as a real symbol, not a declared data/schema model",
+        "evidence": [
+          {
+            "tier": "Declared",
+            "what": "Class declared in src/main/java/org/springframework/samples/petclinic/PetClinicApplication.java:30"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java:25"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in src/test/java/org/springframework/samples/petclinic/PetClinicConcurrencyTests.java:29"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java:35"
+          },
+          {
+            "tier": "Declared",
+            "what": "Class declared in src/test/java/org/springframework/samples/petclinic/service/ClinicServiceTests.java:76"
+          }
+        ],
+        "recommendation": "'Clinic' exists in source but is not a schema/storage concept (it's a function, class, route, or similar). Schema-concept ranking does not apply.",
+        "routes": [],
+        "source": [
+          {
+            "excerpt": "28: @SpringBootApplication\n29: @ImportRuntimeHints(PetClinicRuntimeHints.class)\n30: public class PetClinicApplication {\n31: \n32: \tpublic static void main(String[] args) {",
+            "file": "src/main/java/org/springframework/samples/petclinic/PetClinicApplication.java",
+            "line": 30
+          },
+          {
+            "excerpt": "23: import org.springframework.samples.petclinic.vet.Vet;\n24: \n25: public class PetClinicRuntimeHints implements RuntimeHintsRegistrar {\n26: \n27: \t@Override",
+            "file": "src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java",
+            "line": 25
+          },
+          {
+            "excerpt": "27: \n28: @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)\n29: public class PetClinicConcurrencyTests {\n30: \n31: \t@LocalServerPort",
+            "file": "src/test/java/org/springframework/samples/petclinic/PetClinicConcurrencyTests.java",
+            "line": 29
+          }
+        ],
+        "verdict": "STRUCTURAL"
+      }
+    },
+    "ame_architecture_review": {
+      "elapsed_s": 0.1073,
+      "task_intent": "architecture_review",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 8,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 51,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 60,
+          "snippet": "package org.springframework.samples.petclinic.system;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configu"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "plugins {\n  id 'java'\n  id 'checkstyle'\n  id 'org.springframework.boot' version '4.1.0'\n  id 'io.spring.dependency-management' version '1.1.7'\n  id 'org.graalvm"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic) [![Open in GitHub Codes"
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+          "start_line": 1,
+          "end_line": 51,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+          "start_line": 1,
+          "end_line": 60,
+          "score": 0.1625
+        },
+        {
+          "path": "build.gradle",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1582
+        }
+      ]
+    },
+    "ame_feature_implementation": {
+      "elapsed_s": 0.1118,
+      "task_intent": "feature_implementation",
+      "memory_results_count": 0,
+      "knowledge_results_count": 7,
+      "multigranular_results_count": 2,
+      "cache_hit": false,
+      "retrieval_mode": "lexical_structured_fallback",
+      "modules": [],
+      "architecture": [],
+      "decisions": [],
+      "knowledge_items": [
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interesting Spring Petclinic branches and forks\n\nThe Spring Petclinic \"main\" branch in the [spring-projects](https://github.com/spring-projects/spring-petcli"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Understanding the Spring Petclinic application with a few diagrams\n\nSee the presentation here:  \n[Spring Petclinic Sample Application (legacy slides)](https:"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        },
+        {
+          "path": null,
+          "start_line": 33,
+          "end_line": 53,
+          "snippet": "class CacheConfiguration {\n\n\t@Bean\n\tpublic JCacheManagerCustomizer petclinicCacheConfigurationCustomizer() {\n\t\treturn cm -> cm.createCache(\"vets\", cacheConfigur"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 51,
+          "snippet": "/*\n * Copyright 2012-2025 the original author or authors.\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file exc"
+        },
+        {
+          "path": null,
+          "start_line": 1,
+          "end_line": 60,
+          "snippet": "package org.springframework.samples.petclinic.system;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configu"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "plugins {\n  id 'java'\n  id 'checkstyle'\n  id 'org.springframework.boot' version '4.1.0'\n  id 'io.spring.dependency-management' version '1.1.7'\n  id 'org.graalvm"
+        },
+        {
+          "path": null,
+          "start_line": null,
+          "end_line": null,
+          "snippet": "## Interaction with other open-source projects\n\nOne of the best parts about working on the Spring Petclinic application is that we have the opportunity to work "
+        }
+      ],
+      "trace_paths": [
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1658
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1654
+        },
+        {
+          "path": "README.md",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1649
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java",
+          "start_line": 33,
+          "end_line": 53,
+          "score": 0.1631
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+          "start_line": 1,
+          "end_line": 51,
+          "score": 0.1627
+        },
+        {
+          "path": "src/main/java/org/springframework/samples/petclinic/system/WebConfiguration.java",
+          "start_line": 1,
+          "end_line": 60,
+          "score": 0.1625
+        },
+        {
+          "path": "build.gradle",
+          "start_line": null,
+          "end_line": null,
+          "score": 0.1582
+        }
+      ]
+    }
+  }
+]

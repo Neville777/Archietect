@@ -1,0 +1,38 @@
+{
+  "golang-gin-realworld-example-app": {
+    "root": "validation/golang-gin-realworld-example-app",
+    "queries": [
+      {"term": "ArticleModel", "gt": "EXISTS", "note": "struct declared articles/models.go:11"},
+      {"term": "UserModel", "gt": "EXISTS", "note": "struct declared users/models.go:16"},
+      {"term": "CommentModel", "gt": "EXISTS", "note": "struct declared articles/models.go:45"},
+      {"term": "TagModel", "gt": "EXISTS", "note": "struct declared articles/models.go:39"},
+      {"term": "Payment", "gt": "ABSENT", "note": "no matches anywhere in repo"},
+      {"term": "Validator", "gt": "AMBIGUOUS", "note": "no type literally named Validator; UserModelValidator/ArticleModelValidator/CommentModelValidator exist instead"},
+      {"term": "Follow", "gt": "EXISTS_MULTI", "note": "used across users/routers.go, users/serializers.go, users/models.go, articles/models.go, both unit_test.go files"}
+    ]
+  },
+  "spring-petclinic": {
+    "root": "validation/spring-petclinic",
+    "queries": [
+      {"term": "Owner", "gt": "EXISTS_MULTI", "note": "@Entity Owner.java + OwnerRepository + OwnerController"},
+      {"term": "Pet", "gt": "EXISTS_MULTI", "note": "@Entity Pet.java + PetController, referenced by Owner/Visit"},
+      {"term": "Vet", "gt": "EXISTS_MULTI", "note": "@Entity Vet.java + VetRepository + VetController"},
+      {"term": "Visit", "gt": "EXISTS_MULTI", "note": "@Entity Visit.java + VisitController"},
+      {"term": "PetType", "gt": "EXISTS", "note": "@Entity PetType.java + PetTypeRepository"},
+      {"term": "Payment", "gt": "ABSENT", "note": "no invoice/billing/payment code anywhere"},
+      {"term": "Clinic", "gt": "AMBIGUOUS", "note": "no class literally named Clinic; only PetClinicApplication/PetClinicRuntimeHints filename resemblance"}
+    ]
+  },
+  "nestjs-realworld-example-app": {
+    "root": "validation/nestjs-realworld-example-app",
+    "queries": [
+      {"term": "ArticleEntity", "gt": "EXISTS_MULTI", "note": "declared article.entity.ts, used in 6 files"},
+      {"term": "UserEntity", "gt": "EXISTS_MULTI", "note": "declared user.entity.ts, used in 8 files"},
+      {"term": "TagEntity", "gt": "EXISTS_MULTI", "note": "declared tag.entity.ts, used in 5 files"},
+      {"term": "FollowsEntity", "gt": "EXISTS_MULTI", "note": "declared profile/follows.entity.ts, used in article.module.ts + article.service.ts"},
+      {"term": "Payment", "gt": "ABSENT", "note": "no payment/subscription/notification code anywhere"},
+      {"term": "CommentEntity", "gt": "AMBIGUOUS", "note": "real class is named 'Comment' (comment.entity.ts:5), not CommentEntity -- name-only mismatch"},
+      {"term": "Comment", "gt": "EXISTS_MULTI", "note": "the real class name; used in article.entity.ts, article.service.ts, article.interface.ts, article.module.ts"}
+    ]
+  }
+}

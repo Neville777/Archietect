@@ -2,3 +2,4 @@
 archietect.db
 validation/
 .archietect/
+__pycache__/

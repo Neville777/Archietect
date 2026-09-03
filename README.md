@@ -101,6 +101,11 @@ never silently guessed past). That's the entire trust model.
 **Tech stack:** Rust, SQLite (`rusqlite`, bundled — no external DB to run),
 regex-based structural/schema extraction, `tiny_http` for REST, stdio for MCP.
 
+**Real, reproducible benchmark:** [archietect vs. Agent Memory Engine](benchmarks/vs-agent-memory-engine/) —
+15/15 vs 5/15 on surfacing a concept's real declaring file, across 3 public
+repos already in `validation/`. Every number is reproducible from a script
+in that directory; limitations are stated there too.
+
 ## Structural coverage
 
 | Language | Symbols | Frameworks (routes) |
