@@ -46,7 +46,7 @@ git -C "$PROJECT" config user.email test@test.com
 git -C "$PROJECT" config user.name test
 git -C "$PROJECT" add schema.prisma
 git -C "$PROJECT" commit -q -m init
-"$ONBOARD" "$PROJECT" --non-interactive --git-hook --claude-hook > "$TMP/run1.log" 2>&1
+"$ONBOARD" "$PROJECT" --non-interactive --git-hook --claude-hook --cursor-hook > "$TMP/run1.log" 2>&1
 check "binary exists"                 "[[ -x \"$BIN\" ]]"
 check "project database created"      "[[ -f \"$PROJECT/archietect.db\" ]]"
 check "archietect status works"        "\"$BIN\" status --root \"$PROJECT\" >/dev/null"
@@ -104,6 +104,29 @@ check "boundary blocks a credential-shaped filename (exit 2)" "[[ \"$DENY2_RC\" 
 ALLOW2_RC=0
 CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{\"tool_input\": {\"file_path\": \"$PROJECT/src/main.rs\"}}' | \"$BOUNDARY\"" >/dev/null 2>&1 || ALLOW2_RC=$?
 check "boundary allows a plain source path (exit 0)" "[[ \"$ALLOW2_RC\" -eq 0 ]]"
+
+echo
+echo "== Test 1f: Cursor boundary hook enforces the same permission boundary =="
+CURSOR_BOUNDARY="$PROJECT/.cursor/hooks/archietect-boundary.sh"
+check "cursor boundary script installed"   "[[ -x \"$CURSOR_BOUNDARY\" ]]"
+check "hooks.json references it"           "grep -q archietect-boundary.sh \"$PROJECT/.cursor/hooks.json\""
+# Written to temp files rather than bash variables: the real denial JSON
+# legitimately contains single quotes (permissions.rs's reason format uses
+# 'path contains '.ssh''), which breaks re-quoting a captured value back
+# into another single-quoted shell string — found by hitting exactly that
+# bug while writing this test, not a hypothetical.
+CURSOR_DENY_FILE="$TMP/cursor-deny.json"
+echo "{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$PROJECT/.ssh/id_rsa\"},\"cwd\":\"$PROJECT\"}" | "$CURSOR_BOUNDARY" > "$CURSOR_DENY_FILE"
+check "cursor boundary denies a .ssh path"              "[[ \$(jq -r .permission \"$CURSOR_DENY_FILE\") == 'deny' ]]"
+check "cursor boundary denial names the real reason"    "jq -r .user_message \"$CURSOR_DENY_FILE\" | grep -qF \"'.ssh'\""
+CURSOR_DENY2_FILE="$TMP/cursor-deny2.json"
+echo "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$PROJECT/config/secrets.json\"},\"cwd\":\"$PROJECT\"}" | "$CURSOR_BOUNDARY" > "$CURSOR_DENY2_FILE"
+check "cursor boundary denies a credential-shaped filename" "[[ \$(jq -r .permission \"$CURSOR_DENY2_FILE\") == 'deny' ]]"
+CURSOR_ALLOW_FILE="$TMP/cursor-allow.json"
+echo "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$PROJECT/src/main.rs\"},\"cwd\":\"$PROJECT\"}" | "$CURSOR_BOUNDARY" > "$CURSOR_ALLOW_FILE"
+check "cursor boundary allows a plain source path"      "[[ \$(jq -r .permission \"$CURSOR_ALLOW_FILE\") == 'allow' ]]"
+check "claude settings.json does not reference the cursor script" "! grep -q '.cursor/hooks' \"$PROJECT/.claude/settings.json\""
+check "cursor hooks.json does not reference the claude script"    "! grep -q '.claude/hooks' \"$PROJECT/.cursor/hooks.json\""
 
 echo
 echo "== Test 2: existing architecture memory survives re-onboarding =="

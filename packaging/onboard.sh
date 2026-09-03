@@ -12,7 +12,15 @@
 #   packaging/onboard.sh /path/to/project --no-git-hook
 #   packaging/onboard.sh /path/to/project --claude-hook    # force-enable the Claude Code PreToolUse gate, no prompt
 #   packaging/onboard.sh /path/to/project --no-claude-hook
-#   packaging/onboard.sh /path/to/project --non-interactive   # CI: never prompt, default "no" for all three unless the matching --flag is given
+#   packaging/onboard.sh /path/to/project --cursor-hook    # force-enable the Cursor preToolUse gate, no prompt
+#   packaging/onboard.sh /path/to/project --no-cursor-hook
+#   packaging/onboard.sh /path/to/project --non-interactive   # CI: never prompt, default "no" for all adapters unless the matching --flag is given
+#
+# --claude-hook and --cursor-hook are separate, independent adapters into the
+# SAME vendor-neutral boundary (permissions::check_resource, exposed as
+# `archietect permissions-check`) — see SYSTEM_MEMORY.md's "Instruction
+# files vs. memory vs. enforcement". Installing one implies nothing about
+# the other; a Cursor-only project never touches .claude/, and vice versa.
 set -euo pipefail
 
 ARCHIETECT_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,6 +30,7 @@ TARGET=""
 DAEMON_FLAG=""       # "", "yes", "no"
 GIT_HOOK_FLAG=""     # "", "yes", "no"
 CLAUDE_HOOK_FLAG=""  # "", "yes", "no"
+CURSOR_HOOK_FLAG=""  # "", "yes", "no"
 NON_INTERACTIVE=0
 for arg in "$@"; do
     case "$arg" in
@@ -31,6 +40,8 @@ for arg in "$@"; do
         --no-git-hook) GIT_HOOK_FLAG="no" ;;
         --claude-hook) CLAUDE_HOOK_FLAG="yes" ;;
         --no-claude-hook) CLAUDE_HOOK_FLAG="no" ;;
+        --cursor-hook) CURSOR_HOOK_FLAG="yes" ;;
+        --no-cursor-hook) CURSOR_HOOK_FLAG="no" ;;
         --non-interactive) NON_INTERACTIVE=1 ;;
         *) TARGET="$arg" ;;
     esac
@@ -56,7 +67,7 @@ print(d)
     fi
 }
 
-echo "== 1/7  build =="
+echo "== 1/8  build =="
 if [[ -x "$BIN" ]]; then
     echo "   already built: $BIN"
 else
@@ -81,7 +92,7 @@ for l in d.get("present_but_unsupported", []):
     fi
 }
 
-echo "== 2/7  index $TARGET =="
+echo "== 2/8  index $TARGET =="
 INIT_JSON="$("$BIN" init --root "$TARGET")"
 FILES=$(echo "$INIT_JSON" | json_get '.files_scanned')
 SYMBOLS=$(echo "$INIT_JSON" | json_get '.symbols')
@@ -94,7 +105,7 @@ else
     COVERAGE_JSON="$(echo "$STATUS_JSON" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)["structural_coverage"]))')"
 fi
 
-echo "== 3/7  MCP registration (global — every project reuses this one entry) =="
+echo "== 3/8  MCP registration (global — every project reuses this one entry) =="
 MCP_OK=0
 if command -v claude >/dev/null 2>&1; then
     if claude mcp list 2>/dev/null | grep -q "^archietect:"; then
@@ -113,7 +124,7 @@ else
     echo "     claude mcp add archietect -- $BIN mcp"
 fi
 
-echo "== 4/7  agent instructions =="
+echo "== 4/8  agent instructions =="
 # Registering the MCP server makes archietect *available*; it doesn't make
 # an agent reach for it instead of grepping/reading the tree by hand — an
 # agent that isn't told to check first, won't. Non-destructive: append-only,
@@ -164,7 +175,7 @@ write_agent_instructions() {
 }
 write_agent_instructions "$TARGET/AGENTS.md"
 
-echo "== 5/7  commit gate (pre-commit hook) =="
+echo "== 5/8  commit gate (pre-commit hook) =="
 # The instructions above are advisory — an agent that doesn't feel like
 # checking, won't. This is the actual gate: it inspects the STAGED DIFF, so
 # it rejects a violation regardless of whether a human, Claude, Cursor, or
@@ -228,7 +239,7 @@ else
     echo "   skipped (rerun with --git-hook any time to enable it for $TARGET)"
 fi
 
-echo "== 6/7  Claude Code edit gate =="
+echo "== 6/8  Claude Code edit gate =="
 # The commit gate above catches a violation at commit time — this catches it
 # earlier, before the write even lands, but ONLY inside Claude Code and ONLY
 # for genuinely NEW files (an existing file being legitimately rewritten via
@@ -431,7 +442,173 @@ else
     echo "   skipped (rerun with --claude-hook any time to enable it for $TARGET)"
 fi
 
-echo "== 7/7  continuous watching =="
+echo "== 7/8  Cursor edit gate =="
+# The Cursor ADAPTER for the same vendor-neutral boundary the Claude Code
+# adapter above uses — see SYSTEM_MEMORY.md's "Instruction files vs. memory
+# vs. enforcement" ("one boundary, many thin adapters"). This script owns
+# zero policy: it only translates Cursor's preToolUse hook (confirmed
+# against https://cursor.com/docs/hooks before writing this — Cursor's own
+# schema, not assumed from Claude Code's) into one `archietect
+# permissions-check` call, and translates {allowed, reason} into Cursor's
+# own response shape ({"permission": "allow"|"deny", ...}), never into
+# Claude Code's (stderr + exit 2). Confirmed schema: hooks.json's
+# `preToolUse` entries take a `matcher` string of pipe-separated tool types
+# — Cursor's documented values are Shell/Read/Write/Grep/Delete/Task/
+# MCP:<name>, with NO separate "Edit" type the way Claude Code has, so
+# "Read|Write" is the closest available match to the Claude adapter's
+# "Read|Edit|Write" scope, not a narrower choice made on purpose. stdin
+# carries `tool_name`/`tool_input.file_path`/`cwd` (project root arrives in
+# the payload itself, unlike Claude Code's CLAUDE_PROJECT_DIR env var — no
+# equivalent env var was found or assumed). stdout must be
+# `{"permission": "allow"|"deny", "user_message": ..., "agent_message":
+# ...}` — exit 2 alone is documented as deny-equivalent but doesn't carry a
+# reason, so this script always prints the full JSON and exits 0, matching
+# Cursor's own documented example script rather than mixing mechanisms.
+if [[ -z "$CURSOR_HOOK_FLAG" ]]; then
+    if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+        CURSOR_HOOK_FLAG="no"
+        echo "   --non-interactive: defaulting to no Cursor hook (pass --cursor-hook to enable unattended)"
+    elif [[ -t 0 && -t 1 ]]; then
+        read -r -p "   Install a Cursor hook that enforces the archietect permission boundary? [y/N] " ans
+        case "$ans" in
+            [yY]*) CURSOR_HOOK_FLAG="yes" ;;
+            *) CURSOR_HOOK_FLAG="no" ;;
+        esac
+    else
+        CURSOR_HOOK_FLAG="no"
+        echo "   no TTY to prompt — defaulting to no Cursor hook (pass --cursor-hook to enable)"
+    fi
+fi
+
+CURSOR_HOOK_STATE="not installed"
+if [[ "$CURSOR_HOOK_FLAG" == "yes" ]]; then
+    CURSOR_HOOKS_DIR="$TARGET/.cursor/hooks"
+    CURSOR_BOUNDARY_SCRIPT="$CURSOR_HOOKS_DIR/archietect-boundary.sh"
+    CURSOR_CONFIG_FILE="$TARGET/.cursor/hooks.json"
+    CURSOR_BOUNDARY_CMD=".cursor/hooks/archietect-boundary.sh"
+    mkdir -p "$CURSOR_HOOKS_DIR"
+
+    sed -e "s|__ARCHIETECT_BIN__|${BIN}|g" > "$CURSOR_BOUNDARY_SCRIPT" <<'CURSORBOUNDARY'
+#!/bin/bash
+# archietect:managed — installed by packaging/onboard.sh --cursor-hook.
+# The Cursor adapter for archietect's permission boundary. Pure
+# translation, zero policy — see onboard.sh's own comment above this
+# heredoc for the confirmed Cursor hook schema this relies on.
+ARCHIETECT_BIN="__ARCHIETECT_BIN__"
+INPUT="$(cat)"
+command -v jq >/dev/null 2>&1 || { echo '{"permission":"allow"}'; exit 0; }
+FILE_PATH="$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')"
+if [ -z "$FILE_PATH" ]; then
+    echo '{"permission":"allow"}'
+    exit 0
+fi
+
+BIN_TO_USE="$ARCHIETECT_BIN"
+[ -x "$BIN_TO_USE" ] || BIN_TO_USE="archietect"
+if ! command -v "$BIN_TO_USE" >/dev/null 2>&1 && [ ! -x "$BIN_TO_USE" ]; then
+    echo '{"permission":"allow"}'
+    exit 0
+fi
+
+# Project root comes from the hook payload itself (Cursor's `cwd` field) —
+# there is no confirmed Cursor equivalent of Claude Code's
+# CLAUDE_PROJECT_DIR env var, so none is assumed.
+PROJECT_ROOT="$(echo "$INPUT" | jq -r '.cwd // empty')"
+[ -n "$PROJECT_ROOT" ] || PROJECT_ROOT="$PWD"
+
+DECISION_JSON="$("$BIN_TO_USE" permissions-check --path "$FILE_PATH" --domain code --root "$PROJECT_ROOT" 2>/dev/null)"
+if [ -z "$DECISION_JSON" ]; then
+    echo '{"permission":"allow"}'
+    exit 0
+fi
+# NOT `.allowed // empty` — jq's `//` treats JSON `false` as falsy and would
+# silently turn a real denial into the empty string here, exactly the bug
+# found and fixed in the Claude Code adapter this was copied from.
+ALLOWED="$(echo "$DECISION_JSON" | jq -r 'if has("allowed") then (.allowed | tostring) else "true" end' 2>/dev/null)"
+REASON="$(echo "$DECISION_JSON" | jq -r '.reason // empty' 2>/dev/null)"
+
+if [ "$ALLOWED" = "false" ]; then
+    # jq's \(...) string interpolation, not bash-quoted concatenation — the
+    # earlier version built the JSON via '...'"'"' + $fp + '"'"'...' string
+    # gluing and silently produced "access to  +  + " on every real denial,
+    # because $REASON itself legitimately contains single quotes (e.g.
+    # "path contains '.ssh'") that collided with the bash quoting. Found by
+    # actually running this against a real .ssh path, not by reading the
+    # jq expression and assuming it worked.
+    jq -n --arg fp "$FILE_PATH" --arg reason "$REASON" '
+        {
+            permission: "deny",
+            user_message: "archietect: access to \($fp) is denied by the permission boundary — \($reason).",
+            agent_message: "This path is blocked by the archietect permission boundary (\($reason)). This is not a request; choose a different path."
+        }
+    '
+    exit 0
+fi
+
+echo '{"permission":"allow"}'
+exit 0
+CURSORBOUNDARY
+    chmod +x "$CURSOR_BOUNDARY_SCRIPT"
+
+    if [[ -f "$CURSOR_CONFIG_FILE" ]] && grep -q "archietect-boundary.sh" "$CURSOR_CONFIG_FILE" 2>/dev/null; then
+        echo "   already present: $CURSOR_CONFIG_FILE"
+        CURSOR_HOOK_STATE="installed"
+    elif [[ -f "$CURSOR_CONFIG_FILE" ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            TMP_CURSOR_CONFIG="$(mktemp)"
+            jq --arg cmd "$CURSOR_BOUNDARY_CMD" '
+                .version = (.version // 1) |
+                .hooks.preToolUse = (
+                    (.hooks.preToolUse // [])
+                    + (if any(.hooks.preToolUse[]?; .command == $cmd) then [] else
+                        [{"command": $cmd, "matcher": "Read|Write"}] end)
+                )
+            ' "$CURSOR_CONFIG_FILE" > "$TMP_CURSOR_CONFIG" && mv "$TMP_CURSOR_CONFIG" "$CURSOR_CONFIG_FILE"
+            echo "   updated: $CURSOR_CONFIG_FILE"
+            CURSOR_HOOK_STATE="installed"
+        elif command -v python3 >/dev/null 2>&1; then
+            python3 - "$CURSOR_CONFIG_FILE" "$CURSOR_BOUNDARY_CMD" <<'PYEOF'
+import json, sys
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    data = json.load(fh)
+data.setdefault("version", 1)
+pre = data.setdefault("hooks", {}).setdefault("preToolUse", [])
+if cmd not in {h.get("command") for h in pre}:
+    pre.append({"command": cmd, "matcher": "Read|Write"})
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PYEOF
+            echo "   updated: $CURSOR_CONFIG_FILE"
+            CURSOR_HOOK_STATE="installed"
+        else
+            echo "   $CURSOR_CONFIG_FILE already exists and neither jq nor python3 is available to merge safely — skipping."
+            echo "   add this manually to its \"hooks\".\"preToolUse\" array:"
+            echo "     {\"command\": \"$CURSOR_BOUNDARY_CMD\", \"matcher\": \"Read|Write\"}"
+        fi
+    else
+        cat > "$CURSOR_CONFIG_FILE" <<EOF
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "$CURSOR_BOUNDARY_CMD",
+        "matcher": "Read|Write"
+      }
+    ]
+  }
+}
+EOF
+        echo "   written: $CURSOR_CONFIG_FILE"
+        CURSOR_HOOK_STATE="installed"
+    fi
+else
+    echo "   skipped (rerun with --cursor-hook any time to enable it for $TARGET)"
+fi
+
+echo "== 8/8  continuous watching =="
 if [[ -z "$DAEMON_FLAG" ]]; then
     if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
         DAEMON_FLAG="no"
@@ -505,6 +682,7 @@ mcp_mark() { [[ "$MCP_OK" -eq 1 ]] && echo "✓" || echo "○"; }
 daemon_mark() { [[ "$DAEMON_STATE" == "running" ]] && echo "✓" || echo "○"; }
 git_hook_mark() { [[ "$GIT_HOOK_STATE" == "installed" ]] && echo "✓" || echo "○"; }
 claude_hook_mark() { [[ "$CLAUDE_HOOK_STATE" == "installed" ]] && echo "✓" || echo "○"; }
+cursor_hook_mark() { [[ "$CURSOR_HOOK_STATE" == "installed" ]] && echo "✓" || echo "○"; }
 
 echo
 echo "╭──────────────────────────────────────────╮"
@@ -531,6 +709,7 @@ echo "  $(mcp_mark) MCP"
 echo "  ✓ Agent instructions (AGENTS.md)"
 echo "  $(git_hook_mark) Commit gate (pre-commit hook)"
 echo "  $(claude_hook_mark) Claude Code edit gate"
+echo "  $(cursor_hook_mark) Cursor edit gate"
 echo "  $(daemon_mark) Watch daemon"
 echo
 echo "Archietect is now attached to this project."
