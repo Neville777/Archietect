@@ -403,13 +403,28 @@ fn main() -> anyhow::Result<()> {
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
 
-    // bare `archietect` = the glance — the git-status of architecture
+    // bare `archietect` = the glance — the git-status of architecture.
+    // First-run exception to "queries stay read-only, only init persists"
+    // (see index_for's own doc): a project with no archietect.db yet has
+    // never been told to persist, and requiring a separate `archietect
+    // init` before the tool does anything useful is exactly the extra step
+    // this exists to remove — nobody should need to read the README to
+    // learn a two-command incantation for "start using this here." Every
+    // OTHER invocation (this db already exists) stays exactly as
+    // read-only as before; this only ever fires once per project.
     let Some(cmd) = cli.cmd else {
+        let first_run_here = !root.join("archietect.db").exists();
         let (idx, graph) = index_for(&root);
+        if first_run_here {
+            let _ = store::save(&idx, &graph, &root);
+        }
         let out = query::glance(&idx, &graph, &root);
         if cli.json {
             println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
         } else {
+            if first_run_here {
+                eprintln!("archietect: indexed this project for the first time (archietect.db created) — every future run here is incremental.\n");
+            }
             print_glance(&out);
         }
         return Ok(());

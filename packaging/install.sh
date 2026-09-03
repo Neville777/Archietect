@@ -98,5 +98,21 @@ if command -v "$INSTALL_DIR/archietect" >/dev/null 2>&1 || "$INSTALL_DIR/archiet
     echo "archietect: $("$INSTALL_DIR/archietect" --version 2>/dev/null || echo installed)"
 fi
 
+# One-time, global, idempotent: if Claude Code is on this machine, register
+# archietect's MCP server automatically — every onboarded project reuses
+# this same registration, so it belongs here (install time), not in any
+# per-project step. `claude mcp add` exits 1 if already registered (checked
+# live: re-adding an existing name errors, doesn't just overwrite), so this
+# checks `mcp list` first rather than swallowing that error blindly. Best
+# effort only — a failure here never fails the install itself.
+if command -v claude >/dev/null 2>&1; then
+    if claude mcp list 2>/dev/null | grep -q "^archietect:"; then
+        : # already registered, e.g. a prior install or rerun — nothing to do
+    elif claude mcp add archietect -- "$INSTALL_DIR/archietect" mcp >/dev/null 2>&1; then
+        echo "archietect: registered as an MCP server for Claude Code (every project, automatically)"
+    fi
+fi
+
 echo
-echo "next: archietect init --root /path/to/your-project"
+echo "next: cd into a project and run: archietect"
+echo "  (first run there indexes it automatically — no separate init step)"

@@ -159,11 +159,21 @@ API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Neville777/Archietect/main/packaging/install.sh | sh
-
-# once per project:
-archietect init --root /path/to/your-project
-claude mcp add archietect -- "$(which archietect)" mcp   # once, ever — every project reuses this
 ```
+
+That's it. If Claude Code is on your machine, the script registers
+archietect's MCP server automatically (idempotent — safe to rerun,
+skipped if already registered) — no separate `claude mcp add` step.
+Then, in any project:
+
+```bash
+cd /path/to/your-project
+archietect
+```
+
+The first run there indexes the project automatically (`archietect.db`
+created on the spot) — no separate `init` step either. Every run after
+that is incremental.
 
 Downloads the right prebuilt binary for your platform (Linux x86_64, macOS
 arm64/x86_64) from the latest GitHub Release. Windows and other platforms:
@@ -174,9 +184,13 @@ picks the install directory — see the script's own header for both.
 
 ```bash
 cargo install archietect
-
-archietect init --root /path/to/your-project
 ```
+
+`cargo install` has no post-install hook, so the automatic MCP
+registration above is specific to the curl script — run it once
+yourself here: `claude mcp add archietect -- "$(which archietect)" mcp`.
+Then `cd` into a project and run `archietect` — same first-run
+auto-index as above.
 
 **Option C — build from source** (needed for `packaging/onboard.sh`'s
 one-command flow, the systemd/launchd daemon install, or running the test
