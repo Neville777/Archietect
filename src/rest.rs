@@ -35,6 +35,7 @@
 //!   GET /permissions/check?path=...&domain=code[&root=/path]
 //!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
+//!   GET /photos/scan?dir=/path[&root=/path]        (same contract as /documents/scan)
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
@@ -82,7 +83,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
-    documents_domain, laws, model::Index, permissions, query, root, scan, store, system_db,
+    documents_domain, laws, model::Index, permissions, photos_domain, query, root, scan, store, system_db,
     structural::StructuralGraph,
 };
 
@@ -420,13 +421,41 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                 }
                             }
                         },
+                        // Same NonInteractiveAsker contract as /documents/scan
+                        // above — see this module's doc.
+                        "/photos/scan" => match p.get("dir") {
+                            None => json!({ "error": "missing required ?dir=<path> parameter" }),
+                            Some(dir_str) => {
+                                let dir = PathBuf::from(dir_str);
+                                let result: anyhow::Result<Value> = (|| {
+                                    let global_path = permissions::default_global_config_path()?;
+                                    let cfg = permissions::load(&global_path, &root)?;
+                                    let confirmations_path = permissions::default_confirmations_path()?;
+                                    let (enabled, resources) = photos_domain::scan_if_allowed(
+                                        &cfg,
+                                        &confirmations_path,
+                                        &dir,
+                                        &permissions::NonInteractiveAsker,
+                                    )?;
+                                    Ok(json!({
+                                        "dir": dir.display().to_string(),
+                                        "enabled": enabled,
+                                        "resources": resources,
+                                    }))
+                                })();
+                                match result {
+                                    Ok(v) => v,
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                        },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
                                           "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
-                                          "/documents/scan",
+                                          "/documents/scan", "/photos/scan",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),

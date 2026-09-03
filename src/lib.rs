@@ -13,6 +13,7 @@ pub mod laws;
 pub mod mcp;
 pub mod model;
 pub mod permissions;
+pub mod photos_domain;
 pub mod proposal;
 pub mod query;
 pub mod register;

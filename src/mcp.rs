@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::{documents_domain, permissions, query, root, scan, system_db};
+use crate::{documents_domain, permissions, photos_domain, query, root, scan, system_db};
 
 fn tool_defs() -> Value {
     let mut tools = tool_defs_inner();
@@ -239,6 +239,14 @@ fn tool_defs_inner() -> Value {
         {
             "name": "documents_scan",
             "description": "FIRST UNSTRUCTURED DOMAIN. Scan one explicit directory for document files (.pdf/.docx/.txt/.md/.odt), non-recursive — filename/extension/size/modified-time only, content never read. Requires the 'documents' domain to already be explicitly enabled via [domains.documents] in archietect.toml or ~/.archietect/system.toml for this repository: over MCP this tool can never prompt for the one-time confirmation the CLI (`archietect documents scan`) can, so an unconfigured repository always reports enabled:false here rather than hanging or guessing consent.",
+            "inputSchema": { "type": "object", "properties": {
+                "dir": { "type": "string", "description": "Absolute path to the directory to scan." },
+                "root": root_prop
+            }, "required": ["dir"] }
+        },
+        {
+            "name": "photos_scan",
+            "description": "SECOND UNSTRUCTURED DOMAIN. Scan one explicit directory for photo files (.jpg/.jpeg/.png/.gif/.heic/.webp), non-recursive — filename/extension/size/modified-time only, content never read. Same confirmation-gated contract as documents_scan: requires 'photos' to already be explicitly enabled via [domains.photos], since this tool can never prompt for the one-time confirmation over MCP.",
             "inputSchema": { "type": "object", "properties": {
                 "dir": { "type": "string", "description": "Absolute path to the directory to scan." },
                 "root": root_prop
@@ -482,6 +490,37 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         let cfg = permissions::load(&global_path, &root)?;
                                         let confirmations_path = permissions::default_confirmations_path()?;
                                         let (enabled, resources) = documents_domain::scan_if_allowed(
+                                            &cfg,
+                                            &confirmations_path,
+                                            &dir,
+                                            &permissions::NonInteractiveAsker,
+                                        )?;
+                                        Ok(json!({
+                                            "dir": dir.display().to_string(),
+                                            "enabled": enabled,
+                                            "resources": resources,
+                                        }))
+                                    })();
+                                    match result {
+                                        Ok(v) => v,
+                                        Err(e) => json!({ "error": e.to_string() }),
+                                    }
+                                }
+                            }
+                            // Same NonInteractiveAsker contract as
+                            // documents_scan above — see tool_defs()'s
+                            // description.
+                            "photos_scan" => {
+                                let dir_str = args["dir"].as_str().unwrap_or("");
+                                if dir_str.is_empty() {
+                                    json!({ "error": "missing required 'dir' argument" })
+                                } else {
+                                    let dir = PathBuf::from(dir_str);
+                                    let result: anyhow::Result<Value> = (|| {
+                                        let global_path = permissions::default_global_config_path()?;
+                                        let cfg = permissions::load(&global_path, &root)?;
+                                        let confirmations_path = permissions::default_confirmations_path()?;
+                                        let (enabled, resources) = photos_domain::scan_if_allowed(
                                             &cfg,
                                             &confirmations_path,
                                             &dir,

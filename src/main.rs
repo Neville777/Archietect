@@ -181,6 +181,12 @@ enum Cmd {
     /// neither of which belongs firing implicitly on every `status` call.
     #[command(subcommand)]
     Documents(DocumentsCmd),
+    /// The SECOND unstructured domain — a sibling of `Documents` proving its
+    /// discipline generalizes: filename/extension/size/modified-time only,
+    /// content never read, same explicit-directory/confirmation-gated
+    /// contract. See src/photos_domain.rs.
+    #[command(subcommand)]
+    Photos(PhotosCmd),
 }
 
 #[derive(Subcommand)]
@@ -190,6 +196,16 @@ enum DocumentsCmd {
     /// one-time interactive y/N confirmation (persisted so it's asked at
     /// most once) unless `[domains.documents]` is already set in
     /// archietect.toml/system.toml — fails closed with no real TTY.
+    Scan {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum PhotosCmd {
+    /// Scan a directory for photo files (.jpg/.jpeg/.png/.gif/.heic/.webp),
+    /// non-recursive. Same confirmation-gated contract as `Documents`.
     Scan {
         #[arg(long)]
         dir: PathBuf,
@@ -548,6 +564,19 @@ fn main() -> anyhow::Result<()> {
             let asker = archietect::permissions::stdio_asker();
             let (enabled, resources) =
                 archietect::documents_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
+            serde_json::json!({
+                "dir": dir.display().to_string(),
+                "enabled": enabled,
+                "resources": resources,
+            })
+        }
+        Cmd::Photos(PhotosCmd::Scan { dir }) => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            let confirmations_path = archietect::permissions::default_confirmations_path()?;
+            let asker = archietect::permissions::stdio_asker();
+            let (enabled, resources) =
+                archietect::photos_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
             serde_json::json!({
                 "dir": dir.display().to_string(),
                 "enabled": enabled,
