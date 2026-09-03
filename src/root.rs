@@ -61,6 +61,53 @@ pub fn resolve_from_cwd(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     resolve(explicit, &std::env::current_dir()?)
 }
 
+/// Cheap, shallow heuristic for "this --root probably isn't one project" —
+/// built for the real-world case that surfaced it: an AI agent pointed
+/// archietect at a ~42GB directory holding 40 unrelated cloned repos, and
+/// the resulting full scan looked exactly like a hang — no warning, no
+/// size estimate, just silence until it eventually finished. Deliberately
+/// NOT a full walk of anything — that would BE the slow operation this
+/// exists to warn about before paying for it. Checks immediate
+/// subdirectories for their OWN `.git` one level deep, never descending
+/// further; everything else about how big or slow the actual scan will be
+/// is left unmeasured on purpose.
+///
+/// Never blocks: this returns a message for a caller to print, never a
+/// prompt or a gate. A scripted/CI caller with a legitimate huge monorepo
+/// (however that happens to be laid out) must never be forced through an
+/// interactive confirmation it has no way to answer.
+pub fn scope_warning(root: &Path) -> Option<String> {
+    // A root that IS itself a project (has its own .git) is never a
+    // multi-project workspace by definition, regardless of what else lives
+    // under it — skip the check entirely; this is the common, expected case
+    // and must never warn on it.
+    if root.join(".git").exists() {
+        return None;
+    }
+    let entries = std::fs::read_dir(root).ok()?;
+    let mut nested_repos: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir() && e.path().join(".git").exists())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    const THRESHOLD: usize = 3;
+    if nested_repos.len() < THRESHOLD {
+        return None;
+    }
+    nested_repos.sort();
+    let total = nested_repos.len();
+    nested_repos.truncate(5);
+    let more = if total > 5 { format!(" (+{} more)", total - 5) } else { String::new() };
+    Some(format!(
+        "'{}' looks like a directory of {total} separate projects ({}{more}), not one project — \
+         archietect treats everything under --root as a SINGLE codebase, so this scan may be slow \
+         and its answers won't distinguish between them. If you meant one specific project, point \
+         --root at it directly.",
+        root.display(),
+        nested_repos.join(", "),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +136,69 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let resolved = resolve(Some(root.clone()), &std::env::temp_dir()).unwrap();
         assert_eq!(resolved, root);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn nested_repo(root: &Path, name: &str) {
+        let sub = root.join(name);
+        std::fs::create_dir_all(&sub).unwrap();
+        touch(&sub, ".git");
+    }
+
+    #[test]
+    fn warns_on_a_directory_of_several_independent_repos() {
+        let root = std::env::temp_dir().join(format!("archietect-scope-test-many-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        nested_repo(&root, "project-a");
+        nested_repo(&root, "project-b");
+        nested_repo(&root, "project-c");
+
+        let warning = scope_warning(&root).expect("3 nested repos must trigger the warning");
+        assert!(warning.contains("3 separate projects"), "{warning}");
+        assert!(warning.contains("project-a"), "{warning}");
+        assert!(warning.contains("project-b"), "{warning}");
+        assert!(warning.contains("project-c"), "{warning}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stays_silent_on_a_real_single_project_root() {
+        let root = std::env::temp_dir().join(format!("archietect-scope-test-single-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        touch(&root, ".git"); // root itself IS a project
+
+        assert!(scope_warning(&root).is_none(), "a root with its own .git must never warn, regardless of what's under it");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stays_silent_below_the_threshold() {
+        let root = std::env::temp_dir().join(format!("archietect-scope-test-below-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        nested_repo(&root, "project-a");
+        nested_repo(&root, "project-b"); // only 2 — below the 3-repo threshold
+
+        assert!(scope_warning(&root).is_none(), "2 nested repos is a normal monorepo-adjacent layout, not the workspace-of-40 case this exists for");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn long_names_are_capped_but_the_real_count_is_stated() {
+        let root = std::env::temp_dir().join(format!("archietect-scope-test-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..8 {
+            nested_repo(&root, &format!("project-{i}"));
+        }
+
+        let warning = scope_warning(&root).expect("8 nested repos must trigger the warning");
+        assert!(warning.contains("8 separate projects"), "{warning}");
+        assert!(warning.contains("+3 more"), "{warning}");
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

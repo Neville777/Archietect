@@ -402,6 +402,13 @@ fn main() -> anyhow::Result<()> {
     let compact = cli.compact;
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
+    // Printed once, before any command runs, uniformly — every command
+    // scans via the same index_for()/scan::scan(), so the warning belongs
+    // here rather than duplicated into each match arm. stderr, never
+    // blocking: a scripted/CI caller must never be stopped by this.
+    if let Some(warning) = root::scope_warning(&root) {
+        eprintln!("archietect: {warning}");
+    }
 
     // bare `archietect` = the glance — the git-status of architecture.
     // First-run exception to "queries stay read-only, only init persists"
