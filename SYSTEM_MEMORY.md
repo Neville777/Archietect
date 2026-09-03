@@ -285,6 +285,47 @@ architectural difference between this and the class of product (blanket
 device-activity indexing, shipped as a default-on feature) that has already
 been a public security/privacy failure elsewhere.
 
+## Instruction files vs. memory vs. enforcement — three things, not one
+
+`CLAUDE.md`, `AGENTS.md`, READMEs and architecture docs are easy to mistake
+for what Archietect is, and the difference matters most exactly when an AI
+is about to act.
+
+| Thing | What it is | Can the consumer ignore it? |
+|---|---|---|
+| `CLAUDE.md` / `AGENTS.md` | Instructions — what a human *wants* the AI to do | Yes. It can skip the file, misread it, forget it mid-task, or decide a different file is "safe". |
+| Documentation | A human-authored *description* of the system, true when written | Yes — and it has to be found, read, judged relevant, judged still true, and reconciled with the real repository first. |
+| Archietect | A machine-maintained *memory* of the system: identity, evidence, provenance, relationships, as-of time, and an explicit boundary of what it may observe | The memory: no more than it can ignore `git`. The boundary: **no** — when wired into the consumer's execution path, denial is a property of the infrastructure, not a request. |
+
+Documentation says "GhostTrack uses Redis." Archietect says: GhostTrack
+`depends_on` Redis, declared in `docker-compose.yml:42`, Redis container
+observed at 2026-09-03T…, and — separately — whether it is *running* is
+not established by any extractor here. The first is a sentence somebody
+wrote. The second is a record with receipts and an honest edge.
+
+Two consequences, both already partly real in this codebase:
+
+1. **Register-first, not remember-to-read.** An instruction file only works
+   if the AI reads it. The register (`archietect register`, the "what is
+   known / not known / allowed" map) can instead be handed to the AI at
+   session start by the tooling itself, so asking the memory becomes the
+   default first move rather than a habit it has to keep.
+2. **The boundary is enforced where the AI acts, not described where it
+   reads.** `permissions.rs` already fails closed, never reads content it
+   wasn't allowed to, and cannot be re-enabled past the hardcoded denials
+   by any config. Wiring that same boundary into the AI's tool calls (a
+   pre-tool hook consulting `archietect permissions` before a `Read`/`Edit`/
+   `Write` lands) turns "please don't touch `production.env`" into an
+   operation that is rejected. The AI does not get a vote.
+
+This is why the integration deliberately narrows to **Claude Code** rather
+than staying vendor-generic: advisory text can be generic precisely because
+it is ignorable; enforcement has to hook into one tool's real execution
+path, and Claude Code's hooks are that path. `CLAUDE.md` still tells the AI
+what you want. Archietect tells it what the world establishes — and, where
+hooked in, what it is structurally allowed to do. Neither replaces the
+other; they answer different questions.
+
 ## Where the laws model actually stands (correction from design discussion)
 
 The original worry was "will N users create N×laws." They won't, and the
