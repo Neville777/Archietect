@@ -59,6 +59,14 @@ enum Cmd {
     Plan { text: Vec<String> },
     /// What is affected if this concept changes?
     Impact { term: String },
+    /// What does this file exactly, unambiguously import — and what
+    /// imports it? Only exact relative-import resolutions are reported
+    /// (see structural.rs's Import::relationship); an external package or
+    /// an ambiguous match is correctly reported as nothing, not a guess.
+    Imports {
+        /// Repository-relative path, e.g. src/services/foo.ts
+        file: String,
+    },
     /// THE LAW: check text for CREATE TABLE that duplicates an existing concept
     Guard { sql: String },
     /// Repository summary for someone who just cloned it (the intern's view)
@@ -343,6 +351,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Intent { text } => { let (idx, _g) = index_for(&root); query::intent(&idx, &text.join(" ")) }
         Cmd::Plan { text } => { let (idx, g) = index_for(&root); query::plan(&idx, &g, &text.join(" ")) }
         Cmd::Impact { term } => { let (idx, g) = index_for(&root); query::impact(&idx, &g, &term) }
+        Cmd::Imports { file } => { let (_idx, g) = index_for(&root); query::imports(&g, &file) }
         Cmd::Guard { sql } => { let (idx, _g) = index_for(&root); query::guard(&idx, &sql) }
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }

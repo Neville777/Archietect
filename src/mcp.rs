@@ -74,6 +74,14 @@ fn tool_defs_inner() -> Value {
             }, "required": ["term"] }
         },
         {
+            "name": "imports",
+            "description": "What does this exact file import, and what imports it — but ONLY exact, unambiguous relative-import resolutions (e.g. './services/foo' resolving to a real scanned file). An external package import or an import that matched more than one scanned file is correctly reported as nothing, never a guess. Not folded into `status` — a full import graph is too large to return on every call; ask about one file at a time.",
+            "inputSchema": { "type": "object", "properties": {
+                "file": { "type": "string", "description": "Repository-relative path, e.g. src/services/foo.ts" },
+                "root": root_prop
+            }, "required": ["file"] }
+        },
+        {
             "name": "guard",
             "description": "THE LAW. Check a patch or SQL snippet for CREATE TABLE statements that would duplicate an existing concept. Returns allowed:false with the canonical implementation named when a proposed table collides. Run on any patch that creates storage, BEFORE applying it.",
             "inputSchema": { "type": "object", "properties": {
@@ -306,6 +314,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
                             "impact" => query::impact(&idx, &graph, args["term"].as_str().unwrap_or("")),
+                            "imports" => query::imports(&graph, args["file"].as_str().unwrap_or("")),
                             "guard" => query::guard(&idx, args["sql"].as_str().unwrap_or("")),
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, args["term"].as_str().unwrap_or("")),

@@ -545,6 +545,43 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     })
 }
 
+/// `Import::relationship`'s query surface: for one file, every exactly-
+/// resolved import edge in and out of it. Deliberately NOT folded into
+/// `status` — a full import graph can be hundreds or thousands of edges for
+/// a real repo, and `status` already accumulates weight from every domain
+/// section; dumping the whole graph into a command that runs on every
+/// invocation would reproduce the exact token-cost regression this session
+/// already found and fixed once (output shaping, `--only`/`--compact`).
+/// This is a separate, one-file-at-a-time query instead, same shape as
+/// `impact`.
+pub fn imports(graph: &StructuralGraph, file: &str) -> Value {
+    let known_files: std::collections::BTreeSet<String> = graph.file_facts.keys().cloned().collect();
+
+    let outgoing: Vec<Value> = graph
+        .imports
+        .iter()
+        .filter(|imp| imp.from_file == file)
+        .filter_map(|imp| imp.relationship(&known_files))
+        .map(|rel| json!({ "to": rel.to.0, "kind": rel.kind, "evidence": rel.evidence }))
+        .collect();
+
+    let incoming: Vec<Value> = graph
+        .imports
+        .iter()
+        .filter_map(|imp| imp.relationship(&known_files).map(|rel| (imp, rel)))
+        .filter(|(_, rel)| rel.to.0 == file)
+        .map(|(imp, rel)| json!({ "from": imp.from_file, "kind": rel.kind, "evidence": rel.evidence }))
+        .collect();
+
+    json!({
+        "file": file,
+        "known_to_this_scan": known_files.contains(file),
+        "imports": outgoing,
+        "imported_by": incoming,
+        "note": "Only exact, unambiguous relative-import resolutions are reported — see Import::relationship in structural.rs. A file with real imports that don't appear here either targets an external package (out of scope: no reliable exact-resolution strategy without a language-specific package resolver) or resolved ambiguously (more than one scanned file matched, so nothing is claimed).",
+    })
+}
+
 pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
     let used = idx.concepts.values().filter(|c| !c.usage.is_empty()).count();
     let dead: Vec<&String> = idx

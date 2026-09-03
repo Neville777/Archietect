@@ -170,6 +170,122 @@ pub struct Import {
     pub names: Vec<String>,
 }
 
+impl Import {
+    /// Whether this import resolves, EXACTLY and UNAMBIGUOUSLY, to a file
+    /// this scan actually knows about — and if so, the real `Relationship`
+    /// that fact supports. See resource.rs::Relationship / SYSTEM_MEMORY.md
+    /// ("Relationships need their own evidence, not borrowed evidence").
+    ///
+    /// `structural_dependents`'s own internal `importers_of` closure already
+    /// walks this same import graph, but with a FUZZY heuristic (stem/suffix
+    /// matching) that is fine for an internal "roughly what's affected" BFS
+    /// and NOT fine for a claimed, evidenced fact — a stem match can be
+    /// wrong (two files sharing a basename in different directories), and
+    /// presenting that guess as a `Relationship` would be exactly the
+    /// inference-dressed-as-evidence failure this project exists to
+    /// prevent. This method is deliberately stricter: it returns `Some`
+    /// only when resolution is exact and unique, `None` otherwise — silence
+    /// is the correct answer for anything it can't establish confidently,
+    /// the same discipline `docker_domain`/`git_domain` already apply to
+    /// their own domains.
+    ///
+    /// Scope, stated plainly rather than faked: only slash-style relative
+    /// imports (`./foo`, `../bar/baz` — what `extract_ts_js`/`extract_dart`
+    /// and similar extractors actually produce) are resolved here. Python's
+    /// dotted package-relative imports (`from .utils import x`) use a
+    /// DIFFERENT addressing scheme — package-relative dotted paths, not
+    /// slash-separated file paths — and correctly resolving them requires
+    /// knowing package boundaries (`__init__.py` presence, namespace
+    /// packages), a meaningfully different and harder algorithm. Bare
+    /// package imports (`lodash`, `import "fmt"`, `from django import
+    /// forms`) are never attempted: there is no reliable exact-resolution
+    /// strategy for an external package without a real, language-specific
+    /// package resolver, and guessing one would reintroduce exactly the
+    /// fuzzy-match risk this method exists to avoid.
+    pub fn relationship(&self, known_files: &std::collections::BTreeSet<String>) -> Option<crate::resource::Relationship> {
+        let resolved = resolve_relative_import(&self.from_file, &self.to_module, known_files)?;
+        Some(crate::resource::Relationship {
+            from: crate::resource::Identity(self.from_file.clone()),
+            kind: "imports".to_string(),
+            to: crate::resource::Identity(resolved.clone()),
+            evidence: crate::model::Evidence {
+                tier: crate::model::Tier::Declared,
+                what: format!(
+                    "'{}' imports '{}', which resolves unambiguously to the scanned file '{}' \
+                     (relative import; extension/index inferred, never guessed across more than one match)",
+                    self.from_file, self.to_module, resolved
+                ),
+            },
+        })
+    }
+}
+
+/// Resolve a slash-style relative import (`./x`, `../x/y`) written in
+/// `from_file` against the set of files this scan actually knows about
+/// (`StructuralGraph::file_facts`'s keys — every scanned file, not just
+/// ones with symbols, so a pure re-export/index file still counts as a
+/// valid target). Purely lexical — no filesystem access, since these are
+/// virtual repo-relative strings, not real paths relative to the process's
+/// CWD. Returns `None` for a non-relative `to_module` (out of scope — see
+/// `Import::relationship`'s doc) or for zero/multiple matches (unresolved
+/// or ambiguous — never guess between them).
+fn resolve_relative_import(
+    from_file: &str,
+    to_module: &str,
+    known_files: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    if !(to_module.starts_with("./") || to_module.starts_with("../")) {
+        return None;
+    }
+
+    let from_dir = std::path::Path::new(from_file).parent().unwrap_or_else(|| std::path::Path::new(""));
+    let mut components: Vec<String> = from_dir
+        .components()
+        .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
+        .collect();
+    for part in to_module.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            other => components.push(other.to_string()),
+        }
+    }
+    let normalized = components.join("/");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    // Candidate set: the normalized path itself (to_module already carried
+    // an extension), the normalized path with a common source extension
+    // appended, and the normalized path as a directory with an index file.
+    // Common to the languages that actually write slash-style relative
+    // imports (extract_ts_js, extract_dart, and any future one sharing the
+    // shape) — not an attempt to cover every language's own convention.
+    const EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "cjs", "vue", "dart"];
+    let mut matches: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if known_files.contains(&normalized) {
+        matches.insert(normalized.clone());
+    }
+    for ext in EXTS {
+        let with_ext = format!("{normalized}.{ext}");
+        if known_files.contains(&with_ext) {
+            matches.insert(with_ext);
+        }
+        let index = format!("{normalized}/index.{ext}");
+        if known_files.contains(&index) {
+            matches.insert(index);
+        }
+    }
+
+    if matches.len() == 1 {
+        matches.into_iter().next()
+    } else {
+        None
+    }
+}
+
 /// The full structural graph for one repository.
 ///
 /// This is a VALUE TYPE — rebuilt from cache on every scan just like `Index`.
@@ -2570,5 +2686,85 @@ mod structural_dependents_structural_only_tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod import_relationship_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn known(files: &[&str]) -> BTreeSet<String> {
+        files.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn resolves_a_relative_import_with_inferred_extension() {
+        let files = known(&["src/a.ts", "src/utils/b.ts"]);
+        let resolved = resolve_relative_import("src/a.ts", "./utils/b", &files);
+        assert_eq!(resolved, Some("src/utils/b.ts".to_string()));
+    }
+
+    #[test]
+    fn resolves_parent_relative_import() {
+        let files = known(&["src/components/a.ts", "src/lib/b.ts"]);
+        let resolved = resolve_relative_import("src/components/a.ts", "../lib/b", &files);
+        assert_eq!(resolved, Some("src/lib/b.ts".to_string()));
+    }
+
+    #[test]
+    fn resolves_index_file_when_directory_imported() {
+        let files = known(&["src/a.ts", "src/widgets/index.ts"]);
+        let resolved = resolve_relative_import("src/a.ts", "./widgets", &files);
+        assert_eq!(resolved, Some("src/widgets/index.ts".to_string()));
+    }
+
+    #[test]
+    fn external_package_import_resolves_to_nothing() {
+        let files = known(&["src/a.ts"]);
+        assert_eq!(resolve_relative_import("src/a.ts", "lodash", &files), None);
+        assert_eq!(resolve_relative_import("src/a.ts", "react", &files), None);
+    }
+
+    #[test]
+    fn python_dotted_relative_import_is_out_of_scope_not_guessed() {
+        // Different addressing scheme (package-relative dotted, not
+        // slash-separated file paths) — deliberately not attempted, per
+        // Import::relationship's own doc. Must return None, not a wrong guess.
+        let files = known(&["myapp/utils.py"]);
+        assert_eq!(resolve_relative_import("myapp/main.py", ".utils", &files), None);
+    }
+
+    #[test]
+    fn ambiguous_match_across_two_extensions_resolves_to_nothing() {
+        // Two real scanned files could both satisfy "./foo" — .ts and .js
+        // both present. Silence is correct; guessing between them is not.
+        let files = known(&["src/foo.ts", "src/foo.js"]);
+        assert_eq!(resolve_relative_import("src/main.ts", "./foo", &files), None);
+    }
+
+    #[test]
+    fn no_match_at_all_resolves_to_nothing() {
+        let files = known(&["src/other.ts"]);
+        assert_eq!(resolve_relative_import("src/main.ts", "./missing", &files), None);
+    }
+
+    #[test]
+    fn import_relationship_carries_declared_tier_and_real_evidence_text() {
+        let imp = Import { from_file: "src/a.ts".to_string(), to_module: "./b".to_string(), names: vec![] };
+        let files = known(&["src/a.ts", "src/b.ts"]);
+        let rel = imp.relationship(&files).expect("expected a resolved relationship");
+        assert_eq!(rel.from.0, "src/a.ts");
+        assert_eq!(rel.to.0, "src/b.ts");
+        assert_eq!(rel.kind, "imports");
+        assert_eq!(rel.evidence.tier, crate::model::Tier::Declared);
+        assert!(rel.evidence.what.contains("src/b.ts"));
+    }
+
+    #[test]
+    fn import_relationship_is_none_for_unresolvable_import() {
+        let imp = Import { from_file: "src/a.ts".to_string(), to_module: "some-package".to_string(), names: vec![] };
+        let files = known(&["src/a.ts"]);
+        assert!(imp.relationship(&files).is_none());
     }
 }

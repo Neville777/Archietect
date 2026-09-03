@@ -25,6 +25,7 @@
 //!   GET /concept?q=invoice[&root=/path]      GET /doctor
 //!   GET /intent?q=add+invoicing              GET /tour
 //!   GET /impact?q=payments                   GET /duplicates
+//!   GET /imports?file=src/foo.ts (exact relative-import edges only)
 //!   GET /owner?q=invoice                     GET /status
 //!   GET /guard?sql=CREATE+TABLE+...          GET /laws
 //!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
@@ -275,6 +276,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         "/concept" => query::concept(&idx, &graph, q),
                         "/intent" => query::intent(&idx, q),
                         "/impact" => query::impact(&idx, &graph, q),
+                        "/imports" => query::imports(&graph, p.get("file").map(|s| s.as_str()).unwrap_or("")),
                         "/owner" => query::owner(&idx, q),
                         "/guard" => query::guard(&idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
                         "/plan" => query::plan(&idx, &graph, q),
@@ -420,7 +422,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
-                            "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
+                            "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
                                           "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
