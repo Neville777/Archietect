@@ -347,6 +347,98 @@ pub fn bump_arch_version(root: &Path) -> Result<i64> {
     Ok(next)
 }
 
+/// Episodic replay — "what did concept X look like at architecture version
+/// N" — scoped deliberately small after weighing the honest tradeoff: a
+/// full Index snapshot per version (like `save()`'s live blob) would
+/// reproduce the exact unbounded-growth risk `archive_events_before` was
+/// built to fix for the events table, except worse (a whole project's
+/// concept graph per row, not ~385 bytes). Instead this stores one COMPACT
+/// row per concept per version — verdict, table, field names, first_seen —
+/// never the full graph (relations, structural symbols, source snippets).
+/// Growth is bounded by how often the concept SET actually changes, which
+/// is `bump_arch_version`'s own trigger: rare compared to routine scans,
+/// by construction, not by hope.
+///
+/// Real, disclosed limitation: this only ever has data for a project where
+/// `archietect watch` (the daemon) has actually run and observed a
+/// concept-set change — nothing else calls this. A project that has never
+/// run the daemon has zero snapshots, forever, and `concept_at_version`
+/// says so honestly rather than guessing.
+pub fn snapshot_concepts_at_version(root: &Path, version: i64, ts_ms: i64, idx: &Index) -> Result<()> {
+    let conn = Connection::open(root.join("archietect.db"))?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS concept_snapshots (
+             version INTEGER NOT NULL,
+             ts_ms INTEGER NOT NULL,
+             concept TEXT NOT NULL,
+             verdict TEXT NOT NULL,
+             table_name TEXT,
+             fields TEXT NOT NULL,
+             first_seen_ms INTEGER NOT NULL,
+             PRIMARY KEY (version, concept)
+         )",
+    )?;
+    let mut stmt = conn.prepare(
+        "INSERT OR REPLACE INTO concept_snapshots (version, ts_ms, concept, verdict, table_name, fields, first_seen_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    for (name, c) in &idx.concepts {
+        let verdict = if c.usage.is_empty() { "DECLARED_ONLY" } else { "ACTIVE" };
+        let fields = serde_json::to_string(&c.fields).unwrap_or_else(|_| "[]".to_string());
+        stmt.execute(rusqlite::params![version, ts_ms, name, verdict, c.table, fields, c.first_seen_ms])?;
+    }
+    Ok(())
+}
+
+/// The lookup side of episodic replay: the concept's recorded state at the
+/// GIVEN version if a snapshot exists for it there, else the most recent
+/// snapshot at or before that version (a concept's fields rarely change
+/// between one arch-version bump and the next, but if this specific
+/// version's snapshot doesn't have the concept — it hadn't appeared yet, or
+/// this version bump was about a DIFFERENT concept — falling back to the
+/// nearest prior recorded state is still more honest than nothing). Returns
+/// None if no snapshot at or before that version mentions this concept at
+/// all — including the common case of a project that never ran the daemon.
+pub fn concept_at_version(root: &Path, concept: &str, version: i64) -> Option<serde_json::Value> {
+    let db = root.join("archietect.db");
+    if !db.exists() {
+        return None;
+    }
+    let conn = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    conn.query_row(
+        "SELECT version, ts_ms, verdict, table_name, fields, first_seen_ms
+             FROM concept_snapshots
+             WHERE concept = ?1 AND version <= ?2
+             ORDER BY version DESC LIMIT 1",
+        rusqlite::params![concept, version],
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
+        },
+    )
+    .ok()
+    .map(|(snap_version, ts_ms, verdict, table, fields, first_seen_ms)| {
+        serde_json::json!({
+            "concept": concept,
+            "requested_version": version,
+            "snapshot_version": snap_version,
+            "exact_version_match": snap_version == version,
+            "ts_ms": ts_ms,
+            "ts_label": crate::humanize::age_label(ts_ms),
+            "verdict": verdict,
+            "table": table,
+            "fields": serde_json::from_str::<serde_json::Value>(&fields).unwrap_or(serde_json::Value::Array(vec![])),
+            "first_seen_ms": first_seen_ms,
+        })
+    })
+}
+
 pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path) -> Result<std::path::PathBuf> {
     let db_path = root.join("archietect.db");
     let conn = Connection::open(&db_path)?;
@@ -584,6 +676,81 @@ mod digest_tests {
         let narrative: Vec<String> = d["narrative"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
         let line = narrative.iter().find(|s| s.contains("new concepts appeared")).expect("appeared line");
         assert!(line.contains("+5 more"), "{line}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod episodic_replay_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tmp_project(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-replay-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn no_daemon_run_ever_means_no_snapshot_not_a_guess() {
+        let root = tmp_project("never-ran");
+        assert!(concept_at_version(&root, "Widget", 1).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snapshot_round_trips_real_concept_state() {
+        let root = tmp_project("roundtrip");
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id   Int    @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+        let (idx, _graph) = crate::scan::scan(&root);
+        assert!(idx.concepts.contains_key("Widget"));
+
+        snapshot_concepts_at_version(&root, 7, 5_000_000, &idx).unwrap();
+
+        let out = concept_at_version(&root, "Widget", 7).expect("snapshot must exist");
+        assert_eq!(out["snapshot_version"], json!(7));
+        assert_eq!(out["exact_version_match"], json!(true));
+        assert_eq!(out["verdict"], json!("DECLARED_ONLY"));
+        assert_eq!(out["table"], json!("Widget"));
+        assert!(out["fields"].as_array().unwrap().iter().any(|f| f == "name"), "{out}");
+        assert!(out["ts_label"].is_string(), "{out}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn querying_a_version_between_two_snapshots_falls_back_to_the_nearest_prior_one() {
+        let root = tmp_project("fallback");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        let (idx, _graph) = crate::scan::scan(&root);
+
+        snapshot_concepts_at_version(&root, 3, 1000, &idx).unwrap();
+        snapshot_concepts_at_version(&root, 9, 2000, &idx).unwrap();
+
+        // Version 6 has no snapshot of its own — must fall back to v3, not v9
+        // (never look FORWARD in time) and not None (v3 genuinely exists).
+        let out = concept_at_version(&root, "Widget", 6).expect("must fall back to the nearest PRIOR snapshot");
+        assert_eq!(out["snapshot_version"], json!(3));
+        assert_eq!(out["exact_version_match"], json!(false));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_concept_that_did_not_exist_yet_at_the_requested_version_returns_none() {
+        let root = tmp_project("not-yet-existed");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        let (idx, _graph) = crate::scan::scan(&root);
+        // Only ever snapshotted starting at version 10 — Widget effectively
+        // "didn't exist" in this project's recorded history before that.
+        snapshot_concepts_at_version(&root, 10, 1000, &idx).unwrap();
+
+        assert!(concept_at_version(&root, "Widget", 5).is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

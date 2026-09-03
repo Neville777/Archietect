@@ -366,11 +366,16 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
             current.concepts.keys().filter(|n| !next.concepts.contains_key(*n)).collect();
         if !added.is_empty() || !removed.is_empty() {
             if let Ok(v) = store::bump_arch_version(&root) {
-                events.push((now_ms(), "architecture_version".into(), format!("v{v}"), json!({
+                let ts = now_ms();
+                events.push((ts, "architecture_version".into(), format!("v{v}"), json!({
                     "version": v,
                     "added": added,
                     "removed": removed,
                 })));
+                // Episodic replay (store::concept_at_version): a compact
+                // per-concept snapshot taken exactly here, at the same rare
+                // trigger as the version bump itself — never on every scan.
+                let _ = store::snapshot_concepts_at_version(&root, v, ts, &next);
             }
         }
         store::save(&next, &next_graph, &root)?;

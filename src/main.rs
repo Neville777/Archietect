@@ -52,6 +52,17 @@ enum Cmd {
     Status,
     /// Does this concept exist? Which implementation is canonical?
     Concept { term: String },
+    /// Episodic replay: what this concept looked like at a past
+    /// ARCHITECTURE version (`archietect history` shows `architecture_version`
+    /// events with their version numbers). Only ever has data for a project
+    /// where `archietect watch` has actually run and observed a concept-set
+    /// change — see store::concept_at_version's own doc for why this is a
+    /// real, disclosed limitation, not a bug.
+    ConceptAt {
+        term: String,
+        #[arg(long)]
+        version: i64,
+    },
     /// From a stated intent to the smallest correct change
     Intent { text: Vec<String> },
     /// One-call architectural plan: canonical locations, owners, decisions,
@@ -413,6 +424,17 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Status => { let (idx, g) = index_for(&root); query::status(&idx, &g) }
         Cmd::Concept { term } => { let (idx, g) = index_for(&root); query::concept(&idx, &g, &term) }
+        Cmd::ConceptAt { term, version } => {
+            match store::concept_at_version(&root, &term, version) {
+                Some(v) => v,
+                None => serde_json::json!({
+                    "concept": term,
+                    "requested_version": version,
+                    "available": false,
+                    "reason": "no snapshot at or before this version — either the daemon has never run for this project, or this concept did not exist yet at that version",
+                }),
+            }
+        }
         Cmd::Intent { text } => { let (idx, _g) = index_for(&root); query::intent(&idx, &text.join(" ")) }
         Cmd::Plan { text } => { let (idx, g) = index_for(&root); query::plan(&idx, &g, &text.join(" ")) }
         Cmd::Impact { term } => { let (idx, g) = index_for(&root); query::impact(&idx, &g, &term) }
