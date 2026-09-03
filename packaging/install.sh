@@ -131,8 +131,18 @@ ARCHIETECT_MCP_CMD="$INSTALL_DIR/archietect"
 # anyone whose install command wasn't run from inside a project they
 # intended to use archietect on.
 if command -v claude >/dev/null 2>&1; then
-    if claude mcp get archietect >/dev/null 2>&1; then
-        : # already registered — nothing to do
+    # `mcp get` must be checked for "User config" SPECIFICALLY, not just
+    # exit-0-means-registered: local scope shadows user scope in `get`'s
+    # own display resolution (confirmed live — a stale/broken local entry,
+    # e.g. left over by a run of this script from before this fix existed,
+    # makes `get` report the broken local one and hides a perfectly good
+    # user-scope entry underneath it, or skips adding one at all). Checking
+    # for "already registered" without this would leave anyone upgrading
+    # from the old unscoped behavior stuck on a broken local registration
+    # forever, since this idempotency check would wrongly think a global
+    # one already existed.
+    if claude mcp get archietect 2>/dev/null | grep -q "User config"; then
+        : # already registered globally — nothing to do
     elif claude mcp add --scope user archietect -- "$ARCHIETECT_MCP_CMD" mcp >/dev/null 2>&1; then
         echo "archietect: registered as an MCP server for Claude Code (every project, automatically)"
     fi

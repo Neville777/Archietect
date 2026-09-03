@@ -118,8 +118,12 @@ if command -v claude >/dev/null 2>&1; then
     # this project: `list` runs a live health check against every
     # configured server, including unrelated remote ones, and can stall
     # this step on network conditions that have nothing to do with
-    # archietect.
-    if claude mcp get archietect >/dev/null 2>&1; then
+    # archietect. Checked for "User config" SPECIFICALLY, not just exit 0:
+    # local scope shadows user scope in `get`'s own display resolution — a
+    # stale local entry (e.g. left by a run of this script from before
+    # this fix existed) would otherwise make this wrongly report "already
+    # registered" and never add the actual global one.
+    if claude mcp get archietect 2>/dev/null | grep -q "User config"; then
         echo "   already registered: archietect -> $BIN mcp"
         MCP_OK=1
     else
