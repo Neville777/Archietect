@@ -12,6 +12,7 @@
 //! declared relations. Rows/usage alone never outrank declarations — a
 //! declaration is the project speaking; usage is the project acting.
 
+use crate::humanize::age_label;
 use crate::model::{names_concept, same_word, Evidence, Index, Tier};
 use crate::scoring;
 use crate::structural::{routes_for_concept, structural_dependents, symbols_for_concept, StructuralGraph};
@@ -61,7 +62,9 @@ fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) ->
         "competing": [],
         "used_by_files": c.usage.iter().map(|(f, _)| f).take(10).collect::<Vec<_>>(),
         "first_seen_ms": c.first_seen_ms,
+        "first_seen_label": age_label(c.first_seen_ms),
         "last_verified_ms": c.last_verified_ms,
+        "last_verified_label": age_label(c.last_verified_ms),
         "evidence": evidence,
         "structural_symbols": symbols.iter().take(10).map(|s| json!({
             "name": s.name, "kind": format!("{:?}", s.kind), "file": s.file, "line": s.line,
@@ -174,7 +177,9 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             // memory, not cache: when this concept FIRST entered the index,
             // and when its evidence was last re-verified against the tree
             "first_seen_ms": c.first_seen_ms,
+            "first_seen_label": age_label(c.first_seen_ms),
             "last_verified_ms": c.last_verified_ms,
+            "last_verified_label": age_label(c.last_verified_ms),
             "table": c.table,
             "fields": c.fields.iter().take(15).collect::<Vec<_>>(),
             "relations": c.relations,

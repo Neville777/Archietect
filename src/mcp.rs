@@ -127,10 +127,11 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "history",
-            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `archietect ci`.",
+            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `archietect ci`. Pass digest=true for a narrative-quality summary of the window (grouped, phrased sentences — still fully deterministic, generated from the same events, never an LLM) instead of the raw event list.",
             "inputSchema": { "type": "object", "properties": {
-                "concept": { "type": "string", "description": "Optional — filter to events touching this concept." },
-                "limit": { "type": "number", "description": "Max events to return (default 50)." },
+                "concept": { "type": "string", "description": "Optional — filter to events touching this concept. Ignored if digest=true." },
+                "limit": { "type": "number", "description": "Max events to return, or events considered for the digest (default 50)." },
+                "digest": { "type": "boolean", "description": "Return a narrative summary instead of the raw event list." },
                 "root": root_prop
             } }
         },
@@ -196,8 +197,8 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "register",
-            "description": "THE MAP OF THE BAG — call this before trusting any ABSENT. What this memory knows about the repository (counts, enabled domains), what it does NOT know and WHY (`not_known`: unsupported languages with the exact files, disabled or unconfirmed domains, evidence tiers no extractor can produce — e.g. whether a declared docker service is actually running — and declared concepts never observed in use), each with how to establish the fact without archietect, plus the permission boundary including whether a human actually confirmed each unstructured domain. Distinguishes 'X does not exist' from 'X cannot be established here'.",
-            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+            "description": "THE MAP OF THE BAG — call this before trusting any ABSENT. What this memory knows about the repository (counts, enabled domains), what it does NOT know and WHY (`not_known`: unsupported languages with the exact files, disabled or unconfirmed domains, evidence tiers no extractor can produce — e.g. whether a git remote is reachable or ahead/behind — and declared concepts never observed in use), each with how to establish the fact without archietect, plus the permission boundary including whether a human actually confirmed each unstructured domain. Distinguishes 'X does not exist' from 'X cannot be established here'. Pass since_last=true to also get `since_last_session`: what changed since the last time THIS was called with since_last=true for this project (concept/domain/not_known deltas) — then this call's snapshot becomes the new baseline for the next one.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop, "since_last": { "type": "boolean", "description": "Diff against and then overwrite this project's tracked register snapshot." } } }
         },
         {
             "name": "permissions",
@@ -335,6 +336,9 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),
                             "tour" => query::tour(&idx, &graph),
+                            "history" if args.get("digest").and_then(|d| d.as_bool()).unwrap_or(false) => {
+                                crate::store::history_digest(&root, args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize)
+                            }
                             "history" => json!({
                                 "events": crate::store::read_history(
                                     &root,
@@ -410,7 +414,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 }
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
-                            "register" => crate::register::register(&idx, &graph, &root),
+                            "register" => {
+                                let mut out = crate::register::register(&idx, &graph, &root);
+                                if args.get("since_last").and_then(|s| s.as_bool()).unwrap_or(false) {
+                                    let delta = crate::register::diff_since_last(&root, &out);
+                                    out["since_last_session"] = delta;
+                                }
+                                out
+                            }
                             // root is required here purely because every MCP
                             // tool call in this server goes through the same
                             // Some(root) dispatch gate above — system_list

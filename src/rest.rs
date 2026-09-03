@@ -285,6 +285,12 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         "/doctor" => query::doctor(&idx, &graph, &root),
                         "/tour" => query::tour(&idx, &graph),
                         "/duplicates" => query::duplicates(&idx),
+                        // ?digest=true returns store::history_digest instead
+                        // of the raw event list — a narrative-quality
+                        // summary of the window, still fully deterministic.
+                        "/history" if p.get("digest").map(|s| s == "true").unwrap_or(false) => {
+                            store::history_digest(&root, p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50))
+                        }
                         "/history" => json!({
                             "events": store::read_history(
                                 &root,
@@ -391,7 +397,18 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         },
                         // Read-only, no token: the map of the bag — see
                         // src/register.rs. Composes over the same warm idx.
-                        "/register" => crate::register::register(&idx, &graph, &root),
+                        // ?since_last=true additionally diffs against, then
+                        // overwrites, this project's tracked snapshot — the
+                        // one genuinely side-effecting thing this endpoint
+                        // does, gated behind an explicit opt-in query param.
+                        "/register" => {
+                            let mut out = crate::register::register(&idx, &graph, &root);
+                            if p.get("since_last").map(|s| s == "true").unwrap_or(false) {
+                                let delta = crate::register::diff_since_last(&root, &out);
+                                out["since_last_session"] = delta;
+                            }
+                            out
+                        }
                         // See this module's doc: always NonInteractiveAsker —
                         // never blocks waiting for a y/N answer that can
                         // never arrive over a network transport.

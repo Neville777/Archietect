@@ -90,6 +90,12 @@ enum Cmd {
         /// shouldn't pay for.
         #[arg(long)]
         include_archived: bool,
+        /// Return a narrative-quality summary of the window (grouped,
+        /// phrased sentences — "3 new concepts appeared: ...") instead of
+        /// the raw event list. Still fully deterministic, generated from
+        /// the same events, never an LLM. See store::history_digest.
+        #[arg(long)]
+        digest: bool,
     },
     /// Move events older than a cutoff out of the live archietect.db into a
     /// permanent, append-only archive file (.archietect/history-archive.db)
@@ -172,7 +178,17 @@ enum Cmd {
     /// unconfirmed domains, evidence tiers no extractor can produce, declared
     /// concepts never observed in use), and where the permission boundary
     /// is. Read this before trusting any ABSENT. See src/register.rs.
-    Register,
+    Register {
+        /// Diff this call against the LAST tracked `register` call for this
+        /// project (`.archietect/last_register_snapshot.json`) and include
+        /// what changed under `since_last_session` — then overwrite the
+        /// snapshot with this call, so the next one diffs against THIS one.
+        /// A side effect deliberately kept out of `register::register`
+        /// itself (pure composition) and opt-in here: `register` without
+        /// this flag stays exactly as before, byte-for-byte.
+        #[arg(long)]
+        since_last: bool,
+    },
     /// The first UNSTRUCTURED domain (SYSTEM_MEMORY.md's "Evidence has two
     /// vocabularies, not one") — filename/extension/size/modified-time only,
     /// content never read. Deliberately its own explicit subcommand rather
@@ -392,7 +408,14 @@ fn main() -> anyhow::Result<()> {
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
         Cmd::Owner { term } => { let (idx, g) = index_for(&root); query::owner(&idx, &g, &term) }
-        Cmd::History { concept, limit, include_archived } => {
+        Cmd::History { concept, limit, include_archived: _, digest } if digest => {
+            let mut out = store::history_digest(&root, limit);
+            if concept.is_some() {
+                out["note"] = serde_json::json!("--digest summarizes the whole window; --concept is ignored with --digest. Drop --digest to filter by concept.");
+            }
+            out
+        }
+        Cmd::History { concept, limit, include_archived, digest: _ } => {
             let mut events = store::read_history(&root, concept.as_deref(), limit);
             if include_archived {
                 events.extend(archietect::store::read_archived_history(&root, concept.as_deref(), limit));
@@ -575,7 +598,15 @@ fn main() -> anyhow::Result<()> {
                 "reason": decision.reason,
             })
         }
-        Cmd::Register => { let (idx, g) = index_for(&root); archietect::register::register(&idx, &g, &root) }
+        Cmd::Register { since_last } => {
+            let (idx, g) = index_for(&root);
+            let mut out = archietect::register::register(&idx, &g, &root);
+            if since_last {
+                let delta = archietect::register::diff_since_last(&root, &out);
+                out["since_last_session"] = delta;
+            }
+            out
+        }
         Cmd::Documents(DocumentsCmd::Scan { dir }) => {
             let global_path = archietect::permissions::default_global_config_path()?;
             let cfg = archietect::permissions::load(&global_path, &root)?;

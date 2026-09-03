@@ -188,6 +188,128 @@ pub fn read_archived_history(root: &Path, concept: Option<&str>, limit: usize) -
         .collect()
 }
 
+/// Caps a name list for narration the same way query.rs/register.rs cap
+/// evidence lists (LIST_CAP=20, `.take(15)` fields, ...) — a digest that
+/// dumps every name defeats the point of narrating instead of listing.
+fn join_capped(names: &[&str], cap: usize) -> String {
+    if names.len() <= cap {
+        names.join(", ")
+    } else {
+        format!("{} (+{} more)", names[..cap].join(", "), names.len() - cap)
+    }
+}
+
+fn plural_s(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+/// A narrative-quality summary of the timeline, not a fact dump — deliberate
+/// parallel to a "session consolidation" pass: still generated entirely from
+/// deterministic event records (never an LLM), just grouped and phrased into
+/// sentences instead of returned as a raw event list. `read_history`
+/// already answers "what happened, in order"; this answers "what's the
+/// story," for a limit large enough to actually see the shape of a period,
+/// not just the last few rows.
+pub fn history_digest(root: &Path, limit: usize) -> serde_json::Value {
+    let events = read_history(root, None, limit);
+    if events.is_empty() {
+        return serde_json::json!({
+            "available": false,
+            "reason": "no history events recorded yet — the watch daemon or a CI run must produce at least one",
+        });
+    }
+
+    use std::collections::BTreeMap;
+    let mut by_kind: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
+    for e in &events {
+        by_kind.entry(e["kind"].as_str().unwrap_or("").to_string()).or_default().push(e);
+    }
+    let concept_names = |kind: &str| -> Vec<&str> {
+        by_kind.get(kind).map(|v| v.iter().filter_map(|e| e["concept"].as_str()).collect()).unwrap_or_default()
+    };
+
+    let mut narrative: Vec<String> = Vec::new();
+
+    let ci_passed = by_kind.get("ci_passed").map(|v| v.len()).unwrap_or(0);
+    let ci_blocked = by_kind.get("ci_blocked").map(|v| v.len()).unwrap_or(0);
+    if ci_passed + ci_blocked > 0 {
+        narrative.push(format!(
+            "CI ran {} time{}: {} passed, {} blocked.",
+            ci_passed + ci_blocked, plural_s(ci_passed + ci_blocked), ci_passed, ci_blocked
+        ));
+    }
+
+    let appeared = concept_names("concept_appeared");
+    if !appeared.is_empty() {
+        narrative.push(format!("{} new concept{} appeared: {}.", appeared.len(), plural_s(appeared.len()), join_capped(&appeared, 10)));
+    }
+
+    if let Some(v) = by_kind.get("concept_renamed") {
+        let renames: Vec<String> = v.iter().map(|e| format!("{} → {}", e["detail"]["from"].as_str().unwrap_or("?"), e["detail"]["to"].as_str().unwrap_or("?"))).collect();
+        let refs: Vec<&str> = renames.iter().map(|s| s.as_str()).collect();
+        narrative.push(format!("{} concept{} renamed: {}.", v.len(), plural_s(v.len()), join_capped(&refs, 10)));
+    }
+
+    let dup_risk = concept_names("duplicate_concept_risk");
+    if !dup_risk.is_empty() {
+        narrative.push(format!(
+            "{} duplicate-concept risk{} flagged: {}.",
+            dup_risk.len(), plural_s(dup_risk.len()), join_capped(&dup_risk, 10)
+        ));
+    }
+
+    let lost = concept_names("concept_lost_storage");
+    if !lost.is_empty() {
+        narrative.push(format!(
+            "{} concept{} lost all storage declarations: {}.",
+            lost.len(), plural_s(lost.len()), join_capped(&lost, 10)
+        ));
+    }
+
+    if let Some(v) = by_kind.get("alias_introduced") {
+        let names: Vec<String> = v.iter().map(|e| format!("{} → {}", e["concept"].as_str().unwrap_or("?"), e["detail"]["target"].as_str().unwrap_or("?"))).collect();
+        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        narrative.push(format!("{} alias{} introduced: {}.", v.len(), plural_s(v.len()), join_capped(&refs, 10)));
+    }
+    if let Some(v) = by_kind.get("alias_removed") {
+        let names = concept_names("alias_removed");
+        narrative.push(format!("{} alias{} removed: {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+    }
+    if let Some(v) = by_kind.get("decision_added") {
+        let names = concept_names("decision_added");
+        narrative.push(format!("{} decision{} recorded: {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+    }
+    if let Some(v) = by_kind.get("decision_removed") {
+        let names = concept_names("decision_removed");
+        narrative.push(format!("{} decision{} deleted (rationale lost, not just the record): {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+    }
+    let stale = concept_names("stale_alias");
+    if !stale.is_empty() {
+        narrative.push(format!("{} alias{} point at a concept that no longer exists: {}.", stale.len(), plural_s(stale.len()), join_capped(&stale, 10)));
+    }
+    // Newest-first: the first architecture_version event in this window is
+    // the latest version reached, not the first bump — narrate that one.
+    if let Some(v) = by_kind.get("architecture_version") {
+        if let Some(latest) = v.first() {
+            narrative.push(format!("Architecture version reached {}.", latest["concept"].as_str().unwrap_or("?")));
+        }
+    }
+
+    let oldest_ms = events.last().and_then(|e| e["ts_ms"].as_i64());
+    let newest_ms = events.first().and_then(|e| e["ts_ms"].as_i64());
+
+    serde_json::json!({
+        "available": true,
+        "event_count": events.len(),
+        "oldest_ms": oldest_ms,
+        "oldest_label": oldest_ms.and_then(crate::humanize::age_label),
+        "newest_ms": newest_ms,
+        "newest_label": newest_ms.and_then(crate::humanize::age_label),
+        "narrative": narrative,
+        "by_kind_count": by_kind.iter().map(|(k, v)| (k.clone(), v.len())).collect::<BTreeMap<_, _>>(),
+    })
+}
+
 /// Bump and return the ARCHITECTURE version — a monotonic counter that
 /// advances only when the concept SET changes (a new concept, a removed one,
 /// a rename). Like a migration number, but for architectural knowledge:
@@ -351,6 +473,75 @@ mod archive_tests {
     fn read_archived_history_on_project_with_no_archive_returns_empty() {
         let root = tmp_project("no-archive");
         assert!(read_archived_history(&root, None, 10).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tmp_project(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-digest-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn no_events_is_unavailable_not_an_empty_digest() {
+        let root = tmp_project("empty");
+        let d = history_digest(&root, 50);
+        assert_eq!(d["available"], json!(false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn narrates_real_events_grouped_by_kind_not_a_raw_dump() {
+        let root = tmp_project("narrate");
+        append_events(&root, &[
+            (1_700_000_000_000, "concept_appeared".into(), "Widget".into(), "{}".into()),
+            (1_700_000_001_000, "concept_appeared".into(), "Gadget".into(), "{}".into()),
+            (1_700_000_002_000, "ci_passed".into(), "Widget".into(), "{}".into()),
+            (1_700_000_003_000, "ci_blocked".into(), "Gadget".into(), "{}".into()),
+            (1_700_000_004_000, "alias_introduced".into(), "gadget".into(), json!({"target": "Gadget"}).to_string()),
+            (
+                1_700_000_005_000,
+                "concept_renamed".into(),
+                "NewName".into(),
+                json!({"from": "OldName", "to": "NewName"}).to_string(),
+            ),
+        ]).unwrap();
+
+        let d = history_digest(&root, 50);
+        assert_eq!(d["available"], json!(true));
+        assert_eq!(d["event_count"], json!(6));
+        assert!(d["oldest_label"].is_string(), "{d}");
+        assert!(d["newest_label"].is_string(), "{d}");
+
+        let narrative: Vec<String> = d["narrative"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
+        assert!(narrative.iter().any(|s| s.contains("2 new concepts appeared") && s.contains("Widget") && s.contains("Gadget")), "{narrative:?}");
+        assert!(narrative.iter().any(|s| s.contains("CI ran 2 times: 1 passed, 1 blocked")), "{narrative:?}");
+        assert!(narrative.iter().any(|s| s.contains("1 alias introduced") && s.contains("gadget → Gadget")), "{narrative:?}");
+        assert!(narrative.iter().any(|s| s.contains("1 concept renamed") && s.contains("OldName → NewName")), "{narrative:?}");
+
+        assert_eq!(d["by_kind_count"]["concept_appeared"], json!(2));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn long_name_lists_are_capped_not_dumped() {
+        let root = tmp_project("cap");
+        let events: Vec<(i64, String, String, String)> = (0..15)
+            .map(|i| (1_700_000_000_000 + i, "concept_appeared".into(), format!("Concept{i}"), "{}".into()))
+            .collect();
+        append_events(&root, &events).unwrap();
+
+        let d = history_digest(&root, 50);
+        let narrative: Vec<String> = d["narrative"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
+        let line = narrative.iter().find(|s| s.contains("new concepts appeared")).expect("appeared line");
+        assert!(line.contains("+5 more"), "{line}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

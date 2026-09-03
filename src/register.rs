@@ -261,6 +261,7 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
         "as_of": {
             "index": crate::query::index_freshness(root),
             "newest_verification_ms": newest_verification_ms,
+            "newest_verification_label": newest_verification_ms.and_then(crate::humanize::age_label),
         },
         "known": {
             "files_scanned": idx.files_scanned,
@@ -275,6 +276,96 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
             "domains": boundary_domains,
         },
         "note": "Read `not_known` before trusting any ABSENT: an entry here means a category of evidence was never looked at or cannot be produced, which is a boundary of this memory, not a fact about the world. Every entry names how to establish the fact without archietect.",
+    })
+}
+
+fn snapshot_path(root: &Path) -> std::path::PathBuf {
+    root.join(".archietect").join("last_register_snapshot.json")
+}
+
+/// The minimal, comparable slice of a `register()` call worth snapshotting —
+/// deliberately NOT the whole Value (boundary/hardcoded_denials never change
+/// session to session and would just be diff noise; `not_known`'s
+/// (kind, domain) pairs are the part worth tracking, not its full text).
+fn snapshot_of(out: &Value) -> Value {
+    let mut not_known_pairs: Vec<(String, String)> = out["not_known"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|e| (e["kind"].as_str().unwrap_or("").to_string(), e["domain"].as_str().unwrap_or("").to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    not_known_pairs.sort();
+    json!({
+        "taken_ms": crate::humanize::now_ms(),
+        "concepts_declared": out["known"]["concepts_declared"],
+        "concepts_with_observed_usage": out["known"]["concepts_with_observed_usage"],
+        "files_scanned": out["known"]["files_scanned"],
+        "domains_enabled": out["known"]["domains_enabled"].as_array().map(|a| {
+            let mut v: Vec<String> = a.iter().filter_map(|d| d.as_str().map(String::from)).collect();
+            v.sort();
+            v
+        }).unwrap_or_default(),
+        "not_known_pairs": not_known_pairs.iter().map(|(k, d)| json!([k, d])).collect::<Vec<_>>(),
+    })
+}
+
+/// Diffs `current` (a fresh `register()` call) against whatever was
+/// snapshotted at `<root>/.archietect/last_register_snapshot.json` from the
+/// last time this was called, then overwrites the snapshot with `current` —
+/// so the NEXT call diffs against THIS one, not the same baseline forever.
+/// This is the proactive layer register() itself deliberately doesn't have:
+/// register() is pure composition of already-known signals (see module
+/// doc), never side-effecting; tracking "what changed since last time" is a
+/// property of repeated *calls*, not of any one snapshot, so it lives here
+/// as a separate, explicitly side-effecting function — never silently
+/// folded into register() itself.
+///
+/// First call ever (no prior snapshot) reports `"available": false` rather
+/// than a delta of zero — there is no "no changes," there is no baseline.
+pub fn diff_since_last(root: &Path, current: &Value) -> Value {
+    let path = snapshot_path(root);
+    let previous: Option<Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
+
+    let now = snapshot_of(current);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, serde_json::to_string_pretty(&now).unwrap_or_default());
+
+    let Some(prev) = previous else {
+        return json!({
+            "available": false,
+            "reason": "no prior snapshot — this is the first time this project's register() has been tracked",
+        });
+    };
+
+    let as_of_ms = prev["taken_ms"].as_i64().unwrap_or(0);
+    let prev_not_known: std::collections::BTreeSet<(String, String)> = prev["not_known_pairs"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string()))).collect())
+        .unwrap_or_default();
+    let now_not_known: std::collections::BTreeSet<(String, String)> = now["not_known_pairs"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string()))).collect())
+        .unwrap_or_default();
+    let prev_domains: std::collections::BTreeSet<String> =
+        prev["domains_enabled"].as_array().map(|a| a.iter().filter_map(|d| d.as_str().map(String::from)).collect()).unwrap_or_default();
+    let now_domains: std::collections::BTreeSet<String> =
+        now["domains_enabled"].as_array().map(|a| a.iter().filter_map(|d| d.as_str().map(String::from)).collect()).unwrap_or_default();
+
+    json!({
+        "available": true,
+        "as_of_ms": as_of_ms,
+        "as_of_label": crate::humanize::age_label(as_of_ms),
+        "concepts_declared_delta": current["known"]["concepts_declared"].as_i64().unwrap_or(0) - prev["concepts_declared"].as_i64().unwrap_or(0),
+        "concepts_with_observed_usage_delta": current["known"]["concepts_with_observed_usage"].as_i64().unwrap_or(0) - prev["concepts_with_observed_usage"].as_i64().unwrap_or(0),
+        "files_scanned_delta": current["known"]["files_scanned"].as_i64().unwrap_or(0) - prev["files_scanned"].as_i64().unwrap_or(0),
+        "domains_enabled_added": now_domains.difference(&prev_domains).cloned().collect::<Vec<_>>(),
+        "domains_enabled_removed": prev_domains.difference(&now_domains).cloned().collect::<Vec<_>>(),
+        "not_known_newly_present": now_not_known.difference(&prev_not_known).map(|(k, d)| json!({"kind": k, "domain": d})).collect::<Vec<_>>(),
+        "not_known_resolved": prev_not_known.difference(&now_not_known).map(|(k, d)| json!({"kind": k, "domain": d})).collect::<Vec<_>>(),
     })
 }
 
@@ -440,6 +531,69 @@ mod tests {
         let ks = kinds(&out);
         assert!(!ks.iter().any(|(k, _)| k == "unsupported_language"), "no .lua here → no entry, got {ks:?}");
         assert!(!ks.iter().any(|(k, _)| k == "usage_unobserved"), "no schema concepts here → no entry, got {ks:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn first_ever_diff_call_has_no_baseline() {
+        let _g = HOME_LOCK.lock().unwrap();
+        let root = fixture("diff-first");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let _h = HomeGuard::set(&home);
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = register(&idx, &graph, &root);
+        let delta = diff_since_last(&root, &out);
+        assert_eq!(delta["available"], json!(false));
+        assert!(snapshot_path(&root).exists(), "first call must still write a snapshot for the NEXT call to diff against");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn second_diff_call_reports_real_deltas_against_the_first() {
+        let _g = HOME_LOCK.lock().unwrap();
+        let root = fixture("diff-second");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let _h = HomeGuard::set(&home);
+
+        let (idx1, graph1) = crate::scan::scan(&root);
+        let out1 = register(&idx1, &graph1, &root);
+        let first = diff_since_last(&root, &out1);
+        assert_eq!(first["available"], json!(false));
+
+        // A new declared concept appears, and docker gets enabled between
+        // the two tracked calls — both must show up in the second diff.
+        std::fs::write(
+            root.join("more.prisma"),
+            "model Gadget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
+
+        let (idx2, graph2) = crate::scan::scan(&root);
+        let out2 = register(&idx2, &graph2, &root);
+        let second = diff_since_last(&root, &out2);
+
+        assert_eq!(second["available"], json!(true));
+        assert!(second["as_of_label"].is_string(), "{second}");
+        assert_eq!(second["concepts_declared_delta"], json!(1), "{second}");
+        assert_eq!(second["domains_enabled_added"], json!(["docker"]), "{second}");
+        assert_eq!(second["domains_enabled_removed"], json!([] as [String; 0]), "{second}");
+
+        // Calling AGAIN with no further changes must diff against the
+        // SECOND snapshot, not stay pinned to the first — zero deltas now.
+        let third = diff_since_last(&root, &out2);
+        assert_eq!(third["available"], json!(true));
+        assert_eq!(third["concepts_declared_delta"], json!(0), "{third}");
+        assert_eq!(third["domains_enabled_added"], json!([] as [String; 0]), "{third}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

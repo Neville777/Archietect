@@ -405,7 +405,7 @@ BIN_TO_USE="$ARCHIETECT_BIN"
 command -v "$BIN_TO_USE" >/dev/null 2>&1 || [ -x "$BIN_TO_USE" ] || exit 0
 [ -f "$PROJECT_ROOT/archietect.db" ] || exit 0
 
-REGISTER_JSON="$("$BIN_TO_USE" register --root "$PROJECT_ROOT" --compact 2>/dev/null)" || exit 0
+REGISTER_JSON="$("$BIN_TO_USE" register --root "$PROJECT_ROOT" --since-last --compact 2>/dev/null)" || exit 0
 [ -n "$REGISTER_JSON" ] || exit 0
 
 echo "archietect: this project's memory (run \`archietect register\` any time for the live view) —"
