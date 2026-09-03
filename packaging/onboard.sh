@@ -269,9 +269,11 @@ if [[ "$CLAUDE_HOOK_FLAG" == "yes" ]]; then
     HOOKS_DIR="$TARGET/.claude/hooks"
     GUARD_SCRIPT="$HOOKS_DIR/archietect-guard.sh"
     BOUNDARY_SCRIPT="$HOOKS_DIR/archietect-boundary.sh"
+    SESSION_START_SCRIPT="$HOOKS_DIR/archietect-session-start.sh"
     SETTINGS_FILE="$TARGET/.claude/settings.json"
     GUARD_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-guard.sh'
     BOUNDARY_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-boundary.sh'
+    SESSION_START_CMD='$CLAUDE_PROJECT_DIR/.claude/hooks/archietect-session-start.sh'
     mkdir -p "$HOOKS_DIR"
 
     sed -e "s|__ARCHIETECT_BIN__|${BIN}|g" > "$GUARD_SCRIPT" <<'GUARD'
@@ -367,13 +369,58 @@ exit 2
 BOUNDARY
     chmod +x "$BOUNDARY_SCRIPT"
 
-    if [[ -f "$SETTINGS_FILE" ]] && grep -q "archietect-guard.sh" "$SETTINGS_FILE" 2>/dev/null && grep -q "archietect-boundary.sh" "$SETTINGS_FILE" 2>/dev/null; then
+    # The third hook: register-first, not remember-to-read. See
+    # SYSTEM_MEMORY.md's "Instruction files vs. memory vs. enforcement" —
+    # an instruction file like AGENTS.md only works if the agent reads it;
+    # this hands the register to the model automatically at the start of
+    # every session/resume/clear/compact, so asking the memory is the
+    # default instead of a habit that has to be remembered. Uses SessionStart
+    # specifically because it's one of the few Claude Code hook events where
+    # PLAIN stdout (no JSON wrapper) becomes context the model can see and
+    # act on — confirmed directly against the current official docs
+    # (code.claude.com/docs/en/hooks: "The exceptions are UserPromptSubmit,
+    # UserPromptExpansion, SessionStart, and PostModelSwitch, where Claude
+    # Code adds plain-text stdout as context") — not the more complex
+    # hookSpecificOutput.additionalContext JSON form some other sources
+    # describe, which has open, unresolved reliability issues reported
+    # against it. Honest limit, stated here because it matters: this script
+    # can be verified to run correctly and print the right content; whether
+    # Claude Code's runtime actually surfaces that stdout into a live
+    # session's context is an external behavior no shell command can
+    # mechanically confirm from inside this repository.
+    sed -e "s|__ARCHIETECT_BIN__|${BIN}|g" > "$SESSION_START_SCRIPT" <<'SESSIONSTART'
+#!/bin/bash
+# archietect:managed — installed by packaging/onboard.sh --claude-hook.
+# SessionStart hook: prints `archietect register --compact` to stdout so a
+# new/resumed/cleared/compacted session sees, up front, what this memory
+# already knows/doesn't know/allows — without the model having to remember
+# to ask. Fails silent (empty stdout, exit 0) on anything ambiguous: this
+# is a convenience, never a thing that should make a session fail to start.
+ARCHIETECT_BIN="__ARCHIETECT_BIN__"
+cat >/dev/null  # SessionStart's stdin isn't needed for this hook — read and discard it cleanly rather than leaving it unconsumed.
+
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
+BIN_TO_USE="$ARCHIETECT_BIN"
+[ -x "$BIN_TO_USE" ] || BIN_TO_USE="archietect"
+command -v "$BIN_TO_USE" >/dev/null 2>&1 || [ -x "$BIN_TO_USE" ] || exit 0
+[ -f "$PROJECT_ROOT/archietect.db" ] || exit 0
+
+REGISTER_JSON="$("$BIN_TO_USE" register --root "$PROJECT_ROOT" --compact 2>/dev/null)" || exit 0
+[ -n "$REGISTER_JSON" ] || exit 0
+
+echo "archietect: this project's memory (run \`archietect register\` any time for the live view) —"
+echo "$REGISTER_JSON"
+exit 0
+SESSIONSTART
+    chmod +x "$SESSION_START_SCRIPT"
+
+    if [[ -f "$SETTINGS_FILE" ]] && grep -q "archietect-guard.sh" "$SETTINGS_FILE" 2>/dev/null && grep -q "archietect-boundary.sh" "$SETTINGS_FILE" 2>/dev/null && grep -q "archietect-session-start.sh" "$SETTINGS_FILE" 2>/dev/null; then
         echo "   already present: $SETTINGS_FILE"
         CLAUDE_HOOK_STATE="installed"
     elif [[ -f "$SETTINGS_FILE" ]]; then
         if command -v jq >/dev/null 2>&1; then
             TMP_SETTINGS="$(mktemp)"
-            jq --arg guard "$GUARD_CMD" --arg boundary "$BOUNDARY_CMD" '
+            jq --arg guard "$GUARD_CMD" --arg boundary "$BOUNDARY_CMD" --arg sessionstart "$SESSION_START_CMD" '
                 .hooks.PreToolUse = (
                     (.hooks.PreToolUse // [])
                     + (if any(.hooks.PreToolUse[]?; .hooks[]?.command == $guard) then [] else
@@ -381,13 +428,18 @@ BOUNDARY
                     + (if any(.hooks.PreToolUse[]?; .hooks[]?.command == $boundary) then [] else
                         [{"matcher": "Read|Edit|Write", "hooks": [{"type": "command", "command": $boundary}]}] end)
                 )
+                | .hooks.SessionStart = (
+                    (.hooks.SessionStart // [])
+                    + (if any(.hooks.SessionStart[]?; .hooks[]?.command == $sessionstart) then [] else
+                        [{"matcher": "startup|resume|clear|compact|fork", "hooks": [{"type": "command", "command": $sessionstart}]}] end)
+                )
             ' "$SETTINGS_FILE" > "$TMP_SETTINGS" && mv "$TMP_SETTINGS" "$SETTINGS_FILE"
             echo "   updated: $SETTINGS_FILE"
             CLAUDE_HOOK_STATE="installed"
         elif command -v python3 >/dev/null 2>&1; then
-            python3 - "$SETTINGS_FILE" "$GUARD_CMD" "$BOUNDARY_CMD" <<'PYEOF'
+            python3 - "$SETTINGS_FILE" "$GUARD_CMD" "$BOUNDARY_CMD" "$SESSION_START_CMD" <<'PYEOF'
 import json, sys
-path, guard_cmd, boundary_cmd = sys.argv[1], sys.argv[2], sys.argv[3]
+path, guard_cmd, boundary_cmd, session_start_cmd = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(path) as fh:
     data = json.load(fh)
 pre = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
@@ -396,6 +448,10 @@ if guard_cmd not in existing_cmds:
     pre.append({"matcher": "Write", "hooks": [{"type": "command", "command": guard_cmd}]})
 if boundary_cmd not in existing_cmds:
     pre.append({"matcher": "Read|Edit|Write", "hooks": [{"type": "command", "command": boundary_cmd}]})
+start = data["hooks"].setdefault("SessionStart", [])
+start_cmds = {h.get("command") for entry in start for h in entry.get("hooks", [])}
+if session_start_cmd not in start_cmds:
+    start.append({"matcher": "startup|resume|clear|compact|fork", "hooks": [{"type": "command", "command": session_start_cmd}]})
 with open(path, "w") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
@@ -404,9 +460,10 @@ PYEOF
             CLAUDE_HOOK_STATE="installed"
         else
             echo "   $SETTINGS_FILE already exists and neither jq nor python3 is available to merge safely — skipping."
-            echo "   add these manually to its \"hooks\".\"PreToolUse\" array:"
-            echo "     {\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$GUARD_CMD\"}]}"
-            echo "     {\"matcher\": \"Read|Edit|Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$BOUNDARY_CMD\"}]}"
+            echo "   add these manually to its \"hooks\" object:"
+            echo "     \"PreToolUse\": [{\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$GUARD_CMD\"}]},"
+            echo "                    {\"matcher\": \"Read|Edit|Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"$BOUNDARY_CMD\"}]}]"
+            echo "     \"SessionStart\": [{\"matcher\": \"startup|resume|clear|compact|fork\", \"hooks\": [{\"type\": \"command\", \"command\": \"$SESSION_START_CMD\"}]}]"
         fi
     else
         cat > "$SETTINGS_FILE" <<EOF
@@ -428,6 +485,17 @@ PYEOF
           {
             "type": "command",
             "command": "$BOUNDARY_CMD"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$SESSION_START_CMD"
           }
         ]
       }

@@ -129,6 +129,24 @@ check "claude settings.json does not reference the cursor script" "! grep -q '.c
 check "cursor hooks.json does not reference the claude script"    "! grep -q '.claude/hooks' \"$PROJECT/.cursor/hooks.json\""
 
 echo
+echo "== Test 1g: Claude Code SessionStart hook injects the register view =="
+SESSION_START="$PROJECT/.claude/hooks/archietect-session-start.sh"
+check "session-start script installed"    "[[ -x \"$SESSION_START\" ]]"
+check "settings.json references it"       "grep -q archietect-session-start.sh \"$PROJECT/.claude/settings.json\""
+check "settings.json wires it to SessionStart, not PreToolUse" "python3 -c \"import json; d=json.load(open('$PROJECT/.claude/settings.json')); ss=d['hooks']['SessionStart']; assert any('archietect-session-start.sh' in h['command'] for e in ss for h in e['hooks'])\""
+SESSION_START_OUT="$TMP/session-start.out"
+CLAUDE_PROJECT_DIR="$PROJECT" bash -c "echo '{}' | \"$SESSION_START\"" > "$SESSION_START_OUT" 2>/dev/null
+check "session-start hook exits 0"                 "CLAUDE_PROJECT_DIR=\"$PROJECT\" bash -c \"echo '{}' | \\\"$SESSION_START\\\"\" >/dev/null 2>&1"
+check "session-start hook prints the register view" "grep -q 'this project'\\''s memory' \"$SESSION_START_OUT\""
+check "session-start output embeds valid JSON"       "tail -n +2 \"$SESSION_START_OUT\" | jq -e . >/dev/null"
+check "session-start output names a known domain"    "tail -n +2 \"$SESSION_START_OUT\" | jq -e '.boundary.domains[] | select(.domain==\"git\")' >/dev/null"
+NO_DB_OUT="$TMP/session-start-nodb.out"
+NO_DB_PROJECT="$TMP/no-db-project"
+mkdir -p "$NO_DB_PROJECT"
+CLAUDE_PROJECT_DIR="$NO_DB_PROJECT" bash -c "echo '{}' | \"$SESSION_START\"" > "$NO_DB_OUT" 2>/dev/null
+check "session-start is silent (no db) rather than erroring" "[[ ! -s \"$NO_DB_OUT\" ]]"
+
+echo
 echo "== Test 2: existing architecture memory survives re-onboarding =="
 cat > "$PROJECT/archietect.toml" <<'EOF'
 [aliases]
