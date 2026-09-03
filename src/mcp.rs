@@ -187,6 +187,11 @@ fn tool_defs_inner() -> Value {
             }, "required": ["id"] }
         },
         {
+            "name": "register",
+            "description": "THE MAP OF THE BAG — call this before trusting any ABSENT. What this memory knows about the repository (counts, enabled domains), what it does NOT know and WHY (`not_known`: unsupported languages with the exact files, disabled or unconfirmed domains, evidence tiers no extractor can produce — e.g. whether a declared docker service is actually running — and declared concepts never observed in use), each with how to establish the fact without archietect, plus the permission boundary including whether a human actually confirmed each unstructured domain. Distinguishes 'X does not exist' from 'X cannot be established here'.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
             "name": "permissions",
             "description": "Inspect the resolved domain permission state for this repository: which domains (code, git, docker, systemd, photos, messages, documents, browser) are enabled and WHERE that decision came from (project config / global config / default), plus the hardcoded denial list (.ssh, .aws, credential files, browser profiles, ...) nothing can ever override.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -358,6 +363,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 Ok(cfg) => permissions::report(&cfg),
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
+                            "register" => crate::register::register(&idx, &graph, &root),
                             // root is required here purely because every MCP
                             // tool call in this server goes through the same
                             // Some(root) dispatch gate above — system_list
@@ -609,7 +615,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        for expected in ["permissions", "system_list", "system_query", "system_status", "system_register", "documents_scan"] {
+        for expected in ["permissions", "register", "system_list", "system_query", "system_status", "system_register", "documents_scan"] {
             assert!(names.contains(&expected), "expected tool '{expected}' in tools/list, got: {names:?}");
         }
 
@@ -641,6 +647,22 @@ mod tests {
             status_projects[0]["status"].is_null(),
             "this project was registered but never `init`'d, so its status must honestly report null, not fabricate counts — got: {statuses}"
         );
+
+        // The map of the bag, with shaping: one slice, no prose. This
+        // project has no schema and no unclassified files, so the only
+        // unknowns are the domain-level ones — docker disabled by default.
+        let reg_resp = call(
+            &mut stdin, &rx, 8, "tools/call",
+            json!({ "name": "register", "arguments": { "only": ["not_known", "known"], "compact": true } }),
+        );
+        let reg = tool_result(&reg_resp);
+        assert!(reg.get("boundary").is_none(), "`only` must drop unselected keys, got: {reg}");
+        assert!(reg.get("note").is_none(), "`compact` must drop prose, got: {reg}");
+        assert!(
+            reg["not_known"].as_array().unwrap().iter().any(|e| e["kind"] == "domain_disabled" && e["domain"] == "docker"),
+            "docker is default-disabled and must be stated as not looked at, got: {reg}"
+        );
+        assert_eq!(reg["known"]["domains_enabled"], json!(["code", "git"]), "got: {reg}");
 
         let perms_resp = call(&mut stdin, &rx, 6, "tools/call", json!({ "name": "permissions", "arguments": {} }));
         let perms = tool_result(&perms_resp);

@@ -245,6 +245,17 @@ pub fn stdio_asker() -> Box<dyn ConfirmationAsker> {
     }
 }
 
+/// The recorded answer to the one-time interactive confirmation for an
+/// unstructured `domain`: `Some(true)`/`Some(false)` if it was ever asked
+/// and answered, `None` if never asked (or the file is absent/unreadable).
+/// Read-only view over `~/.archietect/confirmations.toml` for `archietect
+/// register`, so a consumer can tell "configured enabled" from "a human
+/// actually confirmed" — same loader the gate itself uses, not a second
+/// parser.
+pub fn confirmation_state(confirmations_path: &Path, domain: &str) -> Option<bool> {
+    load_confirmation(confirmations_path, &domain.to_lowercase()).ok().flatten()
+}
+
 fn load_confirmation(path: &Path, domain: &str) -> Result<Option<bool>> {
     let Ok(text) = std::fs::read_to_string(path) else { return Ok(None) };
     let Ok(v) = text.parse::<toml::Value>() else { return Ok(None) };

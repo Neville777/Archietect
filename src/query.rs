@@ -1052,6 +1052,17 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
 /// a composite score nobody measured is an unmeasured number wearing a
 /// measured one's clothes, and it would teach readers to distrust the real
 /// numbers beside it. Facts and derived suggestions only.
+/// The one freshness notion in this codebase, shared by `glance` and
+/// `register`: is there a persisted index at all. Kept as a function so the
+/// two can never drift into different wordings for the same fact.
+pub fn index_freshness(root: &std::path::Path) -> &'static str {
+    if root.join("archietect.db").exists() {
+        "current (incremental)"
+    } else {
+        "not persisted (this scan ran in-memory)"
+    }
+}
+
 pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> Value {
     let db = root.join("archietect.db");
     let dup = duplicates(idx);
@@ -1122,7 +1133,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
     json!({
         "repository": root.display().to_string(),
         "status": {
-            "index": if persisted { "current (incremental)" } else { "not persisted (this scan ran in-memory)" },
+            "index": index_freshness(root),
             "concepts": idx.concepts.len(),
             "duplicate_storage_risks": needs_alias,
             "ontology_warnings": stale.len(),

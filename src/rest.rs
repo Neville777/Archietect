@@ -30,7 +30,7 @@
 //!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
 //!   GET /history[?q=concept][&limit=50]      GET /permissions[&root=/path]
 //!   GET /system/list                         GET /system/query?q=Widget
-//!   GET /system/status
+//!   GET /system/status                       GET /register[&root=/path]
 //!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!
@@ -362,6 +362,9 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             Ok(cfg) => permissions::report(&cfg),
                             Err(e) => json!({ "error": e.to_string() }),
                         },
+                        // Read-only, no token: the map of the bag — see
+                        // src/register.rs. Composes over the same warm idx.
+                        "/register" => crate::register::register(&idx, &graph, &root),
                         // See this module's doc: always NonInteractiveAsker —
                         // never blocks waiting for a y/N answer that can
                         // never arrive over a network transport.
@@ -395,7 +398,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates",
-                                          "/history", "/ci", "/laws", "/permissions",
+                                          "/history", "/ci", "/laws", "/permissions", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
@@ -639,6 +642,34 @@ mod tests {
         assert_eq!(code["source"], "default-enabled");
         let docker = domains.iter().find(|d| d["domain"] == "docker").unwrap();
         assert_eq!(docker["allowed"], false);
+    }
+
+    #[test]
+    fn register_endpoint_needs_no_token_and_reports_real_unknowns() {
+        // Labels must be unique across this test module: tmp_dir() wipes
+        // and recreates its directory, and tests run in parallel.
+        let home = tmp_dir("home-the-register");
+        let project = tmp_dir("project-the-register");
+        std::fs::write(
+            project.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n  name String\n}\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("handler.lua"), b"function f() end\n").unwrap();
+        let (_guard, _token) = spawn_server(&project, &home, 17408);
+
+        let (status, body) = http_get(17408, "/register");
+        assert_eq!(status, 200, "GET /register (read-only) must not require a token, got: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let kinds: Vec<&str> = v["not_known"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"unsupported_language"), "the .lua file must surface, got: {body}");
+        assert!(kinds.contains(&"usage_unobserved"), "the declared-only Widget must surface, got: {body}");
+        assert!(kinds.contains(&"domain_disabled"), "docker is default-disabled, got: {body}");
+        // shaping applies here too: one slice, no prose
+        let (status, body) = http_get(17408, "/register?only=known&compact=true");
+        assert_eq!(status, 200);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert!(v.get("not_known").is_none() && v["known"]["files_scanned"].as_u64() == Some(1), "got: {body}");
     }
 
     #[test]

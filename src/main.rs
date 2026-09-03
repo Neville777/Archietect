@@ -120,6 +120,12 @@ enum Cmd {
     /// and the hardcoded denial list nothing can override. See
     /// SYSTEM_MEMORY.md's "Memory boundaries are the default" section.
     Permissions,
+    /// The map of the bag: what this memory knows about this repository,
+    /// what it does NOT know and why (unsupported languages, disabled or
+    /// unconfirmed domains, evidence tiers no extractor can produce, declared
+    /// concepts never observed in use), and where the permission boundary
+    /// is. Read this before trusting any ABSENT. See src/register.rs.
+    Register,
     /// The first UNSTRUCTURED domain (SYSTEM_MEMORY.md's "Evidence has two
     /// vocabularies, not one") — filename/extension/size/modified-time only,
     /// content never read. Deliberately its own explicit subcommand rather
@@ -444,6 +450,7 @@ fn main() -> anyhow::Result<()> {
             let cfg = archietect::permissions::load(&global_path, &root)?;
             archietect::permissions::report(&cfg)
         }
+        Cmd::Register => { let (idx, g) = index_for(&root); archietect::register::register(&idx, &g, &root) }
         Cmd::Documents(DocumentsCmd::Scan { dir }) => {
             let global_path = archietect::permissions::default_global_config_path()?;
             let cfg = archietect::permissions::load(&global_path, &root)?;

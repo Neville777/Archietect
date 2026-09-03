@@ -15,6 +15,7 @@ pub mod model;
 pub mod permissions;
 pub mod proposal;
 pub mod query;
+pub mod register;
 pub mod resource;
 pub mod root;
 pub mod rest;
