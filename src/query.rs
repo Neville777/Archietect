@@ -84,12 +84,12 @@ fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) ->
 ///
 /// Split out from `concept()` so it can be called BEFORE name-token search
 /// runs at all (law-011), rather than only as a fallback when name search
-/// comes up empty — the ordering that let GameTheoryEngine silently defeat
-/// the declared theory=causal_hypotheses alias on TITAN.
+/// comes up empty — the ordering that let an unrelated struct silently defeat
+/// a declared alias.
 fn resolve_alias(idx: &Index, graph: &StructuralGraph, term: &str, alias_key: &str, target: &str) -> Value {
     // LAW-010: an alias target is an EXACT concept name, not a search term.
-    // Feeding it back through term matching broke on any multi-token target
-    // — TITAN declares theory = "causal_hypotheses" and got UNKNOWN, because
+    // Feeding it back through term matching broke on any multi-token target —
+    // a declared alias whose target is a multi-word concept name got UNKNOWN, because
     // no single token of the target matches the whole target. Exact lookup
     // first; term search only as fallback.
     let mut r = if idx.concepts.contains_key(target) {
@@ -129,11 +129,9 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // but the control flow here used to reach alias resolution only when
     // `declared` (name-token matches) came back EMPTY. That silently
     // defeated the ontology whenever an UNRELATED concept happened to share
-    // a token with an alias key. Caught live on TITAN: archietect.toml
-    // declares theory = "causal_hypotheses", but crates/titan_evolution
-    // independently declares GameTheoryEngine — a real struct that
-    // token-matches "theory" — and the old order let it win outright,
-    // silently, with no error and no signal that the ontology was bypassed.
+    // a token with an alias key: an unrelated real struct sharing one token
+    // with a declared alias key could win outright and silently — no error,
+    // no signal that the ontology was bypassed.
     if let Some((alias_key, target)) = idx
         .aliases
         .iter()
@@ -511,10 +509,10 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     };
     // `canon` is a schema-layer concept key ONLY when the verdict above was
     // DECLARED_ONLY/HAS_STORAGE/etc — a STRUCTURAL verdict (a class/function
-    // that isn't a schema model, e.g. `GovernanceClient`) also sets
+    // that isn't a schema model, e.g. `NotificationClient`) also sets
     // `canonical`, but that name was never inserted into `idx.concepts` at
     // all. Blindly indexing here panicked on exactly that real case
-    // (`archietect impact GovernanceClient` on a real repo) — a
+    // (`archietect impact NotificationClient` on a real repo) — a
     // structural-only concept still has real impact data via
     // `structural_dependents` below, it just has no schema-layer
     // usage/relations to report, which is a fact to state, not a crash.
@@ -911,7 +909,7 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
 
 fn top_segment(path: &str) -> String {
     // In a monorepo the first segment is a CONTAINER, not an owner — 'crates'
-    // owns nothing; 'crates/titan_knowledge' is the answer a human wants.
+    // owns nothing; 'crates/payment_knowledge' is the answer a human wants.
     // The container list is ecosystem convention (like SKIP_DIRS), not a guess.
     const CONTAINERS: &[&str] = &["crates", "packages", "apps", "bin", "services", "libs", "modules"];
     let mut it = path.split('/');
@@ -952,7 +950,11 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         "declared_but_never_observed_in_use": unused,
         "recent_architectural_changes": recent,
         "things_to_read": idx.decisions.iter().map(|d| json!({
-            "id": d.id, "decision": d.decision,
+            "id": d.id, "decision": d.decision, "because": d.because,
+            "rejected": d.rejected, "links": d.links, "proposed_by": d.proposed_by,
+        })).collect::<Vec<_>>(),
+        "declared_aliases_list": idx.aliases.iter().map(|(alias, target)| json!({
+            "alias": alias, "target": target,
         })).collect::<Vec<_>>(),
         "structural_coverage": crate::structural::coverage_report(idx, graph),
         "counts": {
@@ -1010,8 +1012,8 @@ pub fn tour(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
 /// Suspected duplicate concepts: live pairs sharing a name token. Evidence of
 /// RISK, not proof — stated as such.
 pub fn duplicates(idx: &Index) -> Value {
-    // Restricted to STORAGE-bearing concepts. Found by dogfooding on TITAN
-    // (3,838 concepts once the rust pub-struct extractor landed): this loop
+    // Restricted to STORAGE-bearing concepts. Found by dogfooding on a large
+    // real codebase (3,838 concepts once the rust pub-struct extractor landed): this loop
     // is O(n^2) name-token comparisons, and over the full concept set that
     // was 23 SECONDS for one call — bare `archietect` (which calls this)
     // would be unusably slow on any large Rust codebase, the opposite of
@@ -1120,7 +1122,7 @@ pub fn owner(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             "ranked_directories": owner_dir.map(|d| vec![json!({ "dir": d, "weight": 1 })]).unwrap_or_default(),
         });
     };
-    // Ownership comes from DECLARING directories ONLY — found on TITAN:
+    // Ownership comes from DECLARING directories ONLY — found live:
     // three readers outvoted the single declaring directory under a weighted
     // sum, contradicting the stated principle. Interest must never outvote
     // the contract, at any count. Usage breaks ties among declarers and
@@ -1261,7 +1263,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
     let mut suggestions: Vec<String> = Vec::new();
     // (a) STORAGE concept families sharing a token with no governing decision
     //     — "four ledgers exist and nothing records why". Restricted to
-    //     concepts with a declared TABLE, found by dogfooding on TITAN: once
+    //     concepts with a declared TABLE, found by dogfooding: once
     //     the rust pub-struct extractor made every domain type a "concept",
     //     this drowned in 294 *Config structs, 108 *Result, 93 *Response —
     //     universal Rust naming conventions with ZERO duplication cost
@@ -1280,7 +1282,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
         }
     }
     // biggest families first — truncating alphabetically buried a 4-member
-    // ledger family under five 3-member ones on the very first TITAN run
+    // ledger family under five 3-member ones on the very first live dogfooding run
     let mut families: Vec<(&String, &Vec<String>)> = fam
         .iter()
         .filter(|(tok, members)| {
@@ -1507,8 +1509,7 @@ mod impact_structural_only_tests {
     /// `impact()` on a STRUCTURAL-only concept (a real class/function that
     /// is not a schema model) must not panic. `concept()`'s STRUCTURAL
     /// branch sets `"canonical"` to a name that was never inserted into
-    /// `idx.concepts` at all — found live against a real repository
-    /// (`archietect impact GovernanceClient` on ghosttrack-monorepo), where
+    /// `idx.concepts` at all — found live against a real repository, where
     /// `impact` unconditionally indexed `idx.concepts[&canon]` and panicked
     /// with "no entry found for key".
     #[test]
@@ -1519,15 +1520,15 @@ mod impact_structural_only_tests {
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
             tmp.join("service.ts"),
-            "export class GovernanceClient {\n  doSomething() {}\n}\n",
+            "export class NotificationClient {\n  doSomething() {}\n}\n",
         )
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(!idx.concepts.contains_key("GovernanceClient"), "sanity: must be structural-only, not a schema concept");
+        assert!(!idx.concepts.contains_key("NotificationClient"), "sanity: must be structural-only, not a schema concept");
 
-        let out = impact(&idx, &graph, "GovernanceClient");
-        assert_eq!(out["target"], "GovernanceClient");
+        let out = impact(&idx, &graph, "NotificationClient");
+        assert_eq!(out["target"], "NotificationClient");
         assert!(out["used_by_files"].as_array().unwrap().is_empty());
         assert!(out["declared_dependents"].as_array().unwrap().is_empty());
 
@@ -1557,15 +1558,15 @@ mod owner_structural_only_tests {
         std::fs::create_dir_all(tmp.join("services")).unwrap();
         std::fs::write(
             tmp.join("services").join("governance-client.ts"),
-            "export class GovernanceClient {\n  evaluate() {}\n}\n",
+            "export class NotificationClient {\n  evaluate() {}\n}\n",
         )
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(!idx.concepts.contains_key("GovernanceClient"), "sanity: must be structural-only, not a schema concept");
+        assert!(!idx.concepts.contains_key("NotificationClient"), "sanity: must be structural-only, not a schema concept");
 
-        let out = owner(&idx, &graph, "GovernanceClient");
-        assert_eq!(out["target"], "GovernanceClient");
+        let out = owner(&idx, &graph, "NotificationClient");
+        assert_eq!(out["target"], "NotificationClient");
         assert_eq!(
             out["owner_directory"], "services",
             "must find the real declaring directory, not silently report null, got: {out}"

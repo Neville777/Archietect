@@ -18,14 +18,22 @@
           padding:1rem; margin:.6rem 0; overflow-x:auto; }
   .stat { display:inline-block; margin-right:1.6rem; }
   .stat b { display:block; font-size:1.5rem; color:#e6edf3; }
+  button.stat { all:unset; display:inline-block; margin-right:1.6rem; cursor:pointer; }
+  button.stat:hover b, button.stat.active b { color:#58a6ff; }
+  #statDetail:empty { display:none; }
   .warn { color:#d29922; } .bad { color:#f85149; } .ok { color:#3fb950; }
-  table { border-collapse: collapse; width:100%; }
+  table { border-collapse: collapse; width:100%; font-size: inherit; }
   td, th { text-align:left; padding:.25rem .6rem; border-bottom:1px solid #21262d; vertical-align:top; }
   th { color:#8b949e; font-weight:normal; }
   .muted { color:#8b949e; } pre { white-space:pre-wrap; margin:0; }
+  [data-concept], [data-client], [data-domain], [data-file], [data-decision] { cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
+  [data-concept]:hover, [data-client]:hover, [data-domain]:hover, [data-file]:hover, [data-decision]:hover { color:#58a6ff; }
+  tr.inline-drill > td { background:#0d1117; border-bottom:1px solid #30363d; }
+  li.inline-drill { list-style:none; margin:.2rem 0; }
 </style>
 
-<h1>archietect <small>— read-only client of the engine · every number is a REST fetch</small></h1>
+<h1>archietect <small>— read-only client of the engine · every number is a REST fetch</small> <small id="buildTag" style="color:#3fb950">[build: root-error-fix-01]</small></h1>
+<div id="errBox"></div>
 <div>
   root <input id="root" size="52" placeholder="/absolute/path/to/repo">
   <button onclick="setRoot()">load</button>
@@ -35,6 +43,9 @@
   <button data-tab="timeline" onclick="show('timeline')">timeline</button>
   <button data-tab="drift" onclick="show('drift')">drift</button>
   <button data-tab="laws" onclick="show('laws')">laws</button>
+  <button data-tab="memory" onclick="show('memory')" title="every file archietect currently holds facts for — persistent, not tied to an in-flight scan">memory</button>
+  <span id="timer" class="muted" style="margin-left:auto; align-self:center;"></span>
+  <button id="reload" onclick="reload()" title="re-fetch the current tab">⟳ reload</button>
 </nav>
 <div id="out" class="card"><span class="muted">set a repository root above</span></div>
 
@@ -42,67 +53,546 @@
 const $ = id => document.getElementById(id);
 let tab = 'overview';
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const api = (ep, extra='') => fetch(`${ep}?root=${encodeURIComponent($('root').value)}${extra}`).then(r => r.json());
+
+// ── Load ownership ──────────────────────────────────────────────────────
+// One load (show()/reload() call) OWNS #out, #timer, the progress poll, and
+// lastDoctor/openStat at a time. Two async paths can be in flight together
+// — an auto-loaded root's scan still running when the user switches roots,
+// a reload racing a tab click, A→B→C fired rapidly — and any of them can
+// resolve in any order, successfully or with an error. AbortController
+// alone doesn't cover this: an abort only stops an in-flight NETWORK
+// request, but a request that already reached the server keeps running
+// there regardless, and can still return a perfectly normal-looking
+// response — which must be discarded exactly as an aborted one would be if
+// a newer load has since started. So every async function that can touch
+// that shared state takes the `gen` its caller was given by startLoad(),
+// and MUST check `isCurrentLoad(gen)` immediately after its own await
+// resolves — before touching ANY of that state, not only before the final
+// #out write — and do nothing else if it's stale. That single check is
+// what makes the UI correct regardless of arrival order; the AbortSignal
+// passed alongside it is purely an optimization (stop wasted browser-side
+// work), not what correctness depends on.
+let loadGeneration = 0;
+let currentAbort = null;
+function startLoad(){
+  if (currentAbort) currentAbort.abort();
+  currentAbort = new AbortController();
+  return { gen: ++loadGeneration, signal: currentAbort.signal };
+}
+function isCurrentLoad(gen){ return gen === loadGeneration; }
+
+// The server answers `{scanning:true}` instead of queuing this request
+// behind an already-in-flight scan of the same root (see rest.rs's
+// try_lock doc — a blocking queue there piled up dozens of abandoned
+// requests from repeated reload clicks). Retrying here, instead of
+// surfacing that as an error, is what makes try_lock's fast-fail actually
+// transparent to the caller: /scan-progress (already polling alongside
+// this) is what shows real movement in the meantime; this loop just waits
+// for the in-flight scan to finish, then gets the fresh, fast, cached
+// answer. Stops retrying the moment its own signal is aborted — a
+// superseded load must not keep looping forever.
+async function api(ep, extra, signal){
+  while (true) {
+    let d;
+    try {
+      d = await fetch(`${ep}?root=${encodeURIComponent($('root').value)}${extra||''}`, { signal }).then(r => r.json());
+    } catch (e) {
+      return e.name === 'AbortError' ? { aborted: true } : { error: `fetch to ${ep} failed: ${e}` };
+    }
+    if (!d || !d.scanning) return d;
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (signal && signal.aborted) return { aborted: true };
+  }
+}
 const t = ms => ms ? new Date(ms).toLocaleString() : '—';
 
+function showErr(text){
+  const b = document.createElement('div');
+  b.style.cssText = 'background:#3d1418;color:#f85149;border:1px solid #f85149;padding:.6rem 1rem;margin:.6rem 0;border-radius:6px;white-space:pre-wrap;font-size:.85rem;';
+  b.textContent = text;
+  $('errBox').appendChild(b);
+}
+window.onerror = (msg, src, line, col) => showErr(`JS error: ${msg} (${src}:${line}:${col})`);
+window.addEventListener('unhandledrejection', e => showErr(`unhandled promise rejection: ${e.reason}`));
+
 function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); }
-function show(name){
-  tab = name;
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  if (!$('root').value) return;
-  $('out').innerHTML = '<span class="muted">loading…</span>';
-  ({overview, timeline, drift, laws})[name]();
+
+let progressTimer = null;
+function stopProgressPolling(){
+  if (progressTimer){ clearInterval(progressTimer); progressTimer = null; }
+}
+// Flat relative paths -> a nested {dirs, files} tree, rendered as an
+// indented <ul> — directories sorted before files, both alphabetical, so
+// scanning order doesn't jump the list around on every poll.
+function pathsToTree(paths){
+  const root = { dirs: {}, files: [] };
+  for (const p of paths){
+    const parts = p.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length; i++){
+      if (i === parts.length - 1){
+        node.files.push(parts[i]);
+      } else {
+        node.dirs[parts[i]] = node.dirs[parts[i]] || { dirs: {}, files: [] };
+        node = node.dirs[parts[i]];
+      }
+    }
+  }
+  return root;
+}
+// `clickable` is only true for the memory tab's tree (stable, fully-scanned
+// data worth exploring) — the scan-progress panel's done/remaining trees
+// reuse this same renderer for a transient, still-changing list, where a
+// per-file click has nothing settled yet to show. `prefix` rebuilds each
+// leaf's full relative path (pathsToTree's tree only keeps the LAST path
+// segment per node) since /file-concepts needs the real path, not a
+// basename that collides across directories.
+function renderTree(node, cls, clickable, prefix){
+  prefix = prefix || '';
+  const dirNames = Object.keys(node.dirs).sort();
+  const files = [...node.files].sort();
+  if (!dirNames.length && !files.length) return '';
+  let html = '<ul style="margin:0; padding-left:1.1rem; list-style:none;">';
+  for (const d of dirNames){
+    html += `<li><span class="muted">${esc(d)}/</span>${renderTree(node.dirs[d], cls, clickable, `${prefix}${d}/`)}</li>`;
+  }
+  for (const f of files){
+    const full = `${prefix}${f}`;
+    const label = clickable ? `<span data-file="${esc(full)}">${esc(f)}</span>` : esc(f);
+    html += `<li class="${cls}">${label}</li>`;
+  }
+  html += '</ul>';
+  return html;
 }
 
-async function overview(){
-  const d = await api('/doctor');
+// Rebuilding #out's full innerHTML on every 400ms poll tick destroyed and
+// recreated the scrollable done/remaining boxes each time, which resets
+// scrollTop to 0 — found live: scrolling the list was impossible, it kept
+// snapping back to the top. Fix: build the shell (with stable element IDs)
+// ONCE per scan, then every subsequent tick only replaces the CONTENTS of
+// the two scroll boxes, explicitly saving and restoring their scrollTop
+// around that — innerHTML assignment resets an element's own scroll
+// position too, not just its ancestors', so the save/restore is required
+// even though these boxes themselves aren't being recreated.
+function ensureProgressShell(){
+  if ($('doneTreeBox')) return;
+  $('out').innerHTML = `
+    <div id="scanStatus" class="muted"></div>
+    <div style="display:flex; gap:1rem; margin-top:.6rem;">
+      <div style="flex:1; min-width:0;">
+        <h3 class="ok" id="doneHeading"></h3>
+        <div id="doneTreeBox" style="max-height:300px; overflow:auto;"></div>
+      </div>
+      <div style="flex:1; min-width:0;">
+        <h3 id="remainingHeading"></h3>
+        <div id="remainingTreeBox" style="max-height:300px; overflow:auto;"></div>
+      </div>
+    </div>`;
+}
+function setScrollPreserved(elId, html){
+  const el = $(elId);
+  const top = el.scrollTop;
+  el.innerHTML = html;
+  el.scrollTop = top;
+}
+
+function startProgressPolling(gen, signal){
+  stopProgressPolling();
+  const poll = async () => {
+    const d = await api('/scan-progress', '', signal).catch(() => null);
+    if (!isCurrentLoad(gen)) return; // superseded — a newer load owns #out now
+    if (!d || d.total == null || d.total === 0) return;
+    if (d.done >= d.total) { $('out').innerHTML = '<span class="muted">loading… finishing up</span>'; return; }
+    const pct = Math.floor(100 * d.done / d.total);
+    ensureProgressShell();
+    $('scanStatus').textContent = `scanning… ${d.done} / ${d.total} files (${pct}%)`;
+    $('doneHeading').innerHTML = `gone over <span class="muted">(${d.done_files_total} of last ${(d.done_files||[]).length} shown)</span>`;
+    $('remainingHeading').innerHTML = `remaining <span class="muted">(${d.remaining_files_total} — first ${(d.remaining_files||[]).length} shown)</span>`;
+    setScrollPreserved('doneTreeBox', renderTree(pathsToTree(d.done_files||[]), 'ok') || '<span class="muted">none yet</span>');
+    setScrollPreserved('remainingTreeBox', renderTree(pathsToTree(d.remaining_files||[]), 'muted') || '<span class="muted">none</span>');
+  };
+  poll();
+  progressTimer = setInterval(poll, 400);
+}
+
+function fmtDuration(ms){
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms/1000).toFixed(1)}s`;
+}
+
+// A live, ticking "loading… Xs" while a load is in flight — not just a
+// final "loaded in Xs" reported after the fact, which tells you nothing
+// while you're the one sitting there watching a slow load with no number
+// moving at all. Self-stops via the same isCurrentLoad(gen) check every
+// other piece of load-owned state uses, so a superseded load's timer never
+// keeps ticking over a newer load's own.
+let liveTimer = null;
+function stopLiveTimer(){
+  if (liveTimer){ clearInterval(liveTimer); liveTimer = null; }
+}
+function startLiveTimer(gen, started){
+  stopLiveTimer();
+  liveTimer = setInterval(() => {
+    if (!isCurrentLoad(gen)) { stopLiveTimer(); return; }
+    $('timer').textContent = `loading… ${fmtDuration(performance.now() - started)}`;
+  }, 250);
+}
+
+async function show(name){
+  tab = name;
+  document.querySelectorAll('nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  if (!$('root').value) return;
+  const { gen, signal } = startLoad();
+  $('out').innerHTML = '<span class="muted">loading…</span>';
+  $('timer').textContent = '';
+  startProgressPolling(gen, signal);
+  const started = performance.now();
+  startLiveTimer(gen, started);
+  try {
+    await ({overview, timeline, drift, laws, memory})[name](gen, signal);
+  } finally {
+    // Only the load that's still current gets to stop polling/timer and
+    // report a final time — see the "Load ownership" note above `startLoad`.
+    if (isCurrentLoad(gen)) {
+      stopProgressPolling();
+      stopLiveTimer();
+      $('timer').textContent = `loaded in ${fmtDuration(performance.now() - started)}`;
+    }
+  }
+}
+
+async function reload(){
+  const btn = $('reload');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = '⟳ reloading…';
+  try { await show(tab); }
+  finally { btn.disabled = false; btn.textContent = original; }
+}
+
+let lastDoctor = null;
+let openStat = null;
+
+async function overview(gen, signal){
+  const d = await api('/doctor', '', signal);
+  if (!isCurrentLoad(gen)) return; // stale — whether aborted, errored, or a normal late response
   if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  lastDoctor = d;
+  openStat = null;
+  lastDeclarationFiles = null; // per-load; don't reuse a previous load's snapshot
   const c = d.counts;
   $('out').innerHTML = `
     <div>
-      <span class="stat"><b>${c.concepts}</b>concepts</span>
-      <span class="stat"><b>${c.files_scanned}</b>files</span>
-      <span class="stat"><b>${c.declared_decisions}</b>decisions</span>
-      <span class="stat"><b>${c.declared_aliases}</b>aliases</span>
-      <span class="stat"><b>${d.declared_but_never_observed_in_use.length}</b><span class="warn">never observed</span></span>
+      <button class="stat" data-stat="concepts" onclick="toggleStat('concepts')"><b>${c.concepts}</b>concepts</button>
+      <button class="stat" data-stat="files" onclick="toggleStat('files')"><b>${c.files_scanned}</b>files</button>
+      <button class="stat" data-stat="decisions" onclick="toggleStat('decisions')"><b>${c.declared_decisions}</b>decisions</button>
+      <button class="stat" data-stat="aliases" onclick="toggleStat('aliases')"><b>${c.declared_aliases}</b>aliases</button>
+      <button class="stat" data-stat="unused" onclick="toggleStat('unused')"><b>${d.declared_but_never_observed_in_use.length}</b><span class="warn">never observed</span></button>
     </div>
-    <h3>domains <span class="muted">(where declarations live)</span></h3>
-    <table>${Object.entries(d.domains).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v} declaration files</td></tr>`).join('')}</table>
-    <h3>top concepts <span class="muted">(by observed use)</span></h3>
-    <table>${d.top_concepts.map(x=>`<tr><td>${esc(x.concept)}</td><td>${x.observed_uses} uses</td></tr>`).join('')}</table>
-    <h3>decisions to read</h3>
-    <table>${d.things_to_read.map(x=>`<tr><td>${esc(x.id)}</td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — archietect.toml [[decision]] entries appear here</td></tr>'}</table>`;
+    <div id="statDetail" class="card"></div>
+    <h3>domains <span class="muted">(where declarations live — click one to see its files)</span></h3>
+    ${renderDomainsTable(d.domains)}
+    <h3>top concepts <span class="muted">(by observed use — click one for its evidence)</span></h3>
+    <table>${d.top_concepts.map(x=>`<tr><td><span data-concept="${esc(x.concept)}">${esc(x.concept)}</span></td><td>${x.observed_uses} uses</td></tr>`).join('')}</table>
+    <h3>decisions to read <span class="muted">(click one for the reasoning and what was rejected)</span></h3>
+    <table>${d.things_to_read.map(x=>`<tr><td><span data-decision="${esc(x.id)}">${esc(x.id)}</span></td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — archietect.toml [[decision]] entries appear here</td></tr>'}</table>`;
 }
 
-async function timeline(){
-  const d = await api('/history', '&limit=60');
-  const rows = (d.events||[]).map(e => `<tr>
+function renderDecisionCard(x){
+  const rejected = (x.rejected||[]).map(r => `<li class="muted">${esc(r)}</li>`).join('');
+  const links = (x.links||[]).map(l => `<span data-concept="${esc(l)}">${esc(l)}</span>`).join(', ');
+  return `
+    <div><b>${esc(x.id)}</b></div>
+    <div style="margin-top:.3rem;">${esc(x.decision)}</div>
+    ${x.because ? `<div class="muted" style="margin-top:.3rem;">because: ${esc(x.because)}</div>` : ''}
+    ${rejected ? `<h3 style="margin:.5rem 0 .2rem;">rejected</h3><ul style="margin:0; padding-left:1.2rem;">${rejected}</ul>` : ''}
+    ${links ? `<div class="muted" style="margin-top:.3rem;">links: ${links}</div>` : ''}
+    ${x.proposed_by ? `<div class="muted" style="margin-top:.3rem;">proposed by: ${esc(x.proposed_by)}</div>` : ''}`;
+}
+function toggleDecisionDrill(el){
+  const id = el.dataset.decision;
+  const x = (lastDoctor && lastDoctor.things_to_read || []).find(t => t.id === id);
+  return toggleInlineDrill(el, `decision:${id}`, async () => x ? renderDecisionCard(x) : `<div class="bad">decision '${esc(id)}' not found</div>`);
+}
+
+const STAT_RENDERERS = {
+  concepts: d => `<h3>top concepts <span class="muted">(by observed use — click one for its evidence; full list needs \`archietect verdicts\`)</span></h3>
+    <table>${d.top_concepts.map(x=>`<tr><td><span data-concept="${esc(x.concept)}">${esc(x.concept)}</span></td><td>${x.observed_uses} uses</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`,
+  files: d => `<h3>files by domain <span class="muted">(where declarations live — click one to see its files)</span></h3>
+    ${renderDomainsTable(d.domains)}`,
+  decisions: d => `<h3>decisions to read</h3>
+    <table>${d.things_to_read.map(x=>`<tr><td><span data-decision="${esc(x.id)}">${esc(x.id)}</span></td><td class="muted">${esc(x.decision)}</td></tr>`).join('') || '<tr><td class="muted">none declared — archietect.toml [[decision]] entries appear here</td></tr>'}</table>`,
+  // The alias key itself, not just its target, is clickable: query::concept
+  // resolves a declared alias to its canonical concept before falling back
+  // to name-token search (LAW-011), so `data-concept` on the alias works
+  // the same way it does on a real concept name — same endpoint, same card.
+  aliases: d => `<h3>declared aliases <span class="muted">(click either side for its evidence)</span></h3>
+    <table>${(d.declared_aliases_list||[]).map(a=>`<tr><td><span data-concept="${esc(a.alias)}">${esc(a.alias)}</span></td><td class="muted">→ <span data-concept="${esc(a.target)}">${esc(a.target)}</span></td></tr>`).join('') || '<tr><td class="muted">none declared — archietect.toml [aliases] entries appear here</td></tr>'}</table>`,
+  unused: d => `<h3 class="warn">declared but never observed in use <span class="muted">(click one to see where it's declared)</span></h3>
+    <table>${d.declared_but_never_observed_in_use.map(n=>`<tr><td><span data-concept="${esc(n)}">${esc(n)}</span></td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`,
+};
+
+function toggleStat(kind){
+  const opening = openStat !== kind;
+  openStat = opening ? kind : null;
+  document.querySelectorAll('#out > div > button.stat').forEach(b => b.classList.toggle('active', opening && b.dataset.stat === kind));
+  $('statDetail').innerHTML = opening ? STAT_RENDERERS[kind](lastDoctor) : '';
+}
+
+// Every drill-down (concept/domain/file) expands INLINE, as a new row
+// directly under the exact <tr> that was clicked — not into one shared,
+// fixed-position div elsewhere on the page. Found live (Playwright,
+// bounding boxes): clicking a concept ~490px down the page opened its
+// detail panel at ~760px, past several unrelated sections — technically
+// "working" but confusing enough to read as "nothing happened." One
+// expansion open at a time, EXCEPT an expansion never removes its own
+// ancestors — domain -> file -> concept nests three deep, and closing
+// "everything else" must not delete the row the new content is about to be
+// inserted under.
+async function toggleInlineDrill(el, key, load){
+  // Table rows (concept/domain/decision lists) and tree leaves (memory
+  // tab's file tree, plain <li>s, no <table> in sight) both need a sibling
+  // inserted right after the clicked element — same mechanism, two element
+  // shapes, so the anchor's tag decides the wrapper without duplicating any
+  // of the ownership/nesting logic below.
+  const anchor = el.closest('tr, li');
+  if (!anchor) return;
+  const next = anchor.nextElementSibling;
+  if (next && next.classList.contains('inline-drill') && next.dataset.key === key) {
+    next.remove();
+    return;
+  }
+  document.querySelectorAll('.inline-drill').forEach(r => { if (!r.contains(el)) r.remove(); });
+  const gen = loadGeneration;
+  const isRow = anchor.tagName === 'TR';
+  const container = document.createElement(isRow ? 'tr' : 'li');
+  container.className = 'inline-drill';
+  container.dataset.key = key;
+  let slot = container;
+  if (isRow) {
+    slot = document.createElement('td');
+    slot.colSpan = anchor.children.length || 1;
+    container.appendChild(slot);
+  }
+  slot.innerHTML = '<div class="card" style="margin:.3rem 0;"><span class="muted">loading…</span></div>';
+  anchor.after(container);
+  const html = await load();
+  if (!isCurrentLoad(gen)) return;
+  if (!container.isConnected) return; // closed, or superseded by another click, while this was loading
+  slot.innerHTML = `<div class="card" style="margin:.3rem 0;">${html}</div>`;
+}
+
+// Domain names in the "domains" table are already a GROUPING of individual
+// files (query.rs's top_segment — a monorepo container like crates/ is
+// folded with its immediate subdir, e.g. "crates/titan_api", everything
+// else by its own top-level dir). Reproduced here so a click can filter the
+// full declaration_files list (from /status, fetched once per load and
+// cached) down to exactly the files inside that domain — the actual code
+// or data the count was summarizing, not just a number.
+const DOMAIN_CONTAINERS = ['crates','packages','apps','bin','services','libs','modules'];
+function topSegment(path){
+  const parts = path.split('/');
+  const first = parts[0] || 'root';
+  if (DOMAIN_CONTAINERS.includes(first) && parts.length > 1) {
+    return parts[1].includes('.') ? first : `${first}/${parts[1]}`;
+  }
+  return first;
+}
+function renderDomainsTable(domains){
+  return `<table>${Object.entries(domains).map(([k,v]) =>
+    `<tr><td><span data-domain="${esc(k)}">${esc(k)}</span></td><td>${v} declaration files</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+}
+// /declaration-files, not /status — /status also runs coverage_report's
+// live directory walk plus git/docker sections, none of which this needs;
+// on a large repo that made the domain drill-down look stuck on "loading…"
+// for something that should be instant, since idx.declaration_files is
+// already computed as part of the normal scan either way.
+let lastDeclarationFiles = null;
+function toggleDomainDrill(el){
+  const domain = el.dataset.domain;
+  return toggleInlineDrill(el, `domain:${domain}`, async () => {
+    if (!lastDeclarationFiles) {
+      // &peek=1: this drill-down only ever opens after the overview tab
+      // already scanned this exact root — answer from that warm cache
+      // instead of paying the same scan cost a second time. See rest.rs's
+      // module doc ("## ?peek=1") for why this is a generic flag now,
+      // not a one-off endpoint.
+      lastDeclarationFiles = await api('/declaration-files', '&peek=1', currentAbort ? currentAbort.signal : undefined);
+    }
+    const s = lastDeclarationFiles;
+    if (s.error) return `<div class="bad">${esc(s.error)}</div>`;
+    const files = (s.declaration_files || []).filter(([f]) => topSegment(f) === domain);
+    return `<h3 style="margin-top:0;">${esc(domain)} <span class="muted">(${files.length} declaration files — click one to see what it declares)</span></h3>
+      <table>${files.map(([f,kind]) => `<tr><td><span data-file="${esc(f)}">${esc(f)}</span></td><td class="muted">${esc(kind)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+  });
+}
+
+function toggleFileDrill(el){
+  const file = el.dataset.file;
+  return toggleInlineDrill(el, `file:${file}`, async () => {
+    const d = await api('/file-concepts', `&file=${encodeURIComponent(file)}&peek=1`, currentAbort ? currentAbort.signal : undefined);
+    if (d.error) return `<div class="bad">${esc(d.error)}</div>`;
+    const concepts = d.concepts || [];
+    return `<h3 style="margin-top:0;">${esc(file)} <span class="muted">(${concepts.length} concepts declared here — click one for its exact line and code)</span></h3>
+      <table>${concepts.map(c => `<tr><td><span data-concept="${esc(c.name)}">${esc(c.name)}</span></td><td class="muted">${esc((c.kinds||[]).join(', '))}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+  });
+}
+
+// Shared by any tab that lists concept names (timeline's event rows,
+// drift's duplicate/alias pairs) — clicking one drills into the SAME
+// /concept endpoint the CLI's `archietect concept X` and the README's own
+// demo use, showing real evidence instead of leaving the user to go run
+// that command themselves. Reads loadGeneration/currentAbort directly
+// (like isCurrentLoad already does) instead of threading gen/signal through
+// inline onclick strings, which can't close over a render function's local
+// variables anyway.
+function renderConceptCard(d){
+  if (d.error) return `<div class="bad">${esc(d.error)}</div>`;
+  const verdictClass = d.verdict === 'ABSENT' ? 'bad' : (d.verdict === 'DECLARED_ONLY' || d.verdict === 'UNKNOWN' ? 'warn' : 'ok');
+  const evidenceRows = (d.evidence||[]).map(e => `<tr><td class="muted">${esc(e.tier)}</td><td>${esc(e.what)}</td></tr>`).join('');
+  const usedBy = (d.used_by_files||[]).map(f => `<li class="muted">${esc(f)}</li>`).join('');
+  const competing = (d.competing||[]).length ? `<div class="warn" style="margin-top:.4rem;">competing: ${d.competing.map(esc).join(', ')}</div>` : '';
+  // "Where is it actually declared" — the real file:line + real code read
+  // fresh off disk (README's own demo output), not just the one-line
+  // "what" summary in `evidence` above. This was fetched by /concept all
+  // along; it just was never rendered.
+  const sources = (d.source||[]).map(s => `
+    <div class="muted" style="margin-top:.3rem;">${esc(s.file)}:${s.line}</div>
+    <pre style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:.5rem; overflow-x:auto;">${esc(s.excerpt)}</pre>`).join('');
+  return `
+    <div><b>${esc(d.canonical || d.concept)}</b> <span class="${verdictClass}">${esc(d.verdict||'')}</span> <span class="muted">${esc(d.confidence||'')}</span></div>
+    ${d.recommendation ? `<div class="muted" style="margin-top:.3rem;">${esc(d.recommendation)}</div>` : ''}
+    ${competing}
+    ${evidenceRows ? `<h3 style="margin:.5rem 0 .2rem;">evidence</h3><table>${evidenceRows}</table>` : ''}
+    ${sources ? `<h3 style="margin:.5rem 0 .2rem;">declared here</h3>${sources}` : ''}
+    ${usedBy ? `<h3 style="margin:.5rem 0 .2rem;">used by</h3><ul style="margin:0; padding-left:1.2rem;">${usedBy}</ul>` : ''}`;
+}
+function toggleConceptDrill(el){
+  const name = el.dataset.concept;
+  return toggleInlineDrill(el, `concept:${name}`, async () => {
+    // &peek=1 — this is a click nested inside an already-open tab, not a
+    // fresh lookup; see rest.rs's "## ?peek=1" doc. Without it, the nested
+    // domain→file→concept click chain each paid a full incremental rescan,
+    // which is what "stuck on loading" on the innermost click actually was.
+    const d = await api('/concept', `&q=${encodeURIComponent(name)}&peek=1`, currentAbort ? currentAbort.signal : undefined);
+    return renderConceptCard(d);
+  });
+}
+// #out itself is never replaced (only its innerHTML), so one delegated
+// listener set up once at script load covers every re-render of every tab —
+// no need to re-attach after each innerHTML assignment.
+$('out').addEventListener('click', e => {
+  const c = e.target.closest('[data-concept]');
+  if (c) { toggleConceptDrill(c); return; }
+  const cl = e.target.closest('[data-client]');
+  if (cl) { toggleClientFilter(cl.dataset.client); return; }
+  const dm = e.target.closest('[data-domain]');
+  if (dm) { toggleDomainDrill(dm); return; }
+  const fl = e.target.closest('[data-file]');
+  if (fl) { toggleFileDrill(fl); return; }
+  const dc = e.target.closest('[data-decision]');
+  if (dc) toggleDecisionDrill(dc);
+});
+
+let clientFilter = null;
+function toggleClientFilter(name){
+  clientFilter = clientFilter === name ? null : name;
+  renderTimelineTable();
+}
+function renderTimelineTable(){
+  const box = $('timelineEvents');
+  if (!box) return;
+  const events = clientFilter ? lastTimelineEvents.filter(e => e.concept === clientFilter) : lastTimelineEvents;
+  const filterBar = clientFilter
+    ? `<div class="muted" style="margin-bottom:.4rem;">showing only <b>${esc(clientFilter)}</b> — <span data-client="${esc(clientFilter)}" style="text-decoration:underline;">clear filter</span></div>`
+    : '';
+  const rows = events.map(e => {
+    const isClient = e.kind === 'mcp_client_connected';
+    const detailText = isClient
+      ? `connected via MCP${e.detail && e.detail.version ? ' — v' + esc(e.detail.version) : ''}`
+      : esc(JSON.stringify(e.detail).slice(0,180));
+    const conceptCell = isClient
+      ? `<span data-client="${esc(e.concept)}">${esc(e.concept)}</span>`
+      : `<span data-concept="${esc(e.concept)}">${esc(e.concept)}</span>`;
+    return `<tr>
       <td class="muted">${t(e.ts_ms)}</td>
       <td class="${e.kind.includes('duplicate')||e.kind.includes('lost')?'warn':'ok'}">${esc(e.kind)}</td>
-      <td>${esc(e.concept)}</td>
-      <td class="muted"><pre>${esc(JSON.stringify(e.detail).slice(0,180))}</pre></td></tr>`).join('');
-  $('out').innerHTML = `<h3>architectural timeline <span class="muted">(append-only; written only by the daemon)</span></h3>
-    <table><tr><th>when</th><th>event</th><th>concept</th><th>detail</th></tr>${rows ||
+      <td>${conceptCell}</td>
+      <td class="muted"><pre>${detailText}</pre></td></tr>`;
+  }).join('');
+  box.innerHTML = `${filterBar}<table><tr><th>when</th><th>event</th><th>concept</th><th>detail</th></tr>${rows ||
     '<tr><td colspan=4 class="muted">no events yet — run `archietect watch --root …` and history accumulates</td></tr>'}</table>`;
 }
 
-async function drift(){
-  const d = await api('/duplicates');
+let lastTimelineEvents = [];
+async function timeline(gen, signal){
+  const d = await api('/history', '&limit=60', signal);
+  if (!isCurrentLoad(gen)) return;
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  const events = d.events || [];
+
+  // "How do I know an AI is using this, and which one" — answered directly,
+  // at the top, from the same mcp_client_connected events every real MCP
+  // client's `initialize` handshake now records (see mcp.rs) — not buried
+  // as one more row in the raw table below.
+  const clientsSeen = {};
+  for (const e of events) {
+    if (e.kind !== 'mcp_client_connected') continue;
+    const prev = clientsSeen[e.concept];
+    if (!prev || e.ts_ms > prev.ts_ms) clientsSeen[e.concept] = { ts_ms: e.ts_ms, version: e.detail && e.detail.version };
+  }
+  const clientNames = Object.keys(clientsSeen).sort((a,b) => clientsSeen[b].ts_ms - clientsSeen[a].ts_ms);
+  const clientsSummary = clientNames.length
+    ? `<h3 class="ok">AI clients seen on this project <span class="muted">(click one to filter the timeline below)</span></h3>
+       <table>${clientNames.map(name => `<tr><td><b><span data-client="${esc(name)}">${esc(name)}</span></b></td><td class="muted">v${esc(clientsSeen[name].version || '?')}</td><td class="muted">last connected ${t(clientsSeen[name].ts_ms)}</td></tr>`).join('')}</table>`
+    : `<div class="muted">no MCP client has connected to this project yet — an AI tool calling \`archietect mcp\` records itself here on its first tool call.</div>`;
+
+  lastTimelineEvents = events;
+  clientFilter = null;
   $('out').innerHTML = `
-    <h3 class="warn">likely same concept, needs alias <span class="muted">(one-line archietect.toml fix)</span></h3>
-    <table>${(d.likely_same_concept_needs_alias||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>
-    <h3>suspected duplicates <span class="muted">(name overlap = risk, not proof)</span></h3>
-    <table>${(d.suspected_duplicates||[]).map(p=>`<tr><td>${esc(p.concepts.join(' ↔ '))}</td><td class="muted">via ${esc(p.shared_token)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+    ${clientsSummary}
+    <h3>architectural timeline <span class="muted">(append-only — click a concept for its evidence)</span></h3>
+    <div id="timelineEvents"></div>`;
+  renderTimelineTable();
 }
 
-async function laws(){
-  const d = await fetch('/laws').then(r=>r.json());
+async function drift(gen, signal){
+  const d = await api('/duplicates', '', signal);
+  if (!isCurrentLoad(gen)) return;
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  const pairLinks = names => names.map(c => `<span data-concept="${esc(c)}">${esc(c)}</span>`).join(' ↔ ');
+  $('out').innerHTML = `
+    <h3 class="warn">likely same concept, needs alias <span class="muted">(one-line archietect.toml fix — click a concept for its evidence)</span></h3>
+    <table>${(d.likely_same_concept_needs_alias||[]).map(p=>`<tr><td>${pairLinks(p.concepts)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>
+    <h3>suspected duplicates <span class="muted">(name overlap = risk, not proof)</span></h3>
+    <table>${(d.suspected_duplicates||[]).map(p=>`<tr><td>${pairLinks(p.concepts)}</td><td class="muted">via ${esc(p.shared_token)}</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+}
+
+async function laws(gen, signal){
+  const d = await fetch('/laws', { signal })
+    .then(r=>r.json())
+    .catch(e => e.name === 'AbortError' ? { aborted: true } : { error: `fetch to /laws failed: ${e}` });
+  if (!isCurrentLoad(gen)) return;
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
   $('out').innerHTML = `
     <div><span class="stat"><b>${d.stats.laws_active}</b>active laws</span>
     <span class="stat"><b>${d.stats.corpus_repositories}</b>corpus repos</span>
     <span class="stat"><b>v${d.stats.extractor_version}</b>extractor</span></div>
-    <table><tr><th>law</th><th>statement</th><th>taught by</th></tr>
-    ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td><td class="muted">${esc(l.discovered_in.join(', '))}</td></tr>`).join('')}</table>`;
+    <table><tr><th>law</th><th>statement</th></tr>
+    ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td></tr>`).join('')}</table>`;
+}
+
+async function memory(gen, signal){
+  // &peek=1 — this tab's whole point is "whatever's known right now, scan
+  // running or not" (see its own heading below), never a trigger to scan.
+  const d = await api('/known-files', '&peek=1', signal);
+  if (!isCurrentLoad(gen)) return;
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  const files = d.files || [];
+  const tree = renderTree(pathsToTree(files), 'ok', true) || '<span class="muted">nothing known yet — load a tab first</span>';
+  $('out').innerHTML = `
+    <h3>known files <span class="muted">(${files.length} — everything this warm index currently holds facts for, whether or not a scan is running right now — click one to see what it declares)</span></h3>
+    <div style="max-height:500px; overflow:auto;">${tree}</div>`;
 }
 
 // A ?root= query param (set by `archietect gui /path/to/project`) wins
