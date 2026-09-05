@@ -288,7 +288,8 @@ Full command reference:
 | `archietect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
 | `archietect permissions[-check] --root DIR` | the domain permission boundary, and whether one path is allowed |
 | `archietect docker observe --root DIR` | LIVE container state via `docker compose ps` — explicit, opt-in, never automatic |
-| `archietect documents\|photos scan --root DIR --dir PATH` | the unstructured domains — metadata only, content never read |
+| `archietect documents\|photos scan --root DIR --dir PATH` | unstructured domains over a caller-named directory — metadata only, content never read |
+| `archietect messages scan --root DIR` | well-known local message stores (iMessage, Signal/WhatsApp/Slack/Discord) — no `--dir`; existence/mtime only, content never opened |
 | `archietect system register\|list\|status\|query TERM` | the cross-project registry (`~/.archietect/system.db`) |
 
 ### Clients: the same engine, three transports

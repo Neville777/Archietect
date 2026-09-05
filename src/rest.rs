@@ -36,6 +36,7 @@
 //!   POST /system/register[&root=/path]&token=...  (writes ~/.archietect/system.db)
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!   GET /photos/scan?dir=/path[&root=/path]        (same contract as /documents/scan)
+//!   GET /messages/scan[&root=/path]                (no ?dir= — checks well-known local stores)
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
@@ -467,6 +468,29 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                 }
                             }
                         },
+                        // No ?dir= — unlike Documents/Photos, this domain has
+                        // no caller-named target; it checks a fixed set of
+                        // well-known local message-store locations under
+                        // $HOME. Same NonInteractiveAsker contract.
+                        "/messages/scan" => {
+                            let result: anyhow::Result<Value> = (|| {
+                                let global_path = permissions::default_global_config_path()?;
+                                let cfg = permissions::load(&global_path, &root)?;
+                                let confirmations_path = permissions::default_confirmations_path()?;
+                                let home = crate::messages_domain::default_home()?;
+                                let (enabled, resources) = crate::messages_domain::scan_if_allowed(
+                                    &cfg,
+                                    &confirmations_path,
+                                    &home,
+                                    &permissions::NonInteractiveAsker,
+                                )?;
+                                Ok(json!({ "enabled": enabled, "resources": resources }))
+                            })();
+                            match result {
+                                Ok(v) => v,
+                                Err(e) => json!({ "error": e.to_string() }),
+                            }
+                        }
                         // LIVE — shells out to `docker compose ps`, unlike
                         // every other endpoint here. Same
                         // `permissions::domain_allowed` gate the declarative
@@ -484,7 +508,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                           "/status", "/doctor", "/tour", "/duplicates", "/verdicts",
                                           "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
-                                          "/documents/scan", "/photos/scan", "/docker/observe",
+                                          "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),

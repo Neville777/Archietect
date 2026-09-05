@@ -259,6 +259,11 @@ fn tool_defs_inner() -> Value {
             }, "required": ["dir"] }
         },
         {
+            "name": "messages_scan",
+            "description": "THIRD UNSTRUCTURED DOMAIN. No `dir` argument — unlike documents_scan/photos_scan, this checks a small set of well-known local message-store locations (macOS iMessage, Signal/WhatsApp/Slack/Discord) under this machine's home directory. Existence and top-level metadata only: a single-file store (iMessage's chat.db) reports size/mtime, a directory-based store reports only the directory's OWN mtime, never its contents — nothing is ever opened or queried. Same confirmation-gated contract as documents_scan/photos_scan: requires 'messages' to already be explicitly enabled via [domains.messages], since this tool can never prompt for the one-time confirmation over MCP.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
             "name": "docker_observe",
             "description": "LIVE container state — the one tool in this server that shells out (to `docker compose ps --format json --all`), unlike every other tool here which only reads what's already indexed. For each root-level compose file, reports each DECLARED service's real, current state right now: running, or observed NOT running. Requires 'docker' to already be enabled via [domains.docker], same gate the declarative docker scan uses. Silent (no resources) for a compose file the command can't be run against — missing `docker`, unreachable daemon, timeout — never a guessed or stale state.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -558,6 +563,28 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         Ok(v) => v,
                                         Err(e) => json!({ "error": e.to_string() }),
                                     }
+                                }
+                            }
+                            // No `dir` argument — see tool_defs()'s
+                            // description. Same NonInteractiveAsker contract
+                            // as documents_scan/photos_scan above.
+                            "messages_scan" => {
+                                let result: anyhow::Result<Value> = (|| {
+                                    let global_path = permissions::default_global_config_path()?;
+                                    let cfg = permissions::load(&global_path, &root)?;
+                                    let confirmations_path = permissions::default_confirmations_path()?;
+                                    let home = crate::messages_domain::default_home()?;
+                                    let (enabled, resources) = crate::messages_domain::scan_if_allowed(
+                                        &cfg,
+                                        &confirmations_path,
+                                        &home,
+                                        &permissions::NonInteractiveAsker,
+                                    )?;
+                                    Ok(json!({ "enabled": enabled, "resources": resources }))
+                                })();
+                                match result {
+                                    Ok(v) => v,
+                                    Err(e) => json!({ "error": e.to_string() }),
                                 }
                             }
                             // LIVE — shells out to `docker compose ps`, see

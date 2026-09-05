@@ -12,6 +12,7 @@ pub mod humanize;
 pub mod invariants;
 pub mod laws;
 pub mod mcp;
+pub mod messages_domain;
 pub mod model;
 pub mod permissions;
 pub mod photos_domain;

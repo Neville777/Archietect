@@ -38,6 +38,14 @@
 //! - documents — Derived only (documents_domain.rs:158); content is never
 //!   read, so Inferred is impossible by design, and no tagging mechanism
 //!   exists, so Explicit is impossible today
+//! - photos — Derived only (photos_domain.rs), same shape as documents:
+//!   filename/extension/size/mtime, content (pixels) never read
+//! - messages — Derived only (messages_domain.rs); no caller-named
+//!   directory like documents/photos — checks a fixed set of well-known
+//!   local message-store locations. A single-file store (iMessage) reports
+//!   size/mtime; a directory-based store (Signal/WhatsApp/Slack/Discord)
+//!   reports ONLY the directory's own mtime, never its contents — so even
+//!   Derived-tier evidence here is deliberately thinner than documents/photos
 //!
 //! `tier_not_producible` entries are emitted only for ENABLED domains (a
 //! disabled one is already covered by `domain_disabled`) and only for the
@@ -58,11 +66,17 @@ use std::path::Path;
 const LIST_CAP: usize = 20;
 
 /// Domains that have an extractor in this binary. `permissions::report`
-/// lists the full prospective vocabulary (systemd, photos, ...); the
+/// lists the full prospective vocabulary (systemd, browser, ...); the
 /// register only reasons about domains that could actually be looked at —
 /// "systemd is disabled" for a domain nothing can scan is not an unknown, it
 /// is an absence of capability, and belongs in `permissions`, not here.
-const IMPLEMENTED_DOMAINS: &[&str] = &["code", "git", "docker", "documents"];
+/// `browser` is deliberately NOT here despite being a known domain name:
+/// its own hardcoded permission denial ("never scannable regardless of
+/// domain or config") means no extractor exists or ever will for the
+/// well-known profile paths — the same absence-of-capability reasoning
+/// this doc's first sentence describes, just decided at design time
+/// instead of discovered by an empty result.
+const IMPLEMENTED_DOMAINS: &[&str] = &["code", "git", "docker", "documents", "photos", "messages"];
 
 /// Per domain: the tier a consumer would plausibly want that the extractor
 /// cannot produce, with the honest reason and the honest way to establish it
@@ -85,6 +99,30 @@ const NOT_PRODUCIBLE: &[(&str, Tier, &str, &str)] = &[
         Tier::Inferred,
         "content is never read (documents_domain.rs: only read_dir + metadata), so nothing about what a document is ABOUT can be inferred — by design, not omission",
         "archietect cannot help: read the document yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
+    ),
+    (
+        "photos",
+        Tier::Explicit,
+        "no mechanism exists for a user to tag or label a photo; the extractor produces Derived-tier facts only (filename/extension/size/mtime, photos_domain.rs)",
+        "archietect cannot help today: there is no tagging surface. A user-asserted fact about a photo would be Explicit-tier and has nowhere to be recorded yet",
+    ),
+    (
+        "photos",
+        Tier::Inferred,
+        "content (pixels) is never read (photos_domain.rs: only read_dir + metadata), so nothing about what a photo shows can be inferred — by design, not omission",
+        "archietect cannot help: look at the photo yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
+    ),
+    (
+        "messages",
+        Tier::Explicit,
+        "no mechanism exists for a user to tag or label a message store; the extractor produces Derived-tier facts only, and only existence/mtime at that (messages_domain.rs)",
+        "archietect cannot help today: there is no tagging surface. A user-asserted fact about a message store would be Explicit-tier and has nowhere to be recorded yet",
+    ),
+    (
+        "messages",
+        Tier::Inferred,
+        "message content is never opened or queried (messages_domain.rs: metadata only, and a directory-based store's contents are never even listed), so nothing about what was said can be inferred — by design, not omission",
+        "archietect cannot help: open the app yourself. Any conclusion about message content would be Inferred-tier and must never be recorded as Derived or Declared",
     ),
 ];
 
@@ -199,7 +237,16 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
                     "configured": source,
                     "confirmed": Value::Null,
                     "why": "unstructured domains require a one-time interactive confirmation before anything is looked at; none has been recorded, so nothing in this domain has been observed",
-                    "how_to_establish": format!("run `archietect {domain} scan --dir <path>` in a terminal and answer the prompt, or set [domains.{domain}] state = \"enabled\" explicitly in archietect.toml"),
+                    // messages_domain has no caller-named directory (it
+                    // checks a fixed set of well-known paths under $HOME) —
+                    // unlike documents/photos, its scan subcommand takes no
+                    // `--dir` flag. Found generating this exact message for
+                    // "messages" and printing a flag that doesn't exist.
+                    "how_to_establish": if domain == "messages" {
+                        format!("run `archietect messages scan` in a terminal and answer the prompt, or set [domains.messages] state = \"enabled\" explicitly in archietect.toml")
+                    } else {
+                        format!("run `archietect {domain} scan --dir <path>` in a terminal and answer the prompt, or set [domains.{domain}] state = \"enabled\" explicitly in archietect.toml")
+                    },
                 })),
                 Some(false) => not_known.push(json!({
                     "kind": "domain_disabled",
@@ -446,6 +493,31 @@ mod tests {
         assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())), "{ks:?}");
         let docs = out["boundary"]["domains"].as_array().unwrap().iter().find(|d| d["domain"] == "documents").unwrap();
         assert!(docs["confirmed"].is_null());
+        // photos and messages: same unconfirmed-unstructured-domain shape as
+        // documents — regression pin for the real bug found while adding
+        // messages_domain: photos_domain existed for a while before this but
+        // was never added to IMPLEMENTED_DOMAINS, so register() silently
+        // couldn't reason about it as known-but-unconfirmed at all.
+        assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())), "{ks:?}");
+        assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())), "{ks:?}");
+        assert!(!ks.contains(&("tier_not_producible".into(), "photos".into())), "unconfirmed domains must not ALSO show tier_not_producible — that's for enabled domains only: {ks:?}");
+        assert!(!ks.contains(&("tier_not_producible".into(), "messages".into())), "{ks:?}");
+
+        // messages_domain has no --dir flag (it checks well-known paths
+        // under $HOME, not a caller-named directory) — the generic
+        // how_to_establish template must not claim a flag that doesn't
+        // exist, unlike photos/documents which genuinely take --dir.
+        let messages_entry = out["not_known"].as_array().unwrap().iter()
+            .find(|e| e["kind"] == "unstructured_domain_unconfirmed" && e["domain"] == "messages")
+            .expect("messages unconfirmed entry");
+        let msg_how = messages_entry["how_to_establish"].as_str().unwrap();
+        assert!(!msg_how.contains("--dir"), "messages scan takes no --dir flag: {msg_how}");
+        assert!(msg_how.contains("archietect messages scan"), "{msg_how}");
+
+        let photos_entry = out["not_known"].as_array().unwrap().iter()
+            .find(|e| e["kind"] == "unstructured_domain_unconfirmed" && e["domain"] == "photos")
+            .expect("photos unconfirmed entry");
+        assert!(photos_entry["how_to_establish"].as_str().unwrap().contains("--dir"), "photos scan DOES take --dir, unlike messages: {photos_entry}");
         // code + git enabled, docker not
         assert_eq!(out["known"]["domains_enabled"], json!(["code", "git"]));
         // no docker tier entry while docker is disabled — that would be double-counting
@@ -511,6 +583,36 @@ mod tests {
         assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())), "{ks:?}");
         // enabled → what it still can't produce is stated
         assert!(ks.contains(&("tier_not_producible".into(), "documents".into())), "{ks:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn confirming_photos_and_messages_flips_them_to_enabled_with_stated_gaps() {
+        let _g = HOME_LOCK.lock().unwrap();
+        let root = fixture("confirmed-photos-messages");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let _h = HomeGuard::set(&home);
+
+        struct Yes;
+        impl crate::permissions::ConfirmationAsker for Yes {
+            fn confirm(&self, _: &str) -> bool { true }
+        }
+        let confirmations = crate::permissions::default_confirmations_path().unwrap();
+        let cfg = crate::permissions::PermissionConfig::default();
+        assert!(crate::permissions::domain_allowed_with_confirmation(&cfg, &confirmations, "photos", &Yes).unwrap());
+        assert!(crate::permissions::domain_allowed_with_confirmation(&cfg, &confirmations, "messages", &Yes).unwrap());
+
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = register(&idx, &graph, &root);
+        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "photos"));
+        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "messages"));
+        let ks = kinds(&out);
+        assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())), "{ks:?}");
+        assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())), "{ks:?}");
+        assert!(ks.contains(&("tier_not_producible".into(), "photos".into())), "{ks:?}");
+        assert!(ks.contains(&("tier_not_producible".into(), "messages".into())), "{ks:?}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -234,6 +234,15 @@ enum Cmd {
     /// contract. See src/photos_domain.rs.
     #[command(subcommand)]
     Photos(PhotosCmd),
+    /// The THIRD unstructured domain — no caller-named directory; checks a
+    /// small set of well-known local message-store locations (macOS
+    /// iMessage, Signal/WhatsApp/Slack/Discord). Existence and top-level
+    /// metadata only — a single-file store reports size/mtime, a
+    /// directory-based store reports only the directory's OWN mtime, never
+    /// its contents. Same confirmation-gated contract as
+    /// `Documents`/`Photos`. See src/messages_domain.rs.
+    #[command(subcommand)]
+    Messages(MessagesCmd),
     /// LIVE container state — shells out to `docker compose ps`, unlike
     /// every other command in this binary. Deliberately its own explicit
     /// subcommand, never folded into `status`/`init`: a routine index build
@@ -276,6 +285,15 @@ enum PhotosCmd {
         #[arg(long)]
         dir: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum MessagesCmd {
+    /// Check a small set of well-known local message-store locations under
+    /// $HOME/$USERPROFILE (macOS iMessage, Signal/WhatsApp/Slack/Discord).
+    /// No `--dir` — there is no caller-named target, unlike
+    /// Documents/Photos. Same confirmation-gated contract.
+    Scan,
 }
 
 #[derive(Subcommand)]
@@ -698,6 +716,19 @@ fn main() -> anyhow::Result<()> {
                 archietect::photos_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
             serde_json::json!({
                 "dir": dir.display().to_string(),
+                "enabled": enabled,
+                "resources": resources,
+            })
+        }
+        Cmd::Messages(MessagesCmd::Scan) => {
+            let global_path = archietect::permissions::default_global_config_path()?;
+            let cfg = archietect::permissions::load(&global_path, &root)?;
+            let confirmations_path = archietect::permissions::default_confirmations_path()?;
+            let asker = archietect::permissions::stdio_asker();
+            let home = archietect::messages_domain::default_home()?;
+            let (enabled, resources) =
+                archietect::messages_domain::scan_if_allowed(&cfg, &confirmations_path, &home, asker.as_ref())?;
+            serde_json::json!({
                 "enabled": enabled,
                 "resources": resources,
             })
