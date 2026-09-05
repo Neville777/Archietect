@@ -169,6 +169,17 @@ enum Cmd {
         #[arg(long, default_value_t = 7373)]
         port: u16,
     },
+    /// One command for someone who doesn't want to think about terminals,
+    /// ports, or REST endpoints: starts the same server `serve` does, then
+    /// opens the default browser straight to the UI, pre-loaded with this
+    /// project (`--root`, or the discovered root if omitted) via `?root=`.
+    /// Still just a thin launcher over `serve`/`ui/index.html` — no new
+    /// business logic, same "GUI is a client of the engine" rule as
+    /// everything else in this binary.
+    Gui {
+        #[arg(long, default_value_t = 7373)]
+        port: u16,
+    },
     /// Serve the index over MCP (stdio) — makes every AI coding tool a client
     Mcp,
     /// AI-proposed extractor/decision/alias changes: submit a patch, test it
@@ -367,6 +378,43 @@ fn index_for(root: &PathBuf) -> (model::Index, archietect::structural::Structura
     // honours the schema-invalidates-usage dependency rule. Queries stay
     // read-only; only `init` (and the daemon) persist.
     scan::scan(root)
+}
+
+/// Minimal percent-encoding for one query-string VALUE (not a general URI
+/// encoder) — just enough that an absolute path containing spaces or other
+/// reserved characters survives being placed after `?root=` without
+/// corrupting the URL. `ui/index.html`'s own JS decodes this the normal way
+/// (`URLSearchParams` does it automatically), so no matching decoder is
+/// needed on this side beyond what every browser already does.
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Best-effort, cross-platform "open this URL in whatever browser the user
+/// already has set as default" — the one piece of `gui`'s job that
+/// genuinely differs per OS. Never fails loudly: if this doesn't work (no
+/// GUI session, unusual environment, the opener binary missing), the
+/// server itself is still running and the URL was already printed to
+/// stderr — the fallback is "copy-paste it yourself," never "the command
+/// mysteriously did nothing."
+fn open_in_browser(url: &str) {
+    let result = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).status()
+    } else if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd").args(["/C", "start", "", url]).status()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).status()
+    };
+    if result.map(|s| !s.success()).unwrap_or(true) {
+        eprintln!("archietect: couldn't open a browser automatically — open this URL yourself: {url}");
+    }
 }
 
 /// Render the glance for a terminal. Pure presentation — every value comes
@@ -587,6 +635,23 @@ fn main() -> anyhow::Result<()> {
             rest::serve(Some(root), port)?;
             return Ok(());
         }
+        Cmd::Gui { port } => {
+            let url = format!("http://127.0.0.1:{port}/?root={}", urlencode(&root.display().to_string()));
+            // rest::serve() below blocks forever (it's the same HTTP accept
+            // loop `serve` runs) — the browser has to be opened from a
+            // SEPARATE thread, not after serve() returns, since it never
+            // does. A short sleep before opening gives tiny_http time to
+            // actually bind the port first; opening the URL before the
+            // server is listening just shows one failed connection attempt
+            // in the browser rather than silently doing nothing.
+            eprintln!("archietect: opening {url} in your browser...");
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                open_in_browser(&url);
+            });
+            rest::serve(Some(root), port)?;
+            return Ok(());
+        }
         Cmd::Mcp => {
             mcp::serve(Some(root))?;
             return Ok(());
@@ -742,4 +807,51 @@ fn main() -> anyhow::Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urlencode_leaves_safe_characters_alone() {
+        assert_eq!(urlencode("abcXYZ019-_.~/:"), "abcXYZ019-_.~/:");
+    }
+
+    #[test]
+    fn urlencode_escapes_spaces_and_other_reserved_characters() {
+        assert_eq!(urlencode("/path with spaces"), "/path%20with%20spaces");
+        assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
+    }
+
+    /// A minimal percent-decoder mirroring exactly what a browser's
+    /// `URLSearchParams` does for a `%XX` escape — used only to verify
+    /// `urlencode`'s output actually round-trips, not as production code.
+    fn percent_decode(s: &str) -> String {
+        let bytes = s.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn urlencode_round_trips_for_a_real_looking_path() {
+        // The actual contract: whatever this produces, decoding it back
+        // must reproduce the original string exactly — not just "looks
+        // plausible by eye."
+        let original = "/home/user/My Projects/repo (2)";
+        let encoded = urlencode(original);
+        assert_eq!(percent_decode(&encoded), original);
+    }
 }

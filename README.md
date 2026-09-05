@@ -284,6 +284,7 @@ Full command reference:
 | `archietect laws` | the language specification, from `laws/*.toml` |
 | `archietect watch --root DIR` | daemon: observe → notify, never act |
 | `archietect serve --port 7373` | REST API (127.0.0.1, read-only except `/proposal/*`) |
+| `archietect gui --port 7373` | one command: starts the same server, opens your browser to the UI, no terminal knowledge needed after this |
 | `archietect mcp` | MCP server over stdio |
 | `archietect proposal submit\|list\|inspect\|test\|accept\|reject` | the AI-extension protocol |
 | `archietect permissions[-check] --root DIR` | the domain permission boundary, and whether one path is allowed |

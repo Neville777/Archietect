@@ -105,6 +105,12 @@ async function laws(){
     ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td><td class="muted">${esc(l.discovered_in.join(', '))}</td></tr>`).join('')}</table>`;
 }
 
-$('root').value = localStorage.getItem('arch_root') || '';
+// A ?root= query param (set by `archietect gui /path/to/project`) wins
+// over whatever was last typed in manually — a fresh launch pointed at a
+// specific project should show THAT project, not silently fall back to
+// whatever this browser profile last had open.
+const urlRoot = new URLSearchParams(location.search).get('root');
+$('root').value = urlRoot || localStorage.getItem('arch_root') || '';
+if (urlRoot) localStorage.setItem('arch_root', urlRoot);
 if ($('root').value) show('overview');
 </script>
