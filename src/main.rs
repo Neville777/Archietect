@@ -557,7 +557,7 @@ fn main() -> anyhow::Result<()> {
                 "root": root.display().to_string(),
                 "concept": concept,
                 "events": events,
-                "note": "Append-only architectural timeline, newest first, written only by the daemon. Pass --include-archived to also see events moved by `history-archive`.",
+                "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client's first tool call in a session (recorded as mcp_client_connected). Pass --include-archived to also see events moved by `history-archive`.",
             })
         }
         Cmd::Seed { write, proposed_by } => {

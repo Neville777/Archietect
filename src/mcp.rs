@@ -132,7 +132,7 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "history",
-            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written only by the daemon or `archietect ci`. Pass digest=true for a narrative-quality summary of the window (grouped, phrased sentences — still fully deterministic, generated from the same events, never an LLM) instead of the raw event list.",
+            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written by the daemon, `archietect ci`, or an MCP client's first tool call in a session (as mcp_client_connected — the record of which AI used this project, and when). Pass digest=true for a narrative-quality summary of the window (grouped, phrased sentences — still fully deterministic, generated from the same events, never an LLM) instead of the raw event list.",
             "inputSchema": { "type": "object", "properties": {
                 "concept": { "type": "string", "description": "Optional — filter to events touching this concept. Ignored if digest=true." },
                 "limit": { "type": "number", "description": "Max events to return, or events considered for the digest (default 50)." },
@@ -287,6 +287,16 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // one question. stdin is read one line at a time, sequentially, so a
     // plain HashMap needs no lock here either.
     let mut cache: std::collections::HashMap<PathBuf, (crate::model::Index, crate::structural::StructuralGraph)> = std::collections::HashMap::new();
+    // Captured from `initialize`'s `clientInfo` (name/version) — every real
+    // MCP client sends this per the protocol spec, and until now archietect
+    // just ignored it. Recorded once per (session, root actually touched)
+    // into THAT project's own architectural history the first time a tool
+    // call resolves a concrete root — the same event log `archietect ci`
+    // already writes to beside the watch daemon, not a new mechanism. This
+    // is the only way to answer "is an AI actually using this, and which
+    // one" with evidence instead of a guess.
+    let mut client_info: Option<(String, String)> = None;
+    let mut recorded_connection_for: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
     for line in stdin.lock().lines() {
         let line = line?;
@@ -306,12 +316,20 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
         let id = id.unwrap();
 
         let result: Result<Value, (i64, String)> = match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "archietect", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Architectural memory for this machine's repositories. Call `concept` before designing anything, `intent` for feature requests, `impact` before modifying models, `guard` on any patch that creates tables. Answers are deterministic facts with tiered evidence (DECLARED/USED/NAMED) — reason on top of them; do not override them with intuition."
-            })),
+            "initialize" => {
+                if let Some(ci) = msg["params"].get("clientInfo") {
+                    client_info = Some((
+                        ci.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
+                        ci.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    ));
+                }
+                Ok(json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "archietect", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": "Architectural memory for this machine's repositories. Call `concept` before designing anything, `intent` for feature requests, `impact` before modifying models, `guard` on any patch that creates tables. Answers are deterministic facts with tiered evidence (DECLARED/USED/NAMED) — reason on top of them; do not override them with intuition."
+                }))
+            }
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": tool_defs() })),
             "tools/call" => {
@@ -328,6 +346,16 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         Err((-32602i64, format!("root does not exist: {}", root.display())))
                     }
                     Some(root) => {
+                        if let Some((client_name, client_version)) = &client_info {
+                            if recorded_connection_for.insert(root.clone()) {
+                                let _ = crate::store::append_events(&root, &[(
+                                    crate::humanize::now_ms(),
+                                    "mcp_client_connected".to_string(),
+                                    client_name.clone(),
+                                    json!({ "version": client_version }).to_string(),
+                                )]);
+                            }
+                        }
                         let prior = cache.remove(&root);
                         let (schema_prior, graph_prior) = match prior {
                             Some((s, g)) => (Some(s), Some(g)),
@@ -356,7 +384,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                     args.get("concept").and_then(|c| c.as_str()),
                                     args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize,
                                 ),
-                                "note": "Append-only architectural timeline, newest first, written only by the daemon or `archietect ci`.",
+                                "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client's first tool call in a session (mcp_client_connected).",
                             }),
                             "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
                             "proposal_submit" => {
