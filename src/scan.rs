@@ -32,9 +32,112 @@ use crate::model::{Concept, DeclFragment, FileFacts, Index};
 use crate::structural::{self, StructuralGraph};
 use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use walkdir::WalkDir;
+
+/// Live progress for an in-flight `scan_with_prior` call, keyed by root path
+/// (display form). Exists purely so a concurrent caller (REST's
+/// `/scan-progress`) can answer "how far along is the scan of THIS root, and
+/// which files specifically" while the scan itself is still running on
+/// another thread — a cold scan of a large repository can take minutes, and
+/// a client watching `#out` say "loading…" the whole time with no detail is
+/// indistinguishable from hung. `done`/`total` are counted in FILE·PASS
+/// units across both the declaration and usage passes (`total` =
+/// files.len() * 2) — a file counts as "gone over" in `done_files` only once
+/// BOTH passes have touched it, via `pass_counts`, so the file list and the
+/// done/total counter reach 100% at the same moment instead of the list
+/// hitting "all done" halfway through the counter (when only pass 1 had
+/// finished) while the counter kept climbing through pass 2.
+pub struct ScanProgress {
+    pub done: AtomicUsize,
+    pub total: AtomicUsize,
+    pub all_files: Vec<String>,
+    pass_counts: Mutex<HashMap<String, u8>>,
+}
+
+pub struct ScanProgressSnapshot {
+    pub done: usize,
+    pub total: usize,
+    pub done_files: Vec<String>,
+    pub remaining_files: Vec<String>,
+}
+
+static SCAN_PROGRESS: OnceLock<Mutex<BTreeMap<String, Arc<ScanProgress>>>> = OnceLock::new();
+
+fn start_progress(root: &Path, all_files: Vec<String>, total: usize) -> Arc<ScanProgress> {
+    let map = SCAN_PROGRESS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let progress = Arc::new(ScanProgress {
+        done: AtomicUsize::new(0),
+        total: AtomicUsize::new(total),
+        all_files,
+        pass_counts: Mutex::new(HashMap::new()),
+    });
+    map.lock().unwrap().insert(root.display().to_string(), progress.clone());
+    progress
+}
+
+/// Called once per file, per pass. `PASSES` must match the number of passes
+/// `start_progress`'s `total` was multiplied by, or "fully done" never lines
+/// up with `done == total`.
+const PASSES: u8 = 2;
+
+fn mark_pass_done(progress: &ScanProgress, rel: &str) {
+    progress.done.fetch_add(1, Ordering::Relaxed);
+    let mut counts = progress.pass_counts.lock().unwrap();
+    *counts.entry(rel.to_string()).or_insert(0) += 1;
+}
+
+/// `None` means "no scan of this root has ever run in this process" — a
+/// finished scan is left in place (done == total) rather than removed, so a
+/// caller that polls right after the real response arrives still sees a
+/// consistent "done" state instead of the entry vanishing out from under it.
+pub fn scan_progress(root: &Path) -> Option<ScanProgressSnapshot> {
+    let map = SCAN_PROGRESS.get()?.lock().ok()?;
+    let p = map.get(&root.display().to_string())?;
+    let counts = p.pass_counts.lock().ok()?;
+    let fully_done = |f: &str| counts.get(f).copied().unwrap_or(0) >= PASSES;
+    let done_files: Vec<String> = p.all_files.iter().filter(|f| fully_done(f)).cloned().collect();
+    let remaining_files: Vec<String> = p.all_files.iter().filter(|f| !fully_done(f)).cloned().collect();
+    Some(ScanProgressSnapshot {
+        done: p.done.load(Ordering::Relaxed),
+        total: p.total.load(Ordering::Relaxed),
+        done_files,
+        remaining_files,
+    })
+}
+
+/// Current 1-minute system load average, from `/proc/loadavg` — Linux only;
+/// `None` elsewhere (macOS/Windows), treated by `scan_pool_size` as "unknown,
+/// don't throttle". No crate dependency: the file is one line, first field.
+fn system_load_average() -> Option<f64> {
+    let s = std::fs::read_to_string("/proc/loadavg").ok()?;
+    s.split_whitespace().next()?.parse().ok()
+}
+
+/// How many threads THIS scan's dedicated pool gets. Full parallelism is
+/// right on a machine with spare capacity; full parallelism when something
+/// else already has every core busy just adds `cores` more fully-runnable
+/// threads to a scheduler that has no room for them — found live on a
+/// machine already at a 1-minute load average of ~15 on 8 cores, where an
+/// 8-thread scan pool measured ~2 files/sec instead of its normal ~90: the
+/// threads existed and ran, but each got a sliver of real CPU time. If the
+/// load average already meets or exceeds the core count — the machine has
+/// no spare capacity by definition — fall back to a small fixed pool that
+/// still makes steady progress without competing as hard for what's left.
+/// One-time check at scan start, not re-evaluated mid-scan (matches how
+/// `total` in ScanProgress is also fixed at start) — good enough to stop
+/// archietect piling onto an already-overloaded machine, without the
+/// complexity of resizing a running rayon pool.
+fn scan_pool_size() -> usize {
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    match system_load_average() {
+        Some(load) if load >= cores as f64 => 2.max(cores / 4),
+        _ => cores,
+    }
+}
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
@@ -271,6 +374,27 @@ pub fn scan_with_prior(
         })
         .collect();
     idx.files_scanned = files.len();
+    // Two full passes over `files` below (declarations, then usage) — see
+    // ScanProgress's doc comment.
+    let progress = start_progress(
+        root,
+        files.iter().map(|f| f.rel.clone()).collect(),
+        files.len() * 2,
+    );
+    // A DEDICATED pool per call, not rayon's shared global one. REST now
+    // handles requests concurrently (see rest.rs's threading doc), so two
+    // different roots can be mid-scan at once — sharing one global pool
+    // meant a small repo's scan queued behind a large repo's thousands of
+    // outstanding work items and starved, sometimes for minutes, even
+    // though nothing was deadlocked: every core was simply busy on the
+    // other scan's tasks. A fresh pool per call gives the OS scheduler
+    // independent threads to time-slice fairly between concurrent scans,
+    // at the cost of a pool-creation overhead that is negligible next to
+    // the scan itself.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(scan_pool_size())
+        .build()
+        .expect("building a scoped rayon pool");
 
     let prior_facts: BTreeMap<String, FileFacts> =
         prior.as_ref().map(|p| p.file_facts.clone()).unwrap_or_default();
@@ -282,20 +406,23 @@ pub fn scan_with_prior(
     };
 
     // ── pass 1: DECLARATIONS — changed files re-extracted, rest from cache ──
-    let decl_results: Vec<(String, u64, i64, Vec<DeclFragment>, Vec<String>)> = files
-        .par_iter()
-        .map(|f| {
-            if unchanged(f) {
-                let pf = &prior_facts[&f.rel];
-                return (f.rel.clone(), f.size, f.mtime_ms, pf.decls.clone(), pf.decl_kinds.clone());
-            }
-            let Ok(text) = std::fs::read_to_string(&f.path) else {
-                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new());
-            };
-            let (decls, kinds) = extract_declarations(&f.path, &text);
-            (f.rel.clone(), f.size, f.mtime_ms, decls, kinds)
-        })
-        .collect();
+    let decl_results: Vec<(String, u64, i64, Vec<DeclFragment>, Vec<String>)> = pool.install(|| {
+        files
+            .par_iter()
+            .map(|f| {
+                mark_pass_done(&progress, &f.rel);
+                if unchanged(f) {
+                    let pf = &prior_facts[&f.rel];
+                    return (f.rel.clone(), f.size, f.mtime_ms, pf.decls.clone(), pf.decl_kinds.clone());
+                }
+                let Ok(text) = std::fs::read_to_string(&f.path) else {
+                    return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new());
+                };
+                let (decls, kinds) = extract_declarations(&f.path, &text);
+                (f.rel.clone(), f.size, f.mtime_ms, decls, kinds)
+            })
+            .collect()
+    });
 
     for (rel, size, mtime_ms, decls, decl_kinds) in &decl_results {
         idx.file_facts.insert(
@@ -474,9 +601,18 @@ pub fn scan_with_prior(
         table_re: Option<Regex>,
         needle_table: Option<String>,
     }
-    let matchers: Vec<Matcher> = idx
-        .concepts
-        .keys()
+    // Parallelized — this used to be a plain sequential .map() over every
+    // concept, each compiling up to ~9 regexes. On a repo with thousands of
+    // concepts that alone could take longer than both file passes combined,
+    // stalling ALL visible progress (the file-processed counter sits still
+    // the whole time this runs) and — worse, now that requests are
+    // concurrent — blocking every OTHER tab's request behind the same
+    // per-root lock for that entire stall. Same dedicated, load-throttled
+    // pool as the file passes.
+    let concept_names: Vec<String> = idx.concepts.keys().cloned().collect();
+    let matchers: Vec<Matcher> = pool.install(|| {
+        concept_names
+        .par_iter()
         .map(|name| {
             let mut lname = name.clone();
             if let Some(c) = lname.get_mut(0..1) {
@@ -549,10 +685,12 @@ pub fn scan_with_prior(
                 table_re,
             }
         })
-        .collect();
+        .collect()
+    });
 
-    let usage_results: Vec<(String, Vec<(String, String)>)> = files
+    let usage_results: Vec<(String, Vec<(String, String)>)> = pool.install(|| { files
         .par_iter()
+        .inspect(|f| mark_pass_done(&progress, &f.rel))
         .filter(|f| f.path.extension().and_then(|x| x.to_str()) != Some("prisma"))
         .map(|f| {
             // The compiler rule: reuse cached usage ONLY if this file is
@@ -617,7 +755,8 @@ pub fn scan_with_prior(
             }
             (f.rel.clone(), hits)
         })
-        .collect();
+        .collect()
+    });
 
     for (rel, hits) in usage_results {
         if let Some(ff) = idx.file_facts.get_mut(&rel) {

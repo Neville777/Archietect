@@ -28,6 +28,10 @@
 //!   GET /imports?file=src/foo.ts (exact relative-import edges only)
 //!   GET /owner?q=invoice                     GET /status
 //!   GET /guard?sql=CREATE+TABLE+...          GET /laws
+//!   GET /scan-progress[?root=/path]          (done/total counts + capped done/remaining file lists for an in-flight scan of `root`, or null if none)
+//!   GET /known-files[?root=/path]            (every file the warm index currently holds facts for — persistent, not tied to an in-flight scan)
+//!   GET /file-concepts?file=src/x.rs         (which concepts that ONE file declares, and under which kind)
+//!   GET /declaration-files[?root=/path]      (file, kind pairs — same data /status exposes, without its much heavier coverage/git/docker work)
 //!   GET /plan?q=add+invoicing                GET /ci?diff=...[&strict=true]
 //!   GET /history[?q=concept][&limit=50]      GET /permissions[&root=/path]
 //!   GET /system/list                         GET /system/query?q=Widget
@@ -37,6 +41,12 @@
 //!   GET /documents/scan?dir=/path[&root=/path]     (see module doc below)
 //!   GET /photos/scan?dir=/path[&root=/path]        (same contract as /documents/scan)
 //!   GET /messages/scan[&root=/path]                (no ?dir= — checks well-known local stores)
+//!
+//! Any endpoint listed in `INDEX_ENDPOINTS` (below) additionally accepts
+//! `&peek=1`: answer from the warm cache only, never scan — see "The warm
+//! cache" section of this doc comment for why that exists and when to use
+//! it (short version: interactive drill-downs that already know a scan of
+//! this root just happened, not one-shot lookups).
 //!
 //! `root` may come per-request or from --root at startup, same contract as
 //! the MCP server: one process can serve every repository on the machine.
@@ -65,7 +75,7 @@
 //! REST is a long-running SERVER, not a one-shot CLI invocation — but until
 //! this fix it behaved like the CLI called in a loop: every request called
 //! `scan::scan(&root)` fresh, with no memory of the previous request. Found
-//! by dogfooding: on TITAN (1,483 files) with no persisted archietect.db,
+//! by dogfooding: on a repository of ~1,500 files with no persisted archietect.db,
 //! that meant every single HTTP request paid the full 11+ SECOND cold-scan
 //! cost, forever — a "server" that was never actually warm.
 //!
@@ -74,14 +84,55 @@
 //! `scan_with_prior`. The first request for a root still pays scan cost
 //! (once); every request after that is incremental — only files whose
 //! (size, mtime) changed get re-parsed, the same guarantee `archietect
-//! watch` gives. This is a request-loop-local cache, not a second daemon:
-//! it holds no lock, needs no thread-safety, because `serve` is a single
-//! blocking loop over `incoming_requests()` — one request handled at a
-//! time, by construction.
+//! watch` gives.
+//!
+//! "Incremental" still means `scan_with_prior` walks every file under
+//! `root` to see what changed, every single call — on a large repository
+//! (tens of thousands of files) that walk alone costs seconds, even when
+//! literally nothing on disk changed since the previous request 200ms ago.
+//! Found live: a GUI drill-down click (concept → file → concept, all
+//! reading data a tab-load a moment earlier had already scanned) paid that
+//! same multi-second cost on every nested click, because every endpoint —
+//! not just the "slow" ones — unconditionally re-ran `scan_with_prior`
+//! before answering. The first fix for this shipped as three hand-rolled,
+//! duplicated "peek the cache instead of rescanning" endpoints
+//! (`/known-files`, `/declaration-files`, `/file-concepts`); the next
+//! endpoint found to have the same problem (`/concept`, nested three levels
+//! deep in a nested drill-down) would have made a fourth. That is patching
+//! the symptom per endpoint, forever, instead of fixing why every endpoint
+//! has the symptom in the first place.
+//!
+//! The actual fix is `?peek=1`, a generic modifier any `INDEX_ENDPOINTS`
+//! request (`handle_request`'s own const documents the list) can pass to
+//! mean "answer from whatever is already in the warm cache for this root —
+//! do not scan, even if nothing is cached yet; fail with 'load a tab first'
+//! instead." The GUI passes it on every drill-down click (a click only ever
+//! happens after some tab already scanned this exact root, so the cache is
+//! never actually empty in practice) and omits it on the handful of calls
+//! that ARE meant to trigger a fresh look — tab loads and the reload
+//! button. CLI/MCP/curl callers never pass it, so a direct one-shot query
+//! against this REST server keeps the same freshness guarantee it always
+//! had. One flag, one `match` arm (`answer_from_index`, shared by both the
+//! peek path and the scan path so they can never answer differently for the
+//! same cached data), covers every endpoint that will ever need this —
+//! including ones added after this comment was written — instead of one
+//! more special-cased endpoint every time the next slow drill-down turns up.
+//!
+//! ## Threading
+//!
+//! `serve` spawns one thread per request, sharing the warm cache above via
+//! a `Mutex`. This exists for exactly one reason: `/scan-progress` must be
+//! answerable WHILE another thread is still deep inside a cold scan for the
+//! same or a different root. Before this, the whole server was a single
+//! blocking loop over `incoming_requests()` — one request at a time, by
+//! construction — which meant a slow cold scan of one large repository
+//! froze every tab and every other root for its entire duration, with no
+//! way to tell "still working" from "hung." The lock is held only for the
+//! brief remove/insert around a scan, never across the scan itself.
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     docker_domain, documents_domain, laws, model::Index, permissions, photos_domain, query, root, scan, store,
@@ -159,26 +210,163 @@ const MUTATING_ENDPOINTS: &[&str] = &[
     "/system/register",
 ];
 
+/// The warm cache, shared across request-handling threads — see `serve`'s
+/// doc comment on why this is no longer a single-threaded, lock-free
+/// HashMap: a `/scan-progress` poll must be answerable WHILE another thread
+/// is still deep inside a cold scan for the same or a different root.
+type Cache = std::sync::Mutex<HashMap<PathBuf, (Index, StructuralGraph)>>;
+
+/// One lock per root, so two REQUESTS for the SAME root never scan it twice
+/// at once. Thread-per-request (below) means two overlapping requests for
+/// the same root — a tab's own load racing its `reload` click, or a second
+/// browser tab open on the same project — used to each spawn their own full
+/// `scan_with_prior` call with its own dedicated thread pool: two redundant
+/// cold scans fighting over the same 8 cores, each taking roughly twice as
+/// long as either alone, discovered live when a 15-second scan turned into
+/// 30+ minutes. A request now acquires this root's lock BEFORE scanning; a
+/// second request for the same root blocks until the first finishes, then
+/// finds the fresh result already in `cache` and does a cheap incremental
+/// scan instead of a redundant cold one. Different roots use different
+/// locks and stay fully concurrent — this only serializes duplicate work,
+/// never unrelated work.
+type RootLocks = std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>;
+
+fn lock_for_root(locks: &RootLocks, root: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    locks.lock().unwrap().entry(root.to_path_buf()).or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(()))).clone()
+}
+
 pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
-    let token = generate_token();
+    let token = std::sync::Arc::new(generate_token());
     eprintln!("archietect REST listening on http://127.0.0.1:{port} (read-only except /proposal/* and /system/register)");
     eprintln!("mutating requests (proposal submit/test/accept/reject, system/register) require &token={token}");
 
-    // The warm cache. Single-threaded loop, one request at a time — plain
-    // HashMap, no lock needed.
-    let mut cache: HashMap<PathBuf, (Index, StructuralGraph)> = HashMap::new();
+    let cache: std::sync::Arc<Cache> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let root_locks: std::sync::Arc<RootLocks> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let default_root = std::sync::Arc::new(default_root);
     // See `crate::exe_mtime`'s doc comment — same staleness detection as the
     // MCP server, for the same reason: this is a long-running process that
     // can outlive many rebuilds of its own binary.
     let started_mtime = crate::exe_mtime();
 
+    // One thread per request — required so a `/scan-progress` poll can be
+    // answered instantly while a different (or the same) thread is still
+    // deep inside a cold `scan_with_prior` call. A large repository's first
+    // scan can take minutes; before this, that meant the ENTIRE server —
+    // every tab, every other root — was unresponsive for that whole window,
+    // indistinguishable from hung. `cache` and `root_locks` are the only
+    // state shared across requests, so they are the only things that need
+    // a lock — see `RootLocks`'s doc for why the second one exists.
     for req in server.incoming_requests() {
+        let cache = cache.clone();
+        let root_locks = root_locks.clone();
+        let default_root = default_root.clone();
+        let token = token.clone();
+        std::thread::spawn(move || handle_request(req, &token, &default_root, &cache, &root_locks, started_mtime));
+    }
+    Ok(())
+}
+
+/// Endpoints whose answer is a pure function of an already-scanned
+/// `(Index, StructuralGraph)` pair for a root — nothing else. This is the
+/// list that decides whether a request needs `scan_with_prior` at all.
+///
+/// Everything NOT in this list (`/history`, `/proposal/*`, `/permissions*`,
+/// `/documents/scan`, `/system/register`, ...) never touched `idx`/`graph`
+/// even in the old code — it only ever needed `root` — yet used to sit
+/// behind the exact same mandatory rescan as `/concept` or `/status`, paying
+/// the same multi-second cost on a large repo for data that had nothing to
+/// do with the scan. That was the real bug behind every "stuck on loading"
+/// report this session, not any one endpoint: `handle_request` conflated
+/// "answer this query" with "the index better be fresh first," for every
+/// endpoint, unconditionally. Splitting on this list — once, here — fixes
+/// that for every current and future endpoint in one place, instead of
+/// special-casing each slow one as it's discovered (which is how
+/// `/known-files`, `/declaration-files`, and `/file-concepts` each ended up
+/// as one-off hand-rolled cache peeks with duplicated logic).
+const INDEX_ENDPOINTS: &[&str] = &[
+    "/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
+    "/status", "/doctor", "/tour", "/duplicates", "/verdicts", "/ci", "/register",
+    "/known-files", "/declaration-files", "/file-concepts",
+];
+
+/// Computes the answer for one of `INDEX_ENDPOINTS` from an `(idx, graph)`
+/// pair that the caller already has in hand — freshly scanned, or read
+/// straight from the cache via `?peek=1` (see `handle_request`). The two
+/// callers must never diverge in what they compute from the same data, so
+/// this is the ONLY place that logic lives.
+fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path, p: &HashMap<String, String>) -> Value {
+    let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
+    match ep {
+        "/concept" => query::concept(idx, graph, q),
+        "/intent" => query::intent(idx, q),
+        "/impact" => query::impact(idx, graph, q),
+        "/imports" => query::imports(graph, p.get("file").map(|s| s.as_str()).unwrap_or("")),
+        "/owner" => query::owner(idx, graph, q),
+        "/guard" => query::guard(idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
+        "/plan" => query::plan(idx, graph, q),
+        "/status" => query::status(idx, graph),
+        "/doctor" => query::doctor(idx, graph, root),
+        "/tour" => query::tour(idx, graph),
+        "/duplicates" => query::duplicates(idx),
+        "/verdicts" => query::verdicts(idx),
+        "/ci" => query::ci(
+            idx,
+            p.get("diff").map(|s| s.as_str()).unwrap_or(""),
+            p.get("strict").map(|s| s == "true").unwrap_or(false),
+        ),
+        // Read-only, no token: the map of the bag — see src/register.rs.
+        // ?since_last=true additionally diffs against, then overwrites, this
+        // project's tracked snapshot — the one genuinely side-effecting
+        // thing this endpoint does, gated behind an explicit opt-in param.
+        "/register" => {
+            let mut out = crate::register::register(idx, graph, root);
+            if p.get("since_last").map(|s| s == "true").unwrap_or(false) {
+                let delta = crate::register::diff_since_last(root, &out);
+                out["since_last_session"] = delta;
+            }
+            out
+        }
+        // Everything this warm index currently holds facts for — whether or
+        // not a scan of this root is running right now. Always called with
+        // ?peek=1 by the GUI's memory tab (see ui/index.html): a snapshot of
+        // in-progress state is the whole point, not something worth
+        // blocking on a fresh scan for.
+        "/known-files" => json!({ "files": idx.file_facts.keys().collect::<Vec<_>>() }),
+        "/declaration-files" => json!({ "declaration_files": idx.declaration_files }),
+        "/file-concepts" => {
+            let file = p.get("file").map(|s| s.as_str()).unwrap_or("");
+            let mut concepts: Vec<Value> = idx.concepts.iter()
+                .filter(|(_, c)| c.declared_in.iter().any(|(f, _)| f == file))
+                .map(|(name, c)| json!({
+                    "name": name,
+                    "kinds": c.declared_in.iter().filter(|(f, _)| f == file).map(|(_, k)| k).collect::<Vec<_>>(),
+                }))
+                .collect();
+            for sym in graph.symbols.values() {
+                if sym.file == file && sym.linked_concept.is_none() {
+                    concepts.push(json!({ "name": sym.name, "kinds": [format!("{:?}", sym.kind)] }));
+                }
+            }
+            json!({ "file": file, "concepts": concepts })
+        }
+        other => json!({ "error": format!("unknown index endpoint {other}") }),
+    }
+}
+
+fn handle_request(
+    req: tiny_http::Request,
+    token: &str,
+    default_root: &Option<PathBuf>,
+    cache: &Cache,
+    root_locks: &RootLocks,
+    started_mtime: Option<std::time::SystemTime>,
+) {
         let (path, p) = params(req.url());
 
         if MUTATING_ENDPOINTS.contains(&path.as_str())
-            && p.get("token").map(|t| t.as_str()) != Some(token.as_str())
+            && p.get("token").map(|t| t.as_str()) != Some(token)
         {
             let body = json!({
                 "error": "missing or incorrect token — pass &token=<value printed when `archietect serve` started>",
@@ -192,13 +380,24 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                     .unwrap(),
             );
             let _ = req.respond(response);
-            continue;
+            return;
         }
 
-        let root = root::resolve(
-            p.get("root").map(PathBuf::from).or_else(|| default_root.clone()),
+        let root_param = p.get("root")
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| default_root.clone());
+        let root_given = root_param.is_some();
+        // `resolve()` only ever errs when an explicit root was given but is
+        // invalid (e.g. doesn't exist) — the no-root fallback (marker search
+        // from cwd) always succeeds. Keep the real message (root.rs already
+        // says exactly what's wrong, e.g. "root does not exist: <path>")
+        // instead of discarding it via `.ok()` and showing a generic
+        // "no root" message that's misleading when a root WAS provided.
+        let root_result = root::resolve(
+            root_param,
             &std::env::current_dir().unwrap_or_default(),
-        ).ok();
+        );
 
         // GUI v0 — the embedded read-only dashboard, itself a client of the
         // JSON endpoints below. No logic lives in it.
@@ -209,11 +408,32 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                         .unwrap(),
                 );
             let _ = req.respond(response);
-            continue;
+            return;
         }
 
-        let mut body: Value = match (path.as_str(), root) {
+        let mut body: Value = match (path.as_str(), root_result) {
             ("/laws", _) => laws::registry_json(),
+            // No scan triggered — reports on a scan already in flight (or
+            // already finished) on another thread. See ScanProgress's doc.
+            // File lists are capped (most-recently-done, first-remaining) so
+            // a repo with thousands of files doesn't ship a huge payload on
+            // every ~400ms poll; the *_total counts give the real sizes.
+            ("/scan-progress", Ok(root)) => match scan::scan_progress(&root) {
+                Some(s) => {
+                    const CAP: usize = 50;
+                    let done_shown: Vec<&String> = s.done_files.iter().rev().take(CAP).collect();
+                    let remaining_shown: Vec<&String> = s.remaining_files.iter().take(CAP).collect();
+                    json!({
+                        "done": s.done,
+                        "total": s.total,
+                        "done_files": done_shown,
+                        "done_files_total": s.done_files.len(),
+                        "remaining_files": remaining_shown,
+                        "remaining_files_total": s.remaining_files.len(),
+                    })
+                }
+                None => json!({ "done": null, "total": null }),
+            },
             // No root needed — same reasoning as /laws: this answers from
             // ~/.archietect/system.db directly, not from any one project.
             ("/system/list", _) => match system_db::default_db_path().and_then(|db| system_db::list_projects(&db).map(|p| (db, p))) {
@@ -257,36 +477,87 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                 }),
                 Err(e) => json!({ "error": e.to_string() }),
             },
-            (_, None) => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
-            (_, Some(root)) if !root.exists() => {
-                json!({ "error": format!("root does not exist: {}", root.display()) })
+            (_, Err(_)) if !root_given => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
+            // A root WAS given but `resolve()` rejected it — surface its
+            // real reason (e.g. "root does not exist: <path>") instead of
+            // the generic no-root message above, which would wrongly imply
+            // nothing was passed at all.
+            (_, Err(e)) => json!({ "error": e.to_string() }),
+            // The one branch that answers from a scan — either a fresh one
+            // (default) or the last one already sitting in `cache` (?peek=1,
+            // for INDEX_ENDPOINTS only). Everything else (non-index queries
+            // and writes) is handled below in the plain `(ep, Ok(root))` arm
+            // and never touches `cache`/`root_locks`/`scan_with_prior` at
+            // all — see INDEX_ENDPOINTS's own doc for why that split exists.
+            (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) && p.contains_key("peek") => {
+                match cache.lock().unwrap().get(&root) {
+                    Some((idx, graph)) => answer_from_index(ep, idx, graph, &root, &p),
+                    // Deliberately does NOT fall through to a scan: a peek
+                    // caller (a GUI drill-down click nested inside a tab
+                    // that's already open) is explicitly saying "don't pay
+                    // scan cost for this," so an empty cache means "load a
+                    // tab first," not "scan now anyway."
+                    None => json!({ "error": "no scan of this root yet this session — load a tab first" }),
+                }
             }
-            (ep, Some(root)) => {
-                // ONE scan per request, incremental against THIS process's
-                // last result for this root — not a fresh cold scan every
-                // time. Refreshed and re-stored before dispatch, so every
-                // endpoint below reads the same warm index.
-                let prior = cache.remove(&root);
-                let (schema_prior, graph_prior) = match prior {
-                    Some((s, g)) => (Some(s), Some(g)),
-                    None => (None, None),
+            (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) => {
+                // Serialize scans of THIS root — see RootLocks's doc — but
+                // with try_lock, not a blocking lock: a blocking lock meant
+                // every request that arrived while a scan was already
+                // running for this root queued up BEHIND it, and every
+                // subsequent reload/poll/tab-switch added yet another
+                // request to that same queue — found live, 13+ CLOSE-WAIT
+                // connections and dozens of blocked threads piled up from
+                // repeated reload clicks, each waiting its turn behind an
+                // ever-growing backlog that outpaced how fast it could
+                // drain. None of that work was ever going to be seen by
+                // anyone; the client that asked for it had already moved
+                // on. try_lock instead fails FAST when a scan is already in
+                // flight, telling the caller to watch /scan-progress and
+                // retry — which is exactly the polling loop the GUI already
+                // runs — instead of silently joining a line.
+                let root_lock = lock_for_root(root_locks, &root);
+                let scan_outcome = match root_lock.try_lock() {
+                    Err(_) => json!({
+                        "scanning": true,
+                        "error": "a scan for this root is already in progress — check /scan-progress and retry shortly",
+                    }),
+                    Ok(_root_guard) => {
+                        // ONE scan per request, incremental against THIS
+                        // process's last result for this root — not a fresh
+                        // cold scan every time. Refreshed and re-stored
+                        // before dispatch, so every endpoint below reads the
+                        // same warm index.
+                        //
+                        // Falls back to the persisted archietect.db (the
+                        // same on-disk state `archietect status`/the watch
+                        // daemon read and write) when this ROOT hasn't been
+                        // touched yet by THIS process's in-memory cache —
+                        // otherwise every server restart looked like a full
+                        // cold scan even when a complete, up-to-date
+                        // archietect.db already existed on disk from a
+                        // previous run: nothing was ever actually lost, the
+                        // REST layer just never checked disk for a prior it
+                        // didn't itself just build. `scan::scan()` (the CLI
+                        // path) already does this; REST didn't.
+                        let prior = cache.lock().unwrap().remove(&root);
+                        let (schema_prior, graph_prior) = match prior {
+                            Some((s, g)) => (Some(s), Some(g)),
+                            None => store::load_raw(&root),
+                        };
+                        let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
+                        let result = answer_from_index(ep, &idx, &graph, &root, &p);
+                        cache.lock().unwrap().insert(root, (idx, graph));
+                        result
+                    }
                 };
-                let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
-                let result = {
-                    let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
-                    match ep {
-                        "/concept" => query::concept(&idx, &graph, q),
-                        "/intent" => query::intent(&idx, q),
-                        "/impact" => query::impact(&idx, &graph, q),
-                        "/imports" => query::imports(&graph, p.get("file").map(|s| s.as_str()).unwrap_or("")),
-                        "/owner" => query::owner(&idx, &graph, q),
-                        "/guard" => query::guard(&idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
-                        "/plan" => query::plan(&idx, &graph, q),
-                        "/status" => query::status(&idx, &graph),
-                        "/doctor" => query::doctor(&idx, &graph, &root),
-                        "/tour" => query::tour(&idx, &graph),
-                        "/duplicates" => query::duplicates(&idx),
-                        "/verdicts" => query::verdicts(&idx),
+                scan_outcome
+            }
+            // Everything below never touched `idx`/`graph` even before this
+            // split existed — it only ever needed `root` — so it no longer
+            // waits on `root_locks` or pays `scan_with_prior`'s cost at all.
+            (ep, Ok(root)) => {
+                match ep {
                         // ?digest=true returns store::history_digest instead
                         // of the raw event list — a narrative-quality
                         // summary of the window, still fully deterministic.
@@ -300,11 +571,6 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                                 p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
                             )
                         }),
-                        "/ci" => query::ci(
-                            &idx,
-                            p.get("diff").map(|s| s.as_str()).unwrap_or(""),
-                            p.get("strict").map(|s| s == "true").unwrap_or(false),
-                        ),
                         // AI-extension protocol. The one exception to this
                         // module's read-only design (see the header comment)
                         // — `test`/`accept`/`reject` do write, but only ever
@@ -397,20 +663,6 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             }
                             Err(e) => json!({ "error": e.to_string() }),
                         },
-                        // Read-only, no token: the map of the bag — see
-                        // src/register.rs. Composes over the same warm idx.
-                        // ?since_last=true additionally diffs against, then
-                        // overwrites, this project's tracked snapshot — the
-                        // one genuinely side-effecting thing this endpoint
-                        // does, gated behind an explicit opt-in query param.
-                        "/register" => {
-                            let mut out = crate::register::register(&idx, &graph, &root);
-                            if p.get("since_last").map(|s| s == "true").unwrap_or(false) {
-                                let delta = crate::register::diff_since_last(&root, &out);
-                                out["since_last_session"] = delta;
-                            }
-                            out
-                        }
                         // See this module's doc: always NonInteractiveAsker —
                         // never blocks waiting for a y/N answer that can
                         // never arrive over a network transport.
@@ -506,16 +758,13 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates", "/verdicts",
-                                          "/history", "/ci", "/laws", "/permissions", "/permissions/check", "/register",
+                                          "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),
-                    }
-                };
-                cache.insert(root, (idx, graph));
-                result
+                }
             }
         };
 
@@ -546,8 +795,6 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
             tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
         );
         let _ = req.respond(response);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
