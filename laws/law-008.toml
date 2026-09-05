@@ -6,7 +6,6 @@ id = "law-008"
 title = "Prose about schema is not schema (strings)"
 statement = "A CREATE TABLE match must be followed by its column list `(` or AS — otherwise it is prose."
 because = "redash: logger.debug(\"CREATE TABLE query: %s\") — a log message — minted the phantom that law-007 then had to out-rank. The follower requirement kills log/prose strings structurally, with no blacklist to maintain."
-discovered_in = ["redash"]
 introduced = "2026-08-05"
 status = "active"
 category = "parser"

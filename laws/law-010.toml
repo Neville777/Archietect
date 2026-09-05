@@ -3,8 +3,7 @@
 id = "law-010"
 title = "An alias target is an exact concept name, not a search term"
 statement = "Any INTERNAL reference to a known concept — alias targets, composed queries passing canonical names — resolves by exact name first; term search is for human input only. Multi-token names match no single token of themselves, so feeding them through search silently loses them."
-because = "TITAN declares theory = \"causal_hypotheses\" and got UNKNOWN: the target was fed back through token matching. Struck AGAIN same day in plan(): canonical names passed to owner()/impact() through term search returned null locations. The same disease in two organs earns the general statement."
-discovered_in = ["TITAN"]
+because = "A private production codebase declared queue = \"job_dispatch\" and got UNKNOWN: the target was fed back through token matching. Struck AGAIN same day in plan(): canonical names passed to owner()/impact() through term search returned null locations. The same disease in two organs earns the general statement."
 introduced = "2026-08-05"
 status = "active"
 category = "philosophy"

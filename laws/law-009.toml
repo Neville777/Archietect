@@ -5,8 +5,7 @@
 id = "law-009"
 title = "Declared ontology outranks name search; its absence is not ABSENT"
 statement = "archietect.toml aliases resolve concepts no name search can see, at DECLARED tier; a stale alias pointing at nothing is reported as a finding, never silently ignored."
-because = "TITAN: 'episode' has no table named for it, but the project itself declares episode = stories. Without the ontology the guard allowed CREATE TABLE episodes on the very repo whose internal archietect rejects it."
-discovered_in = ["TITAN"]
+because = "A private production codebase: 'episode' has no table named for it, but the project itself declares episode = stories. Without the ontology the guard allowed CREATE TABLE episodes on the very repo whose internal archietect rejects it."
 introduced = "2026-08-05"
 status = "active"
 category = "philosophy"

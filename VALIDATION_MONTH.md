@@ -25,7 +25,7 @@ claude mcp add --scope user archietect -- \
 
 # 2. the daemon runs at login for each active repo
 cp packaging/archietectd.service ~/.config/systemd/user/archietectd@.service
-systemctl --user enable --now archietectd@$(systemd-escape /home/nevo/Personal_Projects/universal_trader/backend)
+systemctl --user enable --now archietectd@$(systemd-escape /path/to/your/repo)
 
 # 3. the CI line, wherever a pipeline exists
 git diff main... | archietect ci --root .
@@ -75,12 +75,6 @@ twice now; single-repo value must be proven first.
 wrong → law toml + fixture + regression skeleton). Serves the maintainer,
 not the month; post-freeze.
 
-**TITAN internal/standalone unification** — TITAN's repair loop already
-passes through its INTERNAL guard (architecture.rs, wired 2026-08-05); the
-standalone engine serves this machine via MCP. One engine serving both is
-post-freeze consolidation — and must itself pass `archietect concept guard`
-first, because two guards is a duplicate concept.
-
 **The taxonomy rename** (`laws/` → `engine semantics / evidence model /
 policy / regression / explanation`) — proposed three times now (2026-08-05
 ×2, 2026-08-06), deferred each time. Verdict unchanged: no bug requires
@@ -102,7 +96,7 @@ just because it keeps being proposed.
 ## The five-year frame (recorded 2026-08-06, not enacted)
 
 "Archietect becomes the compiler for architecture" — every client (CLI,
-MCP, REST, GUI, CI, IDE, TITAN) asks, none compute; the daemon is the one
+MCP, REST, GUI, CI, IDE) asks, none compute; the daemon is the one
 writer, the product, and eventually invisible the way git/rust-analyzer
 are invisible. Matches what's already built (one engine, thin transports,
 read-only clients) — nothing here contradicts current architecture, it's
@@ -150,8 +144,8 @@ status via incremental cache; db = archietect.db on disk.
 | BookStack | 53 | 36 | 334ms | 56ms | 324K |
 | analytics | 54 | 19 | 324ms | 80ms | 236K |
 | spring-petclinic | 7 | 7 | 56ms | 15ms | 36K |
-| backend | 198 | 132 | 1081ms | 243ms | 340K |
-| ghosttrack-monorepo | 61 | 44 | 884ms | 93ms | 200K |
+| (private codebase A) | 198 | 132 | 1081ms | 243ms | 340K |
+| (private codebase B) | 61 | 44 | 884ms | 93ms | 200K |
 | qa-studio | 127 | 86 | 1335ms | 188ms | 1.2M |
 
 Not yet measurable (recorder deferred): duplicates prevented, CI failures
@@ -171,21 +165,8 @@ true, and the month found that out at the cheapest possible price.
 (append entries here; honesty about "got in the way" is the point)
 
 - 2026-08-05 — freeze declared. 19 commits, 10 extractors, 9 laws,
-  14-repo corpus, all interfaces built through GUI v0. TITAN registered as
-  first client (archietect.toml committed in its repo).
-- 2026-08-05 (day 1, full TITAN battery) — HELPED: episode/situation/theory
-  all resolve through the ontology; guard blocks episodes citing the ADR;
-  intent("per country phenomenon coverage") → extend phenomena, nothing new;
-  ci caught a repair-loop-style diff adding CREATE TABLE experiments (exit 1,
-  cited belief_experiments); duplicates surfaced the LEDGER FAMILY —
-  action_ledger/detector_ledger/reality_ledger/spend_ledger_ts, four ledgers,
-  a real TITAN finding worth an owner decision. GOT IN THE WAY / WRONG:
-  (1) theory→UNKNOWN — alias targets fed through term search broke on
-  multi-token names → LAW-010 + fixture, fixed same day; (2) owner→'crates'
-  — monorepo containers are not owners → two-segment rule; (3) owner then
-  picked titan_api (3 readers) over titan_knowledge (1 declaration),
-  contradicting the stated principle → owner now comes from DECLARING
-  directories only, usage breaks ties. 11/11 laws green after all three.
+  14-repo corpus, all interfaces built through GUI v0.
+  [entry redacted — referenced a private codebase]
 - 2026-08-05 (day 1, cont.) — owner codes terminal-only, no IDE: bare
   `archietect` now prints human text by default (--json for scripts;
   subcommands stay JSON for jq). Size-sorted family suggestions immediately
@@ -193,32 +174,24 @@ true, and the month found that out at the cheapest possible price.
   plus EIGHT *_events tables and SIX *_state tables, no governing decisions.
   Alphabetical truncation had buried the biggest family — presentation
   order is epistemics too.
-- 2026-08-05 (day 1, cont.) — recorded 10 family decisions in TITAN's
-  archietect.toml (events/state/ledger/referral/history + snapshots/domain/
-  holon/transactions/access), evidence-checked: the deposit_events pair is
-  TWO CHAINS (naming asymmetry = deliberate debt), swarm_vitality_ledger
-  has NO WRITER (suspected orphan, recorded do-not-extend). The dormant
-  domain_*/holon_* truth is now in the ontology, out loud. Kernel check:
-  architecture:duplicate_concepts carries 97 belief_events — the drive
-  loop revised it every beat all day. Corpus crank: 4 ecosystems in one
-  pass (Eloquent/JPA/gorm/Ecto, corpus at 18). My guard-test expectation
-  was wrong once: CREATE TABLE of the canonical's own declared table is a
-  MIGRATION (law-002 exemption), not a duplicate — the engine was right
-  and the tester was not.
+- 2026-08-05 (day 1, cont.) — [entry redacted — referenced a private codebase]
+  Corpus crank: 4 ecosystems in one pass (Eloquent/JPA/gorm/Ecto, corpus at
+  18). My guard-test expectation was wrong once: CREATE TABLE of the
+  canonical's own declared table is a MIGRATION (law-002 exemption), not a
+  duplicate — the engine was right and the tester was not.
 - 2026-08-05 (day 1, cont.) — `archietect plan` (pure composition, glance
-  precedent): one call = intent+owner+impact+decisions; first TITAN run
-  cited 'referral-tables-are-funnel-stages' recorded an hour earlier — the
-  decisions loop closed same-day. LAW-010 STRUCK TWICE: plan() passed
-  canonical names through term search (owner/impact null) — law generalized:
-  a known concept name is an exact key EVERYWHERE; term search is for human
-  input only. Baseline table recorded (12 repos: cold 56ms–2.5s, warm
-  15–369ms, db 36K–1.8M).
+  precedent): one call = intent+owner+impact+decisions.
+  [rest of entry redacted — referenced a private codebase] LAW-010 STRUCK
+  TWICE: plan() passed canonical names through term search (owner/impact
+  null) — law generalized: a known concept name is an exact key EVERYWHERE;
+  term search is for human input only. Baseline table recorded (12 repos:
+  cold 56ms–2.5s, warm 15–369ms, db 36K–1.8M).
 - 2026-08-05 (day 1, owner's first real-world use) — owner ran it on a WORK
-  repo (Coseke onboard-v1) and filed the first outside bug report: bare
+  repo [name redacted] and filed the first outside bug report: bare
   `archietect` infers root but every subcommand demanded --root. Fixed
   git-style: ONE resolver before dispatch, --root optional everywhere.
   The fix found two deeper bugs in sequence: (1) weak markers (Cargo.toml)
-  LIE in workspaces — resolver stopped at crates/titan_api and confidently
+  LIE in workspaces — resolver stopped at one crate's own Cargo.toml and confidently
   answered for one crate; strong markers (archietect.db/.toml/.git) now beat
   weak at any distance. (2) THE READ THAT WROTE: read_history opened
   SQLite without an existence check, and SQLite creates on open — the
@@ -233,16 +206,16 @@ true, and the month found that out at the cheapest possible price.
   corpus-wide structural checks, 8/8 green), a new rust pub-struct
   extractor. Independently re-verified all of it before trusting it (full
   checklist re-run against live repos). VERIFICATION EARNED ITS KEEP:
-  found LAW-011 — the new rust extractor made GameTheoryEngine (real
-  TITAN code) visible, and it silently defeated the declared
-  theory=causal_hypotheses alias, because alias resolution only ran when
-  name-token search came up EMPTY — contradicting scoring.rs's own tier
+  found LAW-011 [detail redacted — referenced a private codebase] — an
+  unrelated real struct silently defeated a declared alias, because alias
+  resolution only ran when name-token search came up EMPTY — contradicting
+  scoring.rs's own tier
   lattice. Fixed + fixture + EXTRACTOR_VERSION bump. Second same-class bug
   found by USE, not by design review: the ordering gap was invisible until
   a real codebase produced the exact token collision.
 - 2026-08-06 (day 2, cont. — "test, dogfood") — full test suite (23/23)
-  and live dogfooding on both archietect's own repo and TITAN. Three real
-  bugs found and fixed, all by USE, none by review:
+  and live dogfooding on both archietect's own repo and a private codebase.
+  Three real bugs found and fixed, all by USE, none by review:
   (1) archietect's own archietect.toml didn't exclude tests/fixtures/ — the
       fixture dirs (deliberately containing collisions like Ghost/ghosts)
       were scanned as real source, reporting 3 fake duplicate risks on
@@ -258,20 +231,21 @@ true, and the month found that out at the cheapest possible price.
   (3) The new rust extractor's 3,838-concept surface broke two features
       silently: family suggestions drowned in 294 *Config/108 *Result/93
       *Response (universal naming, zero duplication cost), and
-      duplicates() — O(n^2) — took 23s on TITAN, which bare `archietect`
-      calls. Both restricted to storage-bearing (table.is_some())
-      concepts: signal restored, 23s→11.6s (isolated: that remainder is
-      cold-scan cost, not the bug — warm/incremental is 1.5s).
-  TITAN dogfood, clean: guard still blocks CREATE TABLE episodes citing
-  the ADR; concept theory still resolves via alias through the fixed
-  ordering; 12/12 corpus canonical picks unchanged throughout.
-- 2026-08-06 (day 2, cont.) — "keep dogfooding: run archietect watch on
-  TITAN for a real stretch." This was the highest-value finding of the
-  day. Two SEVERE, separate daemon bugs, both making it unusable at
-  TITAN's scale, NEITHER the bug I expected going in:
+      duplicates() — O(n^2) — took 23s on a large private codebase, which
+      bare `archietect` calls. Both restricted to storage-bearing
+      (table.is_some()) concepts: signal restored, 23s→11.6s (isolated:
+      that remainder is cold-scan cost, not the bug — warm/incremental is
+      1.5s).
+  Dogfood on that codebase, clean: guard still blocks CREATE TABLE episodes
+  citing the ADR; the fixed alias-ordering still resolves correctly;
+  12/12 corpus canonical picks unchanged throughout.
+- 2026-08-06 (day 2, cont.) — "keep dogfooding: run archietect watch on a
+  large private codebase for a real stretch." This was the highest-value
+  finding of the day. Two SEVERE, separate daemon bugs, both making it
+  unusable at that scale, NEITHER the bug I expected going in:
   (1) `watcher.watch(&root, RecursiveMode::Recursive)` registers ONE
-      recursive watch on the whole tree — including target/ (15GB, 3,430
-      dirs on TITAN). Registration alone: unmeasured, still running
+      recursive watch on the whole tree — including a 15GB, 3,430-directory
+      build-artifact tree. Registration alone: unmeasured, still running
       after 2+ minutes, killed. Fixed: walk the tree respecting the same
       SKIP_DIRS the scanner uses, register non-recursive watches per
       directory. 545 real dirs, 10s startup.

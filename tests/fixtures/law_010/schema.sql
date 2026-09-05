@@ -1,1 +1,1 @@
-CREATE TABLE causal_hypotheses (id BIGSERIAL);
+CREATE TABLE job_dispatch (id BIGSERIAL);

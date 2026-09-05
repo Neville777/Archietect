@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 /// *a* project but LIE inside workspaces: a single crate carries its own
 /// Cargo.toml, and stopping there answers questions about one crate while
 /// believing it answered for the whole repo. Found by the first
-/// from-a-subdirectory test on TITAN — `crates/titan_api` has its own
-/// Cargo.toml and the naive resolver stopped there. Strong beats weak at
+/// from-a-subdirectory test — a workspace crate has its own Cargo.toml
+/// and the naive resolver stopped there instead of finding the real root. Strong beats weak at
 /// ANY distance; weak is only the fallback when nothing strong exists
 /// anywhere above the starting directory.
 const STRONG_MARKERS: &[&str] = &["archietect.db", "archietect.toml", ".git"];
@@ -120,10 +120,10 @@ mod tests {
     fn strong_marker_beats_weak_at_any_distance() {
         let root = std::env::temp_dir().join(format!("archietect-root-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let sub = root.join("crates/titan_api/src");
+        let sub = root.join("crates/payment_api/src");
         std::fs::create_dir_all(&sub).unwrap();
         touch(&root, ".git"); // strong, at the true root
-        touch(&root.join("crates/titan_api"), "Cargo.toml"); // weak, nearer
+        touch(&root.join("crates/payment_api"), "Cargo.toml"); // weak, nearer
 
         let resolved = resolve(None, &sub).unwrap();
         assert_eq!(resolved, root, "weak marker in a subdirectory must not win over a strong marker above it");

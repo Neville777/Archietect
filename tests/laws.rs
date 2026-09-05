@@ -168,9 +168,9 @@ fn law_009_alias_resolution() {
 #[test]
 fn law_010_alias_exact_target() {
     let idx = fixture("law_010");
-    let r = query::concept(&idx, &Default::default(), "theory");
+    let r = query::concept(&idx, &Default::default(), "queue");
     assert_eq!(
-        r["canonical"], "causal_hypotheses",
+        r["canonical"], "job_dispatch",
         "multi-token alias target must resolve by exact name, got: {}",
         r["verdict"]
     );
@@ -179,19 +179,19 @@ fn law_010_alias_exact_target() {
 
 #[test]
 fn law_011_ontology_before_name_search() {
-    // Reproduces the exact TITAN collision: archietect.toml declares
-    // theory = "causal_hypotheses", while an UNRELATED public struct
-    // (GameTheoryEngine) independently token-matches "theory". The ontology
+    // Reproduces a real collision found live: archietect.toml declares
+    // queue = "job_dispatch", while an UNRELATED public struct
+    // (QueueWorkerPool) independently token-matches "queue". The ontology
     // must win — an unrelated concept sharing one token with an alias key
     // must never silently defeat the declared alias.
     let idx = fixture("law_011");
     assert!(
-        idx.concepts.contains_key("GameTheoryEngine"),
+        idx.concepts.contains_key("QueueWorkerPool"),
         "fixture must actually produce the colliding concept, or this test proves nothing"
     );
-    let r = query::concept(&idx, &Default::default(), "theory");
+    let r = query::concept(&idx, &Default::default(), "queue");
     assert_eq!(
-        r["canonical"], "causal_hypotheses",
+        r["canonical"], "job_dispatch",
         "declared ontology was defeated by an unrelated name-token match, got: {}",
         r["canonical"]
     );
@@ -219,30 +219,31 @@ fn law_012_whole_name_matches_self() {
 
 #[test]
 fn law_013_generic_role_token_is_not_collision_evidence() {
-    // Found dogfooding the watch daemon against TITAN: a brand-new SQL table
-    // `executor_gaps` was flagged as colliding with an unrelated pre-existing
-    // struct `BinanceExecutor` — different crate, different subsystem — via
-    // the single shared token "executor". A generic architectural-role word
-    // must not, by itself, trigger a duplicate_concept_risk finding.
+    // Found dogfooding the watch daemon on a real codebase: a brand-new SQL
+    // table `executor_backlog` was flagged as colliding with an unrelated
+    // pre-existing struct `PaymentGatewayExecutor` — different crate,
+    // different subsystem — via the single shared token "executor". A
+    // generic architectural-role word must not, by itself, trigger a
+    // duplicate_concept_risk finding.
     let old = fixture_sub("law_013", "old");
     let new = fixture_sub("law_013", "new");
     assert!(
-        new.concepts.contains_key("executor_gaps"),
+        new.concepts.contains_key("executor_backlog"),
         "fixture must actually produce the new concept, or this test proves nothing"
     );
     assert!(
-        old.concepts.contains_key("BinanceExecutor") && new.concepts.contains_key("BinanceExecutor"),
+        old.concepts.contains_key("PaymentGatewayExecutor") && new.concepts.contains_key("PaymentGatewayExecutor"),
         "fixture must carry the unrelated pre-existing concept through both snapshots, or this test proves nothing"
     );
     let events = watch::diff_findings(&old, &new);
     assert!(
-        events.iter().any(|(_, kind, concept, _)| kind == "concept_appeared" && concept == "executor_gaps"),
+        events.iter().any(|(_, kind, concept, _)| kind == "concept_appeared" && concept == "executor_backlog"),
         "the new concept must still be reported as appeared — this law removes a FALSE collision, not the real observation"
     );
-    let collision = events.iter().find(|(_, kind, concept, _)| kind == "duplicate_concept_risk" && concept == "executor_gaps");
+    let collision = events.iter().find(|(_, kind, concept, _)| kind == "duplicate_concept_risk" && concept == "executor_backlog");
     assert!(
         collision.is_none(),
-        "executor_gaps was flagged as colliding with an unrelated concept via a generic role token: {:?}",
+        "executor_backlog was flagged as colliding with an unrelated concept via a generic role token: {:?}",
         collision
     );
 }

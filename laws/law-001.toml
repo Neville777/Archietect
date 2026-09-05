@@ -6,7 +6,6 @@ id = "law-001"
 title = "Word-boundary matching, never substring"
 statement = "A concept term matches a name only at snake_case/camelCase token boundaries with bounded inflection."
 because = "'%sd%' matched USD and declared a broken pipeline healthy; 'story' claimed harvest_hiSTORY as a competing implementation, manufacturing a fake architectural problem."
-discovered_in = ["TITAN", "local-sweep"]
 introduced = "2026-08-05"
 status = "active"
 category = "parser"

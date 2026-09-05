@@ -6,7 +6,6 @@ id = "law-004"
 title = "Exact-name match outranks token match"
 statement = "When ranking canonical candidates, a concept whose full name matches the queried term outranks token matches regardless of usage counts."
 because = "umami: 'website' returned WebsiteEvent (more usage) while a model literally named Website sat in the schema. The thing named for the concept IS the concept; heavier neighbours are still neighbours."
-discovered_in = ["umami"]
 introduced = "2026-08-05"
 status = "active"
 category = "ranking"

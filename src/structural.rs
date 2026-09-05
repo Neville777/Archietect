@@ -474,7 +474,7 @@ pub fn structural_dependents(
     // SCHEMA-layer concept by `link_to_concepts`; (b) the symbol's own name
     // IS the concept — a plain class/function with no schema model behind
     // it. Case (b) is every STRUCTURAL-verdict concept there is (archietect's
-    // own `structural_dependents` fn, ghosttrack's `GovernanceClient` class):
+    // own `structural_dependents` fn, or a plain class with no schema model):
     // `linked_concept` is None for all of them, so `owner_files` came back
     // empty and this function returned before walking a single import edge —
     // reporting "nothing touches it" for symbols that were, in fact, imported
@@ -2642,8 +2642,8 @@ mod structural_dependents_structural_only_tests {
     /// `linked_concept` alone, came back empty for every such symbol, and
     /// the function returned before walking a single import edge — reporting
     /// "nothing touches it" for symbols that were imported and called. Found
-    /// live: `archietect impact GovernanceClient` on ghosttrack-monorepo
-    /// returned no dependents while extension.ts demonstrably imported it.
+    /// live against a real repository: `impact` on a plain exported class
+    /// returned no dependents while another file demonstrably imported it.
     /// This fixture is the same shape: a plain exported class, a file that
     /// imports it by relative path, nothing declared in any schema.
     #[test]
@@ -2654,31 +2654,31 @@ mod structural_dependents_structural_only_tests {
         std::fs::create_dir_all(tmp.join("services")).unwrap();
         std::fs::write(
             tmp.join("services").join("governance-client.ts"),
-            "export class GovernanceClient {\n  evaluate() {}\n}\n",
+            "export class NotificationClient {\n  evaluate() {}\n}\n",
         )
         .unwrap();
         std::fs::write(
             tmp.join("extension.ts"),
-            "import { GovernanceClient } from './services/governance-client';\nconst c = new GovernanceClient();\n",
+            "import { NotificationClient } from './services/governance-client';\nconst c = new NotificationClient();\n",
         )
         .unwrap();
         std::fs::write(tmp.join("unrelated.ts"), "export const x = 1;\n").unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
         assert!(
-            !idx.concepts.contains_key("GovernanceClient"),
+            !idx.concepts.contains_key("NotificationClient"),
             "sanity: must be structural-only, with no schema concept behind it"
         );
         assert!(
-            graph.symbols.values().any(|s| s.name == "GovernanceClient" && s.linked_concept.is_none()),
+            graph.symbols.values().any(|s| s.name == "NotificationClient" && s.linked_concept.is_none()),
             "sanity: the symbol exists and is NOT linked to any schema concept"
         );
 
-        let deps = structural_dependents(&graph, "GovernanceClient", 3);
+        let deps = structural_dependents(&graph, "NotificationClient", 3);
         let files: Vec<&str> = deps.iter().map(|d| d.file.as_str()).collect();
         assert!(
             files.contains(&"extension.ts"),
-            "extension.ts imports GovernanceClient and must be reported as a dependent, got: {files:?}"
+            "extension.ts imports NotificationClient and must be reported as a dependent, got: {files:?}"
         );
         assert!(
             !files.contains(&"unrelated.ts"),

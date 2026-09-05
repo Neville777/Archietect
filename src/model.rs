@@ -268,14 +268,13 @@ pub fn name_tokens(name: &str) -> Vec<String> {
 
 /// Generic architectural-role suffixes that say nothing about DOMAIN overlap.
 /// "Executor", "Manager", "Handler" etc. appear on unrelated concepts constantly
-/// — every non-trivial codebase has several unrelated ones. Found 2026-08-07
-/// dogfooding on TITAN: the watch daemon flagged a brand-new SQL table
-/// `executor_gaps` as colliding with an unrelated pre-existing struct
-/// `BinanceExecutor`, in a different crate, on a different subsystem entirely —
-/// via the single shared token "executor". Same failure shape as `*Config`/
-/// `*Result`/`*Response` (already excluded from the family-suggestion loop in
-/// `query::glance` for the identical reason), generalized: a shared GENERIC
-/// role word is never, by itself, evidence of redundancy.
+/// — every non-trivial codebase has several unrelated ones, so a new SQL
+/// table can collide in name only with an unrelated pre-existing struct in a
+/// completely different subsystem, via nothing but a single shared generic
+/// token. Same failure shape as `*Config`/`*Result`/`*Response` (already
+/// excluded from the family-suggestion loop in `query::glance` for the
+/// identical reason), generalized: a shared GENERIC role word is never, by
+/// itself, evidence of redundancy.
 const GENERIC_ROLE_TOKENS: &[&str] = &[
     "executor", "manager", "handler", "service", "controller", "factory",
     "builder", "adapter", "provider", "client", "worker", "engine",

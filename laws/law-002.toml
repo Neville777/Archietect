@@ -5,8 +5,7 @@
 id = "law-002"
 title = "The guard's re-declaration exemption is exact-name only"
 statement = "A proposed CREATE TABLE is exempt from blocking only when it exactly equals (case-insensitive) the canonical concept's name or its declared table."
-because = "Fuzzy same_word exemption allowed CREATE TABLE ghosts while model Ghost was ACTIVE. Near-names are exactly what duplicates look like, so near-names must block."
-discovered_in = ["ghosttrack-monorepo"]
+because = "Fuzzy same_word exemption allowed CREATE TABLE widgets while model Widget was ACTIVE. Near-names are exactly what duplicates look like, so near-names must block."
 introduced = "2026-08-05"
 status = "active"
 category = "guard"

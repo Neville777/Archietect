@@ -6,7 +6,6 @@ id = "law-003"
 title = "Prose about schema is not schema (comments)"
 statement = "Comment lines are stripped before CREATE TABLE extraction from non-.sql sources."
 because = "The guard's own doc comment — 'a patch proposing CREATE TABLE episodes is REJECTED' — minted a phantom episodes concept that then satisfied the exemption and defeated the guard it documented."
-discovered_in = ["TITAN"]
 introduced = "2026-08-05"
 status = "active"
 category = "parser"

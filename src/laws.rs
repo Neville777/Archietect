@@ -22,7 +22,6 @@ pub struct Law {
     pub title: String,
     pub statement: String,
     pub because: String,
-    pub discovered_in: Vec<String>,
     pub introduced: String,
     pub status: String,
     /// What kind of rule this is. Determines where it naturally lives
@@ -90,7 +89,6 @@ struct CorpusRepo {
     name: String,
     kind: String,
     validated: String,
-    contributed: Vec<String>,
 }
 
 pub fn registry_json() -> Value {
@@ -113,7 +111,6 @@ pub fn registry_json() -> Value {
             "statement": l.statement,
             "mechanism": l.mechanism,
             "because": l.because,
-            "discovered_in": l.discovered_in,
             "introduced": l.introduced,
             "status": l.status,
             "category": l.category,
@@ -130,7 +127,6 @@ pub fn registry_json() -> Value {
         },
         "corpus": corpus.repo.iter().map(|r| json!({
             "name": r.name, "kind": r.kind, "validated": r.validated,
-            "contributed": r.contributed,
         })).collect::<Vec<_>>(),
         "note": "Laws are the engine's language specification, loaded from laws/*.toml. Each category indicates where the rule naturally lives: 'philosophy' laws are irreducible and stay here permanently; 'parser'/'ranking'/'constraint'/'guard' laws have a home in their implementation layer and their fixture is the regression record. Laws are amended, not edited.",
     })

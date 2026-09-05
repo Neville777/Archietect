@@ -52,13 +52,12 @@ fn skip_dir(e: &walkdir::DirEntry) -> bool {
 /// entirely — not just filtering events after the fact, but never
 /// registering a watch inside an excluded subtree in the first place.
 ///
-/// Found by dogfooding on TITAN: `watcher.watch(&root, RecursiveMode::
-/// Recursive)` registers ONE recursive watch on the whole tree, which
+/// `watcher.watch(&root, RecursiveMode::Recursive)` registers ONE recursive watch on the whole tree, which
 /// means the OS watch backend (inotify on Linux) has to walk and register
-/// every directory underneath — including target/, which on TITAN is 15GB
-/// across 3,430 directories. `relevant()` filtered target/ EVENTS, but by
+/// every directory underneath — including a build-artifact directory that
+/// can span many gigabytes and thousands of directories. `relevant()` filtered target/ EVENTS, but by
 /// then the registration cost (and, on Linux, inotify's default
-/// max_user_watches limit — often far below 3,430) was already paid. The
+/// max_user_watches limit — often far below that) was already paid. The
 /// daemon pegged one CPU core at 100% for minutes registering watches it
 /// was going to discard every event from anyway.
 ///
@@ -80,7 +79,7 @@ fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
 
 fn relevant(path: &Path) -> bool {
     // Never react to our own database — the daemon writing it must not wake
-    // the daemon. PREFIX match, not exact: found by dogfooding on TITAN.
+    // the daemon. PREFIX match, not exact.
     // SQLite's rollback-journal file (archietect.db-journal) is created and
     // deleted around EVERY write transaction — a file whose name does not
     // equal "archietect.db" exactly, so the old exact check let both its
@@ -115,7 +114,7 @@ pub type Event = (i64, String, String, serde_json::Value); // ts, kind, concept,
 /// the CI guard, and the storage-family grouping in query::glance) must
 /// skip it as a collision trigger. Found dogfooding the watch daemon: a
 /// brand-new `executor_gaps` table was flagged as colliding with an
-/// unrelated `BinanceExecutor` struct via the single shared token
+/// unrelated `PaymentGatewayExecutor` struct via the single shared token
 /// "executor" — a role, not a domain concept.
 pub const GENERIC_ROLE_TOKENS: &[&str] = &[
     "executor", "manager", "handler", "service", "controller", "factory", "builder",
@@ -326,9 +325,9 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
     // NON-recursive, per included directory — never registers inside
     // SKIP_DIRS at all (target/, node_modules/, .git/, ...), instead of
     // registering everywhere and filtering events afterward. See
-    // watchable_dirs() for why: a single recursive call from root pegged a
-    // CPU core for minutes registering watches on TITAN's 15GB target/
-    // before discarding every event it produced.
+    // watchable_dirs() for why: a single recursive call from root can peg a
+    // CPU core for minutes registering watches inside a large build-artifact
+    // directory before discarding every event it produces.
     let dirs = watchable_dirs(&root);
     for dir in &dirs {
         // Best-effort: a directory that vanished between the walk and here

@@ -61,7 +61,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 /// Lists inside `not_known` are capped here, with a `*_count` beside them —
-/// universal_trader has thousands of declared-only concepts, and a register
+/// a large codebase can have thousands of declared-only concepts, and a register
 /// that dumps all of them is the whole-bag problem `shape.rs` exists to fix.
 const LIST_CAP: usize = 20;
 

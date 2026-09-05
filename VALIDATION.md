@@ -12,7 +12,7 @@ allowed to believe.
 
 ## Corpus so far
 31 local projects + 6 public OSS repos (umami, dub, full-stack-fastapi-template,
-saleor, redash, excalidraw) + TITAN (~200 concepts, Rust/raw-SQL).
+saleor, redash, excalidraw) + private codebases (redacted).
 
 ## Laws, in the order the corpus taught them
 
@@ -45,15 +45,15 @@ saleor, redash, excalidraw) + TITAN (~200 concepts, Rust/raw-SQL).
    log/prose strings structurally, with no blacklist.
 
 ## Extractors added because the corpus demanded them
-pydantic (Sentinel: models.py with zero Django), SQLModel (fastapi-template),
+pydantic (redacted: models.py with zero Django), SQLModel (fastapi-template),
 SQLAlchemy (redash: 4 → 23 concepts), CREATE TABLE from ALL sources
-(TITAN: 110 DDLs in Rust string literals; 92 → 198 concepts).
+(redacted: 110 DDLs in Rust string literals; 92 → 198 concepts).
 
 ## Current scorecard (all verified, this corpus)
 umami website→Website · dub link→Link (+ guard blocks `links`) ·
 saleor order→Order, checkout→Checkout · redash query→Query(queries),
 dashboard→Dashboard(dashboards) · template item→Item(item) ·
-TITAN guard episodes→BLOCKED citing ADR · ghosttrack guard ghosts→BLOCKED ·
+redacted guard episodes→BLOCKED citing ADR · redacted guard widgets→BLOCKED ·
 excalidraw→0 concepts (honest: no schema in repo).
 
 ## Known open weaknesses (documented, not hidden)
