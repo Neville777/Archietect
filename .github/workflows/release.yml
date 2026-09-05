@@ -121,8 +121,100 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
 
+  # Builds archietect-desktop (the native Tauri wrapper around the same
+  # rest::serve() + ui/index.html every other transport already uses — see
+  # desktop/src-tauri/src/lib.rs's own module doc) so other devs can just
+  # download an installable app instead of every one of them needing a Rust
+  # + Tauri toolchain on their own machine to run `cargo tauri build`
+  # themselves. Deliberately its own job, not folded into `build` above:
+  # the CLI's platform matrix is about a single static binary; this one is
+  # about OS-native installer formats, which need OS-specific system
+  # packages (webkit2gtk on Linux) and produce different file types per OS.
+  #
+  # Desktop's own Cargo.toml version is NOT checked against the tag the way
+  # `check-version` checks the main crate's — desktop is a thin wrapper
+  # released alongside the CLI, not a product with its own independent
+  # version number a human is expected to bump every time. Its version
+  # exists only because Tauri's config schema requires one.
+  build-desktop:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            # Ubuntu 22.04, not -latest, for the same glibc-compatibility
+            # reason the CLI build picks musl over -latest's newer glibc —
+            # a .deb built against ubuntu-latest's glibc would refuse to
+            # even install on the (extremely common) still-supported
+            # older LTS this project already verified the CLI against.
+            bundles: deb,rpm
+            # AppImage bundling additionally downloads linuxdeploy and two
+            # of its plugins at build time (not vendored, not cached) —
+            # found running this exact build locally: one of those
+            # downloads failed and took the whole bundle step down with it,
+            # even though the .deb and .rpm right above it had already
+            # built fine. A flaky third-party download shouldn't be able to
+            # fail a release. .deb/.rpm cover Debian/Ubuntu and
+            # Fedora/RHEL-family distros directly; AppImage can come back
+            # later if someone actually needs the ones that aren't either.
+          - platform: macos-latest
+            bundles: dmg
+            # Native (not cross-compiled) — macos-latest runners are Apple
+            # Silicon, so this covers arm64 Macs only. The CLI's release
+            # job cross-links an x86_64 target from the same kind of
+            # runner (see its own comment above); desktop doesn't do that
+            # yet, so Intel Mac users have no desktop build here until
+            # someone adds it.
+          - platform: windows-latest
+            bundles: msi
+            # Tauri's standard, well-supported target (WebView2 ships with
+            # Windows 10/11; the bundler downloads WiX itself, no extra
+            # install step needed) — but unlike the other two platforms,
+            # nobody has actually run the resulting installer on a real
+            # Windows machine. Standard != verified; flagging it here the
+            # same way this file already flags the CLI's Windows gap.
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install Linux webview + bundler deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: cargo tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          IFS=',' read -ra EXTS <<< "${{ matrix.bundles }}"
+          for ext in "${EXTS[@]}"; do
+            find "desktop/src-tauri/target/release/bundle" -type f -name "*.$ext" \
+              -exec cp {} "dist/" \;
+          done
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archietect-desktop-${{ matrix.platform }}
+          path: dist/*
+
   release:
-    needs: build
+    needs: [build, build-desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
