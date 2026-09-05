@@ -1,0 +1,30 @@
+[package]
+name = "archietect-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Native desktop wrapper around archietect's existing REST server + ui/index.html — no new business logic, same 'GUI is a client of the engine' rule as the CLI's `archietect gui`. This crate exists ONLY to answer 'download one thing, double-click it, no terminal at all' — everything it shows is the same JSON the CLI/REST/MCP already produce."
+
+# Standalone workspace root, deliberately NOT a member of the parent
+# archietect package's (nonexistent) workspace — the parent stays a plain
+# single package (its own Cargo.toml has no [workspace] table), and this
+# nested crate declares its own empty [workspace] below so Cargo treats it
+# as independent rather than erroring that it's an unlisted member of an
+# implicit parent workspace.
+[workspace]
+
+[lib]
+name = "archietect_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Real path dependency on the actual engine — this crate never
+# re-implements or duplicates anything archietect already does; it only
+# starts the same rest::serve() the CLI's `archietect gui` calls.
+archietect = { path = "../.." }
