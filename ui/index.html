@@ -6,39 +6,95 @@
 <meta charset="utf-8">
 <title>archietect</title>
 <style>
-  :root { color-scheme: dark; }
-  body { font: 14px/1.5 ui-monospace, monospace; background:#0d1117; color:#c9d1d9;
-         max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.2rem; color:#e6edf3; } h1 small { color:#8b949e; font-weight:normal; }
-  input, button { font:inherit; background:#161b22; color:#c9d1d9; border:1px solid #30363d;
-                  padding:.35rem .6rem; border-radius:6px; }
-  button { cursor:pointer; } button.active { border-color:#58a6ff; color:#58a6ff; }
-  nav { margin:.8rem 0; display:flex; gap:.5rem; flex-wrap:wrap; }
-  .card { background:#161b22; border:1px solid #30363d; border-radius:8px;
-          padding:1rem; margin:.6rem 0; overflow-x:auto; }
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117; --bg-raised: #161b22; --bg-sunken: #010409;
+    --border: #30363d; --border-muted: #21262d;
+    --fg: #c9d1d9; --fg-bright: #e6edf3; --fg-muted: #8b949e;
+    --accent: #58a6ff; --accent-dim: #1f6feb;
+    --ok: #3fb950; --ok-bg: rgba(63,185,80,.12); --ok-border: rgba(63,185,80,.4);
+    --warn: #d29922; --bad: #f85149;
+    --radius: 8px; --radius-sm: 6px;
+    --shadow: 0 4px 14px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.6 ui-monospace, "SF Mono", Consolas, monospace; background:var(--bg); color:var(--fg);
+         max-width: 1100px; margin: 2rem auto; padding: 0 1rem 3rem; }
+
+  header { padding-bottom: 1rem; margin-bottom: 1.2rem; border-bottom: 1px solid var(--border-muted); }
+  h1 { font-size: 1.35rem; font-weight: 700; color:var(--fg-bright); margin: 0 0 .3rem; letter-spacing: -.01em; }
+  h1 small { display:block; margin-top:.25rem; color:var(--fg-muted); font-weight:normal; font-size:.75rem; }
+  h3 { font-size: .95rem; font-weight: 600; color: var(--fg-bright); margin: 1.4rem 0 .5rem;
+       padding-bottom: .35rem; border-bottom: 1px solid var(--border-muted); }
+  h3:first-child { margin-top: 0; }
+  h3 .muted { font-weight: normal; font-size: .8rem; }
+
+  input, button, select { font:inherit; background:var(--bg-raised); color:var(--fg); border:1px solid var(--border);
+                  padding:.4rem .7rem; border-radius:var(--radius-sm); transition: border-color .12s, background .12s, color .12s; }
+  input:focus, select:focus { outline:none; border-color:var(--accent); background: var(--bg-sunken); }
+  button { cursor:pointer; }
+  button:hover { border-color: var(--accent-dim); background:#1c2330; }
+  button:active { transform: translateY(1px); }
+  button.active { border-color:var(--accent); color:var(--accent); background: rgba(88,166,255,.08); }
+
+  .toolbar { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+  .toolbar label { color: var(--fg-muted); font-size: .85rem; }
+
+  #aiStatus { margin: .9rem 0; padding: .55rem .9rem; border-radius: var(--radius); border: 1px solid var(--border);
+              background: var(--bg-raised); font-size: .85rem; display:flex; align-items:center; gap:.5rem;
+              transition: background .2s, border-color .2s; }
+  #aiStatus:empty { display:none; }
+  #aiStatus.ai-active { background: var(--ok-bg); border-color: var(--ok-border); color: var(--fg-bright); }
+  #aiStatus .dot { display:inline-block; width:.55rem; height:.55rem; border-radius:50%; flex-shrink:0; }
+  #aiStatus.ai-active .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); animation: pulse 2s ease-in-out infinite; }
+  #aiStatus.ai-idle .dot, #aiStatus.ai-none .dot { background: var(--fg-muted); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+
+  nav { margin:0 0 1rem; padding-bottom:.7rem; border-bottom:1px solid var(--border-muted);
+        display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+  nav button { border-color: transparent; background: transparent; color: var(--fg-muted); font-weight: 500; }
+  nav button:hover { color: var(--fg-bright); background: var(--bg-raised); border-color: var(--border); }
+  nav button.active { color: var(--accent); background: rgba(88,166,255,.1); border-color: var(--border); }
+
+  .card { background:var(--bg-raised); border:1px solid var(--border); border-radius:var(--radius);
+          padding:1.1rem; margin:.6rem 0; overflow-x:auto; box-shadow: var(--shadow); }
+  .stat-row { display:flex; flex-wrap:wrap; gap: 0; background:var(--bg-raised); border:1px solid var(--border);
+              border-radius: var(--radius); overflow:hidden; margin-bottom: .6rem; }
   .stat { display:inline-block; margin-right:1.6rem; }
-  .stat b { display:block; font-size:1.5rem; color:#e6edf3; }
-  button.stat { all:unset; display:inline-block; margin-right:1.6rem; cursor:pointer; }
-  button.stat:hover b, button.stat.active b { color:#58a6ff; }
+  .stat b { display:block; font-size:1.5rem; color:var(--fg-bright); }
+  button.stat { all:unset; display:block; cursor:pointer; padding: .8rem 1.2rem; flex:1; min-width: 8rem;
+                border-right: 1px solid var(--border-muted); transition: background .12s; }
+  button.stat:last-child { border-right: none; }
+  button.stat:hover { background: rgba(255,255,255,.03); }
+  button.stat.active { background: rgba(88,166,255,.08); box-shadow: inset 0 -2px 0 var(--accent); }
+  button.stat:hover b, button.stat.active b { color:var(--accent); }
   #statDetail:empty { display:none; }
-  .warn { color:#d29922; } .bad { color:#f85149; } .ok { color:#3fb950; }
+  .warn { color:var(--warn); } .bad { color:var(--bad); } .ok { color:var(--ok); }
   table { border-collapse: collapse; width:100%; font-size: inherit; }
-  td, th { text-align:left; padding:.25rem .6rem; border-bottom:1px solid #21262d; vertical-align:top; }
-  th { color:#8b949e; font-weight:normal; }
-  .muted { color:#8b949e; } pre { white-space:pre-wrap; margin:0; }
-  [data-concept], [data-client], [data-domain], [data-file], [data-decision] { cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
-  [data-concept]:hover, [data-client]:hover, [data-domain]:hover, [data-file]:hover, [data-decision]:hover { color:#58a6ff; }
-  tr.inline-drill > td { background:#0d1117; border-bottom:1px solid #30363d; }
+  td, th { text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--border-muted); vertical-align:top; }
+  th { color:var(--fg-muted); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.03em; }
+  tbody tr { transition: background .1s; }
+  tbody tr:hover { background: rgba(255,255,255,.025); }
+  tr:last-child td { border-bottom: none; }
+  .muted { color:var(--fg-muted); } pre { white-space:pre-wrap; margin:0; }
+  [data-concept], [data-client], [data-domain], [data-file], [data-decision] { cursor:pointer; color: var(--accent);
+    text-decoration:underline dotted; text-underline-offset:3px; text-decoration-color: rgba(88,166,255,.4); }
+  [data-concept]:hover, [data-client]:hover, [data-domain]:hover, [data-file]:hover, [data-decision]:hover {
+    text-decoration-style: solid; text-decoration-color: var(--accent); }
+  tr.inline-drill > td { background:var(--bg-sunken); border-bottom:1px solid var(--border); border-left: 2px solid var(--accent-dim); }
   li.inline-drill { list-style:none; margin:.2rem 0; }
 </style>
 
-<h1>archietect <small>— read-only client of the engine · every number is a REST fetch</small> <small id="buildTag" style="color:#3fb950">[build: root-error-fix-01]</small></h1>
+<header>
+  <h1>archietect <small>read-only client of the engine · every number is a REST fetch <span id="buildTag" style="color:var(--ok)">[build: root-error-fix-01]</span></small></h1>
+</header>
 <div id="errBox"></div>
-<div>
-  root <input id="root" size="52" placeholder="/absolute/path/to/repo">
+<div class="toolbar">
+  <label for="root">root</label>
+  <input id="root" size="52" placeholder="/absolute/path/to/repo">
   <button onclick="setRoot()">load</button>
 </div>
-<div id="aiStatus" class="muted" style="margin:.3rem 0;"></div>
+<div id="aiStatus"></div>
 <nav>
   <button data-tab="overview" class="active" onclick="show('overview')">overview</button>
   <button data-tab="timeline" onclick="show('timeline')">timeline</button>
@@ -143,9 +199,21 @@ function agoText(ms){
 // same tolerance any polling loop needs, not a correctness requirement.
 const ACTIVE_MS = 90 * 1000;
 let aiStatusTimer = null;
+// Renders into #aiStatus AND sets its state class (ai-active/ai-idle/
+// ai-none) — the class is what the pulsing dot, the green tint, and the
+// whole "this is the thing to look at" visual weight actually key off of
+// (see the #aiStatus rules in <style>). A plain muted one-line sentence
+// was the actual complaint: this is a status light, not a footnote, so it
+// needs to look like one — bordered, colored, sized to be seen without
+// hunting for it, not indistinguishable from the rest of the page's prose.
+function setAiStatus(stateClass, html){
+  const el = $('aiStatus');
+  el.className = stateClass;
+  el.innerHTML = html;
+}
 async function refreshAiStatus(){
   const root = $('root').value;
-  if (!root) { $('aiStatus').textContent = ''; return; }
+  if (!root) { setAiStatus('', ''); return; }
   const d = await fetch(`/history?root=${encodeURIComponent(root)}&limit=100`).then(r => r.json()).catch(() => null);
   if ($('root').value !== root) return; // root changed while this was in flight
   const events = (d && d.events) || [];
@@ -163,22 +231,22 @@ async function refreshAiStatus(){
   }
   const names = Object.keys(seen).sort((a, b) => seen[b].ts_ms - seen[a].ts_ms);
   if (!names.length) {
-    $('aiStatus').innerHTML = '<span class="muted">no AI has connected to this project yet</span>';
+    setAiStatus('ai-none', '<span class="dot"></span> <span class="muted">no AI has connected to this project yet</span>');
     return;
   }
   // What it's asking about is the honest, answerable version of "what does
   // the AI see" — the full request/response JSON for every call is a much
   // bigger feature (logging arbitrary-size payloads forever); which
   // questions it's been asking is real signal without that cost.
-  const toolsText = c => c.tools && c.tools.length ? ` — asking about: ${c.tools.map(esc).join(', ')}` : '';
+  const toolsText = c => c.tools && c.tools.length ? ` — asking about: <b>${c.tools.map(esc).join(', ')}</b>` : '';
   const now = Date.now();
   const active = names.filter(n => now - seen[n].ts_ms < ACTIVE_MS);
   if (active.length) {
-    const label = active.map(n => `${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}${toolsText(seen[n])}`).join('; ');
-    $('aiStatus').innerHTML = `<span class="ok">●</span> ${label} — using this right now`;
+    const label = active.map(n => `<b>${esc(n)}</b>${seen[n].version ? ' v' + esc(seen[n].version) : ''}${toolsText(seen[n])}`).join('; ');
+    setAiStatus('ai-active', `<span class="dot"></span> ${label} — <b>using this right now</b>`);
   } else {
     const n = names[0];
-    $('aiStatus').innerHTML = `<span class="muted">○ last AI activity: ${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}, ${agoText(seen[n].ts_ms)}${toolsText(seen[n])}</span>`;
+    setAiStatus('ai-idle', `<span class="dot"></span> <span class="muted">last AI activity: ${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}, ${agoText(seen[n].ts_ms)}${toolsText(seen[n])}</span>`);
   }
 }
 function startAiStatusPolling(){
@@ -419,7 +487,7 @@ async function overview(gen, signal){
     : '';
   $('out').innerHTML = `
     ${headline}
-    <div>
+    <div class="stat-row">
       <button class="stat" data-stat="concepts" onclick="toggleStat('concepts')"><b>${c.concepts}</b>concepts</button>
       <button class="stat" data-stat="files" onclick="toggleStat('files')"><b>${c.files_scanned}</b>files</button>
       <button class="stat" data-stat="decisions" onclick="toggleStat('decisions')"><b>${c.declared_decisions}</b>decisions</button>
