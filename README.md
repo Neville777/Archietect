@@ -41,7 +41,14 @@ source code · schemas · ADRs
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Neville777/Archietect/main/packaging/install.sh | sh
+```
 
+Already have a Rust toolchain? `cargo install archietect` works too — just
+without the install script's one extra step of auto-registering with
+Claude Code/Gemini CLI (see [Installation](#installation) for that one
+command, if you want it).
+
+```bash
 cd /path/to/your-project
 archietect
 ```
