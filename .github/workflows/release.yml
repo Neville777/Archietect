@@ -143,6 +143,7 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-22.04
+            artifact: archietect-desktop-linux-x86_64
             # Ubuntu 22.04, not -latest, for the same glibc-compatibility
             # reason the CLI build picks musl over -latest's newer glibc —
             # a .deb built against ubuntu-latest's glibc would refuse to
@@ -160,14 +161,21 @@ jobs:
             # later if someone actually needs the ones that aren't either.
           - platform: macos-latest
             bundles: dmg
-            # Native (not cross-compiled) — macos-latest runners are Apple
-            # Silicon, so this covers arm64 Macs only. The CLI's release
-            # job cross-links an x86_64 target from the same kind of
-            # runner (see its own comment above); desktop doesn't do that
-            # yet, so Intel Mac users have no desktop build here until
-            # someone adds it.
+            target: aarch64-apple-darwin
+            artifact: archietect-desktop-macos-arm64
+            # Native — macos-latest runners are Apple Silicon.
+          - platform: macos-latest
+            bundles: dmg
+            target: x86_64-apple-darwin
+            artifact: archietect-desktop-macos-x86_64
+            # Cross-compiled from the same Apple Silicon runner as the
+            # arm64 leg above, same standard Xcode-linker cross-link the
+            # CLI's own release job already relies on (see its matrix
+            # entry's comment above) — not a new technique, just applied
+            # to the desktop bundle too so Intel Mac users get one.
           - platform: windows-latest
             bundles: msi
+            artifact: archietect-desktop-windows-x86_64
             # Tauri's standard, well-supported target (WebView2 ships with
             # Windows 10/11; the bundler downloads WiX itself, no extra
             # install step needed) — but unlike the other two platforms,
@@ -179,6 +187,8 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -193,24 +203,39 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "^2" --locked
 
+      # `--target` only passed when the matrix leg sets one (the two macOS
+      # legs, to pick which of the two Mach-O architectures Xcode's linker
+      # produces) — an empty `--target ""` is not the same as omitting the
+      # flag, so this branches instead of always interpolating it in.
       - name: Build desktop app
         working-directory: desktop
-        run: cargo tauri build --bundles ${{ matrix.bundles }}
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          else
+            cargo tauri build --bundles ${{ matrix.bundles }}
+          fi
 
       - name: Stage artifacts
         shell: bash
         run: |
           mkdir -p dist
+          if [ -n "${{ matrix.target }}" ]; then
+            BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          else
+            BUNDLE_DIR="desktop/src-tauri/target/release/bundle"
+          fi
           IFS=',' read -ra EXTS <<< "${{ matrix.bundles }}"
           for ext in "${EXTS[@]}"; do
-            find "desktop/src-tauri/target/release/bundle" -type f -name "*.$ext" \
+            find "$BUNDLE_DIR" -type f -name "*.$ext" \
               -exec cp {} "dist/" \;
           done
           ls -la dist/
 
       - uses: actions/upload-artifact@v7
         with:
-          name: archietect-desktop-${{ matrix.platform }}
+          name: ${{ matrix.artifact }}
           path: dist/*
 
   release:
