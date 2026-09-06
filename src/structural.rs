@@ -213,9 +213,15 @@ fn paths_match(declared: &str, called: &str) -> bool {
 /// that anchor, so accepting the recall loss on unnamed/rebound client
 /// instances is the trade this makes, not an oversight.
 ///
-/// Rust callers (`reqwest`, `ureq`) are left out of v1 entirely for the same
-/// reason: their common call shape is bare `client.get(url)`, and there's no
-/// equally reliable anchor to require without a real parser tracking types.
+/// Rust is excluded from REST call detection specifically (`reqwest`,
+/// `ureq`): their common call shape is bare `client.get(url)`, and there's
+/// no equally reliable anchor to require without a real parser tracking
+/// types. WebSocket connection calls are a separate branch below with their
+/// own, unambiguous anchors per language (`websockets.connect(...)` /
+/// `new WebSocket(...)` / tokio-tungstenite's `connect_async(...)`) — none
+/// of them share the generic-verb-method ambiguity a REST call has, so Rust
+/// participates there even though it sits out REST entirely.
+///
 /// Whether a captured literal is plausibly a URL/path at all, not just any
 /// quoted string that happened to follow `.get(`/`.post(`/etc. Found while
 /// building this: `cache.get("some_key")` and `params.get("id")` are
@@ -252,6 +258,21 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
                     }
                 }
             }
+            // websockets.connect("ws://host/path") / await
+            // websocket_client.connect(...) — anchored on the literal
+            // substring "websocket" (case-insensitive) rather than a fixed
+            // module name, since `import websockets as ws` and similar
+            // renames are common; unambiguous enough on its own that no
+            // decorator-line exclusion is needed here (no Python web
+            // framework spells a WS route declaration as `.connect(`).
+            let ws_re = Regex::new(
+                r#"(?i)websocket\w*\s*\.\s*connect\s*\(\s*f?["']([^"']+)["']"#
+            ).unwrap();
+            for cap in ws_re.captures_iter(text) {
+                if looks_like_path(&cap[1]) {
+                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                }
+            }
         }
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "vue" => {
             // fetch('/orders') / fetch(`/orders/${id}`) — `fetch` has no
@@ -275,6 +296,28 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
                 r#"\b(?:axios|apiClient|httpClient)\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*[`"']([^`"']+)"#
             ).unwrap();
             for cap in client_re.captures_iter(text) {
+                if looks_like_path(&cap[1]) {
+                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                }
+            }
+            // new WebSocket("ws://host/path") — the standard browser/Node
+            // WS client API, unambiguous on its own (nothing else in JS is
+            // spelled this way), so no receiver-anchoring caveat applies.
+            let ws_re = Regex::new(r#"\bnew\s+WebSocket\s*\(\s*[`"']([^`"']+)"#).unwrap();
+            for cap in ws_re.captures_iter(text) {
+                if looks_like_path(&cap[1]) {
+                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                }
+            }
+        }
+        "rs" => {
+            // tokio-tungstenite's canonical connect fn — specific enough a
+            // name (not a bare `.connect(`) that it needs no additional
+            // guard the way a generic `.get(` would on this language; see
+            // extract_route_calls's own module-level doc for why Rust is
+            // otherwise excluded from REST call detection entirely.
+            let ws_re = Regex::new(r#"\bconnect_async\s*\(\s*"([^"]+)""#).unwrap();
+            for cap in ws_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
                     route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
                 }
@@ -513,7 +556,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 12; // +RouteCall extraction (outbound HTTP call literals) and unexported PascalCase TS/JS functions/consts — both change what a cached file_facts entry SHOULD contain, so a pre-this-version cache must be treated as stale, not truthfully empty
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 13; // +Rust Axum/Actix/Rocket route declarations, +WebSocket connection calls (websockets.connect/new WebSocket/connect_async) — a cached Rust file_facts entry from before this predates route/WS extraction for Rust entirely
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -841,7 +884,16 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extensions: &["rs"],
         extractor: extract_rs,
         symbol_support: "structs, enums, traits, top-level functions",
-        frameworks: &[],
+        // Axum's `.route("/path", get(handler))` builder pattern also
+        // registers a WebSocket upgrade handler (a WS endpoint is an
+        // ordinary handler at an ordinary route in Axum) — one extractor
+        // covers both without treating WS as a special case. Warp's own
+        // combinator-style routing (`warp::path(...).and(warp::get())...`)
+        // is deliberately NOT attempted, same stated reason this project
+        // already excludes Servant/Akka HTTP: "a wrong route is worse than
+        // a missing one," and warp's routes are built by composing
+        // arbitrary filter chains with no fixed textual shape to anchor on.
+        frameworks: &["Axum", "Actix-web", "Rocket"],
     },
     LanguageSpec {
         name: "Python",
@@ -1524,7 +1576,7 @@ fn extract_rs(
     text: &str,
     symbols: &mut Vec<Symbol>,
     imports: &mut Vec<Import>,
-    _routes: &mut Vec<Route>,
+    routes: &mut Vec<Route>,
 ) {
     // pub struct / pub enum (only public — private types are implementation detail)
     let struct_re = Regex::new(r"(?m)^pub\s+(?:struct|enum)\s+([A-Z][A-Za-z0-9_]*)").unwrap();
@@ -1579,6 +1631,62 @@ fn extract_rs(
             })
             .unwrap_or_default();
         imports.push(Import { from_file: rel.to_string(), to_module, names });
+    }
+
+    // Rust had NO web-framework route recognition at all before this — an
+    // honest, standalone gap regardless of WebSockets: `frameworks: &[]` on
+    // this language's own LanguageSpec entry, found while investigating a
+    // real reported false negative that turned out to need this first (a
+    // Rust service's declared endpoint never became a Route at all, so
+    // nothing could ever cross-reference it, independent of whether the
+    // CALLING side was ever recognized). Axum's `.route("/path", get(h))`
+    // builder pattern doubles as its WebSocket registration too — a
+    // `WebSocketUpgrade` extractor is just an ordinary handler function
+    // registered the exact same way — so this one pattern covers both REST
+    // and WS endpoints in Axum without special-casing WS at all.
+    //
+    // Bounded to same-statement chained methods (`get(h).post(h2)`) via the
+    // nested capture below, not a blind scan to the next `)` — Axum route
+    // tables are routinely built by chaining many `.route(...)` calls
+    // together, and matching too greedily would blur one route's handler
+    // into the next.
+    let axum_route_re = Regex::new(
+        r#"\.route\s*\(\s*"([^"]+)"\s*,\s*((?:(?:get|post|put|patch|delete)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)(?:\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))*))\s*\)"#
+    ).unwrap();
+    let verb_handler_re = Regex::new(
+        r"(get|post|put|patch|delete)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+    ).unwrap();
+    for cap in axum_route_re.captures_iter(text) {
+        let path = cap[1].to_string();
+        for vh in verb_handler_re.captures_iter(&cap[2]) {
+            routes.push(Route {
+                method: vh[1].to_uppercase(),
+                path: path.clone(),
+                handler: vh[2].to_string(),
+                file: rel.to_string(),
+            });
+        }
+    }
+
+    // Actix-web / Rocket attribute-macro routes: `#[get("/path")]` directly
+    // above the handler function — same "read the next fn after the match"
+    // shape extract_py already uses for FastAPI's decorator, since both are
+    // "an annotation names the path; the very next function is the
+    // handler" conventions, just Rust attribute syntax instead of a Python
+    // decorator.
+    let attr_route_re = Regex::new(
+        r#"(?m)^\s*#\[\s*(get|post|put|patch|delete)\s*\(\s*"([^"]+)"\s*\)\s*\]"#
+    ).unwrap();
+    for cap in attr_route_re.captures_iter(text) {
+        let after = &text[cap.get(0).unwrap().end()..];
+        let fn_re = Regex::new(r"(?m)^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
+        let handler = fn_re.captures(after).map(|c| c[1].to_string()).unwrap_or_else(|| "unknown".to_string());
+        routes.push(Route {
+            method: cap[1].to_string().to_uppercase(),
+            path: cap[2].to_string(),
+            handler,
+            file: rel.to_string(),
+        });
     }
 }
 
@@ -3129,6 +3237,104 @@ def get_order(order_id: str):
         assert!(
             !impact["route_call_dependents"].as_array().unwrap().is_empty(),
             "impact() must surface the route-call evidence, got: {impact}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Rust had ZERO route/framework recognition before this — found while
+    /// chasing the real reported bug, which turned out to need this as a
+    /// PRECONDITION: `route_call_dependents` requires a declared Route to
+    /// exist at all, and a Rust service's endpoint could never become one,
+    /// regardless of how good call-site detection got. Axum's chained
+    /// builder syntax is the target here.
+    #[test]
+    fn axum_route_declarations_are_extracted() {
+        let src = r#"
+let app = Router::new()
+    .route("/orders/:id", get(get_order).post(update_order))
+    .route("/ws", get(ws_handler));
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_rs("gateway.rs", src, &mut symbols, &mut imports, &mut routes);
+        assert!(
+            routes.iter().any(|r| r.method == "GET" && r.path == "/orders/:id" && r.handler == "get_order"),
+            "got: {routes:?}"
+        );
+        assert!(
+            routes.iter().any(|r| r.method == "POST" && r.path == "/orders/:id" && r.handler == "update_order"),
+            "chained .post(...) on the same .route(...) call must also be captured, got: {routes:?}"
+        );
+        assert!(
+            routes.iter().any(|r| r.method == "GET" && r.path == "/ws" && r.handler == "ws_handler"),
+            "a WebSocket upgrade handler is registered exactly like any other Axum route — no special-casing needed, got: {routes:?}"
+        );
+    }
+
+    /// Actix-web/Rocket's attribute-macro route declaration — same "read the
+    /// next fn after the match" shape as FastAPI's decorator in extract_py,
+    /// just Rust attribute syntax instead of a Python decorator.
+    #[test]
+    fn actix_style_attribute_route_is_extracted() {
+        let src = "#[post(\"/orders/{order_id}/approve\")]\nasync fn approve_order(path: web::Path<String>) -> impl Responder {\n    HttpResponse::Ok()\n}\n";
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_rs("orders.rs", src, &mut symbols, &mut imports, &mut routes);
+        assert!(
+            routes.iter().any(|r| r.method == "POST" && r.path == "/orders/{order_id}/approve" && r.handler == "approve_order"),
+            "got: {routes:?}"
+        );
+    }
+
+    /// The real reported shape, reproduced end-to-end: a WebSocket endpoint
+    /// declared in Rust (Axum), called from Python via `websockets.connect`
+    /// — no import edge, a different language on each side, and (unlike the
+    /// REST case earlier in this module) an actual `ws://` scheme. Proves
+    /// path_only's generic scheme-stripping (verified earlier to work on
+    /// ANY `://`, not just http/https) and the new Rust route extraction
+    /// compose correctly through the full scan -> route_call_dependents ->
+    /// impact() pipeline, not just as isolated units.
+    #[test]
+    fn websocket_endpoint_declared_in_rust_called_from_python_is_not_invisible() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-ws-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("gateway")).unwrap();
+        std::fs::create_dir_all(tmp.join("client")).unwrap();
+        std::fs::write(
+            tmp.join("gateway").join("main.rs"),
+            "pub struct Council;\n\nlet app = Router::new().route(\"/council/deliberate\", get(deliberate_handler));\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("client").join("council_client.py"),
+            "import websockets\n\nasync def call_council():\n    async with websockets.connect(\"ws://ws_gateway:8001/council/deliberate\") as ws:\n        return await ws.recv()\n",
+        )
+        .unwrap();
+
+        let (_idx, graph) = crate::scan::scan(&tmp);
+        assert!(
+            graph.routes.iter().any(|r| r.path == "/council/deliberate" && r.handler == "deliberate_handler"),
+            "sanity: the Axum WS route must actually be declared, got: {:?}", graph.routes
+        );
+        assert!(
+            graph.route_calls.iter().any(|c| c.path.contains("/council/deliberate")),
+            "sanity: the websockets.connect call must actually be extracted, got: {:?}", graph.route_calls
+        );
+
+        let deps = route_call_dependents(&graph, "Council");
+        assert!(
+            deps.iter().any(|d| d.file == "client/council_client.py"),
+            "council_client.py connects to the WS route declared alongside Council and must be reported as a dependent, got: {deps:?}"
+        );
+
+        let impact = crate::query::impact(&_idx, &graph, "Council");
+        assert_ne!(
+            impact["severity"], "NONE OBSERVED — declared but nothing seen touching it",
+            "a WebSocket endpoint genuinely called cross-language must not report zero touchpoints, got: {impact}"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);

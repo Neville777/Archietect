@@ -155,7 +155,7 @@ in that directory; limitations are stated there too.
 
 | Language | Symbols | Frameworks (routes) |
 |---|---|---|
-| Rust | structs, enums, traits, top-level functions | — |
+| Rust | structs, enums, traits, top-level functions | Axum, Actix-web, Rocket |
 | Python | classes, top-level functions | FastAPI, Flask, Django |
 | TypeScript/JavaScript | classes, interfaces, enums, exported functions, events | Express, NestJS, Next.js, Nuxt (server API) |
 | Vue | the SFC itself as a component, plus its `<script>` block | Nuxt (pages) |
@@ -188,7 +188,19 @@ lists the files worth reading.
 
 Not attempted: a real parser (everything here is regex — an MVP tradeoff)
 and route DSLs too combinator-heavy to track reliably (Servant's type-level
-API, Akka HTTP's in-code routing) — a wrong route is worse than a missing one.
+API, Akka HTTP's in-code routing, warp's filter-combinator routing) — a
+wrong route is worse than a missing one.
+
+**Cross-service calls:** a route declared in one file and called from a
+*different* file — often a different language, with no import edge between
+them at all — used to be invisible to both usage signals this engine had
+(same-language ORM/construct matchers; the import-graph walk behind
+`impact()`'s `structural_dependents`). Outbound HTTP and WebSocket calls
+(`requests`/`httpx`/`fetch`/`axios` in Python/JS, `websockets.connect`/
+`new WebSocket`/tokio-tungstenite's `connect_async`) are now matched against
+declared routes by path, path-parameter-aware (`/orders/{id}` matches
+`f"/orders/{order_id}"`) — surfaced as `route_call_dependents` in `impact()`
+and as `Used`-tier evidence in `concept()`'s STRUCTURAL verdict.
 
 ## Prerequisites
 
