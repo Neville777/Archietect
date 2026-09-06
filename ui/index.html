@@ -79,9 +79,9 @@
   tbody tr:hover { background: rgba(255,255,255,.025); }
   tr:last-child td { border-bottom: none; }
   .muted { color:var(--fg-muted); } pre { white-space:pre-wrap; margin:0; }
-  [data-concept], [data-client], [data-domain], [data-file], [data-decision] { cursor:pointer; color: var(--accent);
+  [data-concept], [data-client], [data-domain], [data-file], [data-decision], [data-project] { cursor:pointer; color: var(--accent);
     text-decoration:underline dotted; text-underline-offset:3px; text-decoration-color: rgba(88,166,255,.4); }
-  [data-concept]:hover, [data-client]:hover, [data-domain]:hover, [data-file]:hover, [data-decision]:hover {
+  [data-concept]:hover, [data-client]:hover, [data-domain]:hover, [data-file]:hover, [data-decision]:hover, [data-project]:hover {
     text-decoration-style: solid; text-decoration-color: var(--accent); }
   tr.inline-drill > td { background:var(--bg-sunken); border-bottom:1px solid var(--border); border-left: 2px solid var(--accent-dim); }
   li.inline-drill { list-style:none; margin:.2rem 0; }
@@ -98,6 +98,7 @@
 </div>
 <div id="aiStatus"></div>
 <nav>
+  <button data-tab="projects" onclick="show('projects')" title="every registered project on this machine, with live AI activity — works with no root typed in">projects</button>
   <button data-tab="overview" class="active" onclick="show('overview')">overview</button>
   <button data-tab="timeline" onclick="show('timeline')">timeline</button>
   <button data-tab="drift" onclick="show('drift')">drift</button>
@@ -175,7 +176,16 @@ function showErr(text){
 window.onerror = (msg, src, line, col) => showErr(`JS error: ${msg} (${src}:${line}:${col})`);
 window.addEventListener('unhandledrejection', e => showErr(`unhandled promise rejection: ${e.reason}`));
 
-function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); refreshAiStatus(); }
+// "projects" needs no root and is the landing tab when none is set (see
+// the bottom of this script) — but typing a path into the box and hitting
+// "load" is a request to see THAT root, not to stay on the picker that
+// exists only for when you don't have a path in mind yet. Same landing
+// tab loadProject() already uses.
+function setRoot(){
+  localStorage.setItem('arch_root', $('root').value);
+  show(tab === 'projects' ? 'overview' : tab);
+  refreshAiStatus();
+}
 
 function agoText(ms){
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -226,12 +236,12 @@ function setAiStatus(stateClass, html){
   el.className = stateClass;
   el.innerHTML = html ? `${html} ${AI_HELP_HTML}` : '';
 }
-async function refreshAiStatus(){
-  const root = $('root').value;
-  if (!root) { setAiStatus('', ''); return; }
-  const d = await fetch(`/history?root=${encodeURIComponent(root)}&limit=100`).then(r => r.json()).catch(() => null);
-  if ($('root').value !== root) return; // root changed while this was in flight
-  const events = (d && d.events) || [];
+// Shared by the top banner (one root) and the projects tab (every known
+// root at once) — both answer the exact same question, "what's the most
+// recent mcp_client_connected/active signal in this event list," just for
+// a different set of events. One implementation so the two views can never
+// silently disagree about what "active" means.
+function clientActivityFromEvents(events){
   const seen = {};
   for (const e of events) {
     if (e.kind !== 'mcp_client_connected' && e.kind !== 'mcp_client_active') continue;
@@ -244,19 +254,32 @@ async function refreshAiStatus(){
       seen[e.concept] = { ts_ms: e.ts_ms, version: e.detail && e.detail.version, tools: (e.detail && e.detail.tools) || [] };
     }
   }
+  return seen;
+}
+// What it's asking about is the honest, answerable version of "what does
+// the AI see" — the full request/response JSON for every call is a much
+// bigger feature (logging arbitrary-size payloads forever); which
+// questions it's been asking is real signal without that cost.
+const toolsText = c => c.tools && c.tools.length ? ` — asking about: <b>${c.tools.map(esc).join(', ')}</b>` : '';
+function clientActivitySummary(seen){
   const names = Object.keys(seen).sort((a, b) => seen[b].ts_ms - seen[a].ts_ms);
   if (!names.length) {
-    setAiStatus('ai-none', '<span class="dot"></span> <span class="muted">no AI has connected to this project yet</span>');
-    return;
+    return { stateClass: 'ai-none', names, active: [] };
   }
-  // What it's asking about is the honest, answerable version of "what does
-  // the AI see" — the full request/response JSON for every call is a much
-  // bigger feature (logging arbitrary-size payloads forever); which
-  // questions it's been asking is real signal without that cost.
-  const toolsText = c => c.tools && c.tools.length ? ` — asking about: <b>${c.tools.map(esc).join(', ')}</b>` : '';
   const now = Date.now();
   const active = names.filter(n => now - seen[n].ts_ms < ACTIVE_MS);
-  if (active.length) {
+  return { stateClass: active.length ? 'ai-active' : 'ai-idle', names, active };
+}
+async function refreshAiStatus(){
+  const root = $('root').value;
+  if (!root) { setAiStatus('', ''); return; }
+  const d = await fetch(`/history?root=${encodeURIComponent(root)}&limit=100`).then(r => r.json()).catch(() => null);
+  if ($('root').value !== root) return; // root changed while this was in flight
+  const seen = clientActivityFromEvents((d && d.events) || []);
+  const { stateClass, names, active } = clientActivitySummary(seen);
+  if (!names.length) {
+    setAiStatus('ai-none', '<span class="dot"></span> <span class="muted">no AI has connected to this project yet</span>');
+  } else if (active.length) {
     const label = active.map(n => `<b>${esc(n)}</b>${seen[n].version ? ' v' + esc(seen[n].version) : ''}${toolsText(seen[n])}`).join('; ');
     setAiStatus('ai-active', `<span class="dot"></span> ${label} — <b>using this right now</b>`);
   } else {
@@ -434,7 +457,10 @@ function startLiveTimer(gen, started){
 async function show(name){
   tab = name;
   document.querySelectorAll('nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  if (!$('root').value) return;
+  // "projects" is the one tab that doesn't need a root — it's how you pick
+  // one in the first place (loadProject() sets $('root').value and lands on
+  // overview). Every other tab bails here exactly as before.
+  if (!$('root').value && name !== 'projects') return;
   const { gen, signal } = startLoad();
   $('out').innerHTML = '<span class="muted">loading…</span>';
   $('timer').textContent = '';
@@ -449,12 +475,16 @@ async function show(name){
   // resolves with whatever this root's scan progress happened to already
   // say (typically "done", left in place by an earlier tab's real scan;
   // see rest.rs's own doc on why a finished scan stays recorded).
-  if (name !== 'query') {
+  // "projects" never scans (system.db list + a plain /history read per
+  // project, same as "query") — same race the query tab already documents
+  // above: a synchronous render with no scan in flight loses to the
+  // poller's first tick every time, so it's excluded the same way.
+  if (name !== 'query' && name !== 'projects') {
     startProgressPolling(gen, signal, started);
     startLiveTimer(gen, started);
   }
   try {
-    await ({overview, timeline, drift, laws, memory, query})[name](gen, signal);
+    await ({overview, timeline, drift, laws, memory, query, projects})[name](gen, signal);
   } finally {
     // Only the load that's still current gets to stop polling/timer and
     // report a final time — see the "Load ownership" note above `startLoad`.
@@ -722,8 +752,20 @@ $('out').addEventListener('click', e => {
   const fl = e.target.closest('[data-file]');
   if (fl) { toggleFileDrill(fl); return; }
   const dc = e.target.closest('[data-decision]');
-  if (dc) toggleDecisionDrill(dc);
+  if (dc) { toggleDecisionDrill(dc); return; }
+  const pr = e.target.closest('[data-project]');
+  if (pr) loadProject(pr.dataset.project);
 });
+// Picking a project from the projects tab is the whole point of that tab
+// existing — replaces typing a path by hand. Lands on overview, the same
+// tab a fresh `archietect gui /path` launch lands on, not back on
+// "projects" (which would just show the same picker again).
+function loadProject(root){
+  $('root').value = root;
+  localStorage.setItem('arch_root', root);
+  show('overview');
+  refreshAiStatus();
+}
 
 let clientFilter = null;
 function toggleClientFilter(name){
@@ -821,6 +863,51 @@ async function laws(gen, signal){
     <span class="stat"><b>v${d.stats.extractor_version}</b>extractor</span></div>
     <table><tr><th>law</th><th>statement</th></tr>
     ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td></tr>`).join('')}</table>`;
+}
+
+// The only tab that works with NO root typed in at all — see show()'s own
+// exception for it — because its entire point is answering "which project
+// do I even want to look at" before a root is chosen. Registration is
+// automatic now (mcp.rs registers a root into system.db on an AI's first
+// real contact with it, the same gate as mcp_client_connected), so a
+// project worked on via any real MCP client shows up here without anyone
+// having to remember a separate `system register` step.
+async function projects(gen, signal){
+  const d = await fetch('/system/list', { signal }).then(r => r.json()).catch(e =>
+    e.name === 'AbortError' ? { aborted: true } : { error: `fetch to /system/list failed: ${e}` });
+  if (!isCurrentLoad(gen)) return;
+  if (d.aborted) return;
+  if (d.error) return $('out').innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+  const list = d.projects || [];
+  if (!list.length) {
+    $('out').innerHTML = `<h3>known projects</h3>
+      <p class="muted">none registered yet — a project appears here automatically the first time an AI tool calls this server against it, or after running <code>archietect system register</code> / onboarding.</p>`;
+    return;
+  }
+  // One /history call per known project, in parallel — each is a plain
+  // event-log read (no scan, see rest.rs's INDEX_ENDPOINTS split), so this
+  // stays cheap even with a handful of projects registered.
+  const histories = await Promise.all(list.map(p =>
+    fetch(`/history?root=${encodeURIComponent(p.root)}&limit=100`, { signal }).then(r => r.json()).catch(() => ({ events: [] }))
+  ));
+  if (!isCurrentLoad(gen)) return;
+  const rows = list.map((p, i) => {
+    const seen = clientActivityFromEvents((histories[i] && histories[i].events) || []);
+    const { stateClass, names, active } = clientActivitySummary(seen);
+    const badge = stateClass === 'ai-active'
+      ? `<span class="ok">● ${active.map(esc).join(', ')} — active now</span>`
+      : stateClass === 'ai-idle'
+        ? `<span class="muted">○ ${esc(names[0])}, ${agoText(seen[names[0]].ts_ms)}</span>`
+        : `<span class="muted">— no AI activity seen</span>`;
+    return `<tr>
+      <td><span data-project="${esc(p.root)}"><b>${esc(p.name)}</b></span></td>
+      <td class="muted">${esc(p.root)}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join('');
+  $('out').innerHTML = `
+    <h3>known projects <span class="muted">(click one to load it — no path typing needed)</span></h3>
+    <table><tr><th>project</th><th>root</th><th>AI activity</th></tr>${rows}</table>`;
 }
 
 async function memory(gen, signal){
@@ -923,6 +1010,10 @@ async function runQuery(){
 const urlRoot = new URLSearchParams(location.search).get('root');
 $('root').value = urlRoot || localStorage.getItem('arch_root') || '';
 if (urlRoot) localStorage.setItem('arch_root', urlRoot);
-if ($('root').value) show('overview');
+// No root yet on a fresh launch (no ?root=, nothing remembered from last
+// time) — land on the projects picker instead of a bare "set a repository
+// root above" placeholder with nothing to click. A remembered/passed root
+// still goes straight to overview, unchanged.
+show($('root').value ? 'overview' : 'projects');
 startAiStatusPolling();
 </script>

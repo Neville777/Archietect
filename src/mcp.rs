@@ -423,6 +423,20 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 )]);
                                 last_heartbeat_for.insert(root.clone(), now);
                                 if let Some(t) = tools_since_heartbeat.get_mut(&root) { t.clear(); }
+                                // A project an AI actually works on should be
+                                // findable via `system_list`/the GUI's own
+                                // project picker without a human separately
+                                // remembering to run `system_register` first
+                                // — that extra manual step is exactly why
+                                // universal_trader/backend, worked on all
+                                // session via MCP, never showed up there.
+                                // Idempotent upsert (see system_db's own
+                                // doc): safe to call once per (session,
+                                // root), same gate as the connected event
+                                // above, never resets first_registered_ms.
+                                if let Ok(db_path) = system_db::default_db_path() {
+                                    let _ = system_db::register_project(&db_path, &root);
+                                }
                             } else {
                                 // Every tool call reaches here, but only one
                                 // in HEARTBEAT_INTERVAL_MS actually writes —
