@@ -196,13 +196,31 @@ function setScrollPreserved(elId, html){
   el.scrollTop = top;
 }
 
-function startProgressPolling(gen, signal){
+// `started` is ONLY used for the done>=total branch below, not the
+// percentage branch: ScanProgress (src/scan.rs) counts FILE·PASS units, not
+// wall-clock work, and only covers the two per-file scan passes — the
+// query itself (/duplicates' concept-pair comparison, /doctor's
+// coverage_report, etc.) runs AFTER scan_with_prior returns and reports
+// nothing back at all while it runs. Measured live: files 100% done, then
+// nothing else changes on screen for 4-16+ seconds while that query
+// finishes — a static "finishing up" string sitting unchanged for that
+// whole time is indistinguishable from hung, which is exactly why it LOOKS
+// stuck even on repos where it isn't. Showing elapsed time here (this tab's
+// own #timer element already does, but it's easy to miss next to the small
+// reload button while #out — the actual content area — holds your eye) is
+// the honest fix given there is no real per-file signal for this phase to
+// report; genuinely instrumenting each query's own progress is a bigger
+// project-by-project effort than one UI fix covers.
+function startProgressPolling(gen, signal, started){
   stopProgressPolling();
   const poll = async () => {
     const d = await api('/scan-progress', '', signal).catch(() => null);
     if (!isCurrentLoad(gen)) return; // superseded — a newer load owns #out now
     if (!d || d.total == null || d.total === 0) return;
-    if (d.done >= d.total) { $('out').innerHTML = '<span class="muted">loading… finishing up</span>'; return; }
+    if (d.done >= d.total) {
+      $('out').innerHTML = `<span class="muted">loading… finishing up (${fmtDuration(performance.now() - started)} so far — the file scan is done; this is the query itself still running)</span>`;
+      return;
+    }
     const pct = Math.floor(100 * d.done / d.total);
     ensureProgressShell();
     $('scanStatus').textContent = `scanning… ${d.done} / ${d.total} files (${pct}%)`;
@@ -244,8 +262,8 @@ async function show(name){
   const { gen, signal } = startLoad();
   $('out').innerHTML = '<span class="muted">loading…</span>';
   $('timer').textContent = '';
-  startProgressPolling(gen, signal);
   const started = performance.now();
+  startProgressPolling(gen, signal, started);
   startLiveTimer(gen, started);
   try {
     await ({overview, timeline, drift, laws, memory})[name](gen, signal);
