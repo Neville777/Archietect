@@ -43,6 +43,48 @@ fn tool_defs() -> Value {
     tools
 }
 
+/// "asking about: concept" said WHICH tool ran, not what it was actually
+/// asked — a category, not information; called out directly as meaning
+/// nothing on its own. This pulls the one argument that actually identifies
+/// what a call was ABOUT, per tool (field names copied from this file's own
+/// `tool_defs_inner` below, not guessed), and formats "tool(argument)" —
+/// e.g. "concept(PaymentService)" instead of "concept". Tools with no
+/// identifying argument (doctor, tour, verdicts, ...) fall back to the bare
+/// name; there's nothing more specific to say about those. Long free-text
+/// arguments (`guard`'s sql, `ci`'s diff) are truncated — this is a status
+/// display, not a place to reproduce an entire patch.
+fn describe_call(name: &str, args: &Value) -> String {
+    fn field(args: &Value, key: &str) -> Option<String> {
+        args.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+    }
+    fn truncate(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            s.to_string()
+        } else {
+            format!("{}…", s.chars().take(max).collect::<String>())
+        }
+    }
+    let arg = match name {
+        "concept" | "impact" | "owner" | "system_query" => field(args, "term"),
+        "intent" | "plan" => field(args, "text"),
+        "imports" => field(args, "file"),
+        "guard" => field(args, "sql").map(|s| truncate(&s, 60)),
+        "ci" => field(args, "diff").map(|s| truncate(&s, 60)),
+        "history" => field(args, "concept"),
+        "proposal_submit" => field(args, "title"),
+        "proposal_inspect" | "proposal_test" | "proposal_accept" | "proposal_reject" => {
+            args.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string())
+        }
+        "permissions_check" => field(args, "path"),
+        "documents_scan" | "photos_scan" => field(args, "dir"),
+        _ => None,
+    };
+    match arg {
+        Some(a) => format!("{name}({a})"),
+        None => name.to_string(),
+    }
+}
+
 fn tool_defs_inner() -> Value {
     let root_prop = json!({
         "type": "string",
@@ -369,7 +411,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         if let Some((client_name, client_version)) = &client_info {
                             let now = crate::humanize::now_ms();
                             if !name.is_empty() {
-                                tools_since_heartbeat.entry(root.clone()).or_default().insert(name.to_string());
+                                tools_since_heartbeat.entry(root.clone()).or_default().insert(describe_call(name, args));
                             }
                             if recorded_connection_for.insert(root.clone()) {
                                 let tools: Vec<&String> = tools_since_heartbeat.get(&root).into_iter().flatten().collect();
