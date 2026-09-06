@@ -150,15 +150,24 @@ jobs:
             # even install on the (extremely common) still-supported
             # older LTS this project already verified the CLI against.
             bundles: deb,rpm
-            # AppImage bundling additionally downloads linuxdeploy and two
-            # of its plugins at build time (not vendored, not cached) —
-            # found running this exact build locally: one of those
-            # downloads failed and took the whole bundle step down with it,
-            # even though the .deb and .rpm right above it had already
-            # built fine. A flaky third-party download shouldn't be able to
-            # fail a release. .deb/.rpm cover Debian/Ubuntu and
-            # Fedora/RHEL-family distros directly; AppImage can come back
-            # later if someone actually needs the ones that aren't either.
+            # AppImage is attempted separately below ("Build AppImage
+            # (best-effort)") — NOT added to `bundles` here, deliberately.
+            # It failed a full release once already (this matrix leg's
+            # earlier comment history): linuxdeploy's download failed and
+            # took the whole `cargo tauri build` down with it, and since
+            # `release` requires every build-desktop leg to succeed, that
+            # ONE optional format blocked .deb/.rpm/.dmg/.msi from
+            # publishing too, for everyone. A retry (added, then tried
+            # locally) didn't reproduce that specific failure again — it
+            # hit a DIFFERENT one instead ("failed to run linuxdeploy",
+            # unchanged even with linuxdeploy's own documented
+            # APPIMAGE_EXTRACT_AND_RUN=1 fallback set), so a retry loop
+            # alone isn't a trustworthy fix. AppImage bundling depends on
+            # third-party binaries this project doesn't control (and,
+            # apparently, environment-specific FUSE/execution behavior) —
+            # the right fix isn't re-gambling that it works this time,
+            # it's making sure it can NEVER again take the required
+            # formats down with it if it doesn't.
           - platform: macos-latest
             bundles: dmg
             target: aarch64-apple-darwin
@@ -194,11 +203,17 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
+      # libfuse2: AppImage's own runtime (and linuxdeploy, which builds it)
+      # needs FUSE to mount the image it's assembling; GitHub's ubuntu-22.04
+      # image doesn't carry it by default. Still installed even though
+      # AppImage below is best-effort — it costs nothing on the legs that
+      # don't need it (this whole step is Linux-only already) and it's a
+      # real prerequisite for the one leg that does.
       - name: Install Linux webview + bundler deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libfuse2
 
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "^2" --locked
@@ -207,15 +222,50 @@ jobs:
       # legs, to pick which of the two Mach-O architectures Xcode's linker
       # produces) — an empty `--target ""` is not the same as omitting the
       # flag, so this branches instead of always interpolating it in.
+      # Retried (not a plain `run:` step) for the same reason every step in
+      # this job could reasonably want it: a transient CI hiccup shouldn't
+      # cost a full rebuild-from-scratch when cargo/tauri only recompile
+      # what changed anyway. This is the REQUIRED build (`matrix.bundles`
+      # is deb,rpm/dmg/msi, never appimage — see AppImage's own separate
+      # best-effort step below for why).
       - name: Build desktop app
-        working-directory: desktop
-        shell: bash
-        run: |
-          if [ -n "${{ matrix.target }}" ]; then
-            cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-          else
-            cargo tauri build --bundles ${{ matrix.bundles }}
-          fi
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          shell: bash
+          working_directory: desktop
+          command: |
+            if [ -n "${{ matrix.target }}" ]; then
+              cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+            else
+              cargo tauri build --bundles ${{ matrix.bundles }}
+            fi
+
+      # Best-effort, deliberately isolated from the required build above:
+      # `continue-on-error: true` means this step's failure does NOT fail
+      # the job, so a broken/flaky AppImage can never again take
+      # deb/rpm/dmg/msi down with it (see the ubuntu-22.04 matrix entry's
+      # own comment for the full history — that's a real thing that
+      # already happened once). The binary is already built by the
+      # required step above; this only re-runs the bundling itself.
+      # Tried locally with a retry AND linuxdeploy's own documented
+      # APPIMAGE_EXTRACT_AND_RUN=1 escape hatch — neither got past "failed
+      # to run linuxdeploy" in this environment, a different failure than
+      # the download flakiness that motivated the retry in the first
+      # place. Left in anyway: cheap when it works, harmless when it
+      # doesn't, and the retry still helps if the ORIGINAL failure mode
+      # (a bad download) is what a real release run hits instead.
+      - name: Build AppImage (best-effort)
+        if: matrix.platform == 'ubuntu-22.04'
+        continue-on-error: true
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 2
+          shell: bash
+          working_directory: desktop
+          command: cargo tauri build --bundles appimage
 
       - name: Stage artifacts
         shell: bash
@@ -227,8 +277,17 @@ jobs:
             BUNDLE_DIR="desktop/src-tauri/target/release/bundle"
           fi
           IFS=',' read -ra EXTS <<< "${{ matrix.bundles }}"
+          # appimage is ALWAYS attempted here too (not just when this leg's
+          # own `bundles` lists it) — harmless everywhere else since
+          # nothing will match, and picks up the best-effort step's output
+          # on ubuntu-22.04 if it happened to succeed.
+          EXTS+=("appimage")
           for ext in "${EXTS[@]}"; do
-            find "$BUNDLE_DIR" -type f -name "*.$ext" \
+            # -iname: AppImage's own file extension is capitalized
+            # ("Archietect_0.1.0_amd64.AppImage") — plain -name with the
+            # lowercase "appimage" here would silently match nothing and
+            # ship an empty artifact for that leg.
+            find "$BUNDLE_DIR" -type f -iname "*.$ext" \
               -exec cp {} "dist/" \;
           done
           ls -la dist/
