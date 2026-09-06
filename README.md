@@ -37,6 +37,29 @@ evidence · history     an AI last touched it)
 source code · schemas · ADRs
 ```
 
+## Quickstart
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Neville777/Archietect/main/packaging/install.sh | sh
+
+cd /path/to/your-project
+archietect
+```
+
+That's it. The first run there indexes the project on the spot (creates
+`archietect.db`, no separate `init` step); every run after that is
+incremental. What you get back is a git-status-style glance at what it
+found. From there:
+
+```bash
+archietect concept <name>   # does this already exist? where? how confident?
+archietect gui               # the same thing in a browser — no commands to remember
+```
+
+Windows, building from source, and the native desktop app: see
+[Installation](#installation). Every other command: see
+[Usage](#usage).
+
 ## Demo
 
 ![Archietect's GUI: overview, a domain → file → concept drill-down, and the query tab.](docs/gui-demo.gif)
