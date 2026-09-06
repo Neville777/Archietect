@@ -1188,6 +1188,49 @@ fn extract_ts_js(
         imports.push(Import { from_file: rel.to_string(), to_module, names });
     }
 
+    // CommonJS: const { X, Y } = require('./module'), const X = require('./module'),
+    // or a bare require('./module') for side effects only. Previously entirely
+    // invisible — extract_ts_js only ever recognized ES `import ... from`, so
+    // any file using require() (still the default in a great many real Node
+    // backends, not just legacy ones) produced zero Import edges for its own
+    // local requires. Confirmed live: a real server/index.js doing
+    // `const { createApp } = require('./app')` reported empty imports, even
+    // though app.js itself is right there in the same directory.
+    // `Import::relationship`/`resolve_relative_import` and every caller that
+    // walks `graph.imports` (structural_dependents's importers_of, impact(),
+    // etc.) operate purely on the resulting `Import{from_file, to_module,
+    // names}` — they don't know or care which syntax produced it, so this
+    // needed no changes anywhere else.
+    let require_re = Regex::new(
+        r#"(?:(?:const|let|var)\s+(?:\{([^}]*)\}|(\w+))\s*=\s*)?require\(\s*['"]([^'"]+)['"]\s*\)"#
+    ).unwrap();
+    for cap in require_re.captures_iter(text) {
+        let names: Vec<String> = cap
+            .get(1)
+            .map(|m| {
+                m.as_str()
+                    .split(',')
+                    .map(|s| {
+                        // Handles both plain `{ a }` and CommonJS's
+                        // colon-rename form `{ a: b }` (there's no `as`
+                        // keyword in object destructuring) — take the key,
+                        // not the local binding name, matching what the ES
+                        // import branch above does for its own `as` form.
+                        s.trim()
+                            .split(':')
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let to_module = cap[3].to_string();
+        imports.push(Import { from_file: rel.to_string(), to_module, names });
+    }
+
     // Top-level exported functions: `export function foo(` and the very
     // common `export const foo = (...) => {...}` arrow-as-function style.
     // Not anchored inside a class body — those are methods, already noisy
@@ -2924,6 +2967,89 @@ export const GET_USER = gql`
         extract_ts_js("src/queries.ts", src, &mut symbols, &mut imports, &mut routes);
 
         assert!(routes.iter().any(|r| r.method == "QUERY" && r.path == "GetUser"));
+    }
+
+    #[test]
+    fn extract_ts_js_finds_commonjs_destructured_require() {
+        let src = r#"
+const { createApp } = require('./app');
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(
+            imports.iter().any(|i| i.to_module == "./app" && i.names == vec!["createApp"]),
+            "expected an Import for './app' with names=[createApp], got: {imports:?}"
+        );
+    }
+
+    #[test]
+    fn extract_ts_js_finds_commonjs_default_require() {
+        let src = r#"
+const app = require('./app');
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(
+            imports.iter().any(|i| i.to_module == "./app" && i.names.is_empty()),
+            "expected an Import for './app' with no named bindings (default require), got: {imports:?}"
+        );
+    }
+
+    #[test]
+    fn extract_ts_js_finds_commonjs_bare_require() {
+        // Side-effect-only require, no binding at all — e.g. `require('./polyfills')`.
+        let src = "require('./polyfills');\n";
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(
+            imports.iter().any(|i| i.to_module == "./polyfills"),
+            "expected an Import for './polyfills', got: {imports:?}"
+        );
+    }
+
+    #[test]
+    fn extract_ts_js_finds_commonjs_renamed_destructured_require() {
+        // CommonJS destructuring rename uses `key: local`, not ES's `as` —
+        // the extracted name should be the KEY ("Router"), matching what the
+        // ES import branch does for `import { x as y }` (keeps "x").
+        let src = r#"
+const { Router: createRouter } = require('express');
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(
+            imports.iter().any(|i| i.to_module == "express" && i.names == vec!["Router"]),
+            "expected an Import for 'express' with names=[Router], got: {imports:?}"
+        );
+    }
+
+    #[test]
+    fn extract_ts_js_still_finds_es_imports_alongside_commonjs() {
+        // Regression guard: adding the require() regex must not disturb the
+        // existing ES `import ... from` extraction in the same file.
+        let src = r#"
+import { useState } from 'react';
+const { createApp } = require('./app');
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/mixed.ts", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(imports.iter().any(|i| i.to_module == "react" && i.names == vec!["useState"]));
+        assert!(imports.iter().any(|i| i.to_module == "./app" && i.names == vec!["createApp"]));
     }
 }
 
