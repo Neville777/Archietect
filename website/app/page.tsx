@@ -26,8 +26,8 @@ export default function Page() {
             ARCHIE<span className="dot">·</span>TECT
           </a>
           <nav className="navlinks">
-            <a href="#problem">Why</a>
-            <a href="#how">How it works</a>
+            <a href="#problem">The problem</a>
+            <a href="#evidence">Evidence</a>
             <a href="#coverage">Coverage</a>
             <a href="#get-it">Install</a>
             <a className="cta" href="https://github.com/Neville777/Archietect">
@@ -41,17 +41,19 @@ export default function Page() {
         <section className="hero wrap">
           <div className="eyebrow">Deterministic · offline · no AI inside</div>
           <h1 className="headline">
-            The <span className="accent">memory</span>
+            The architectural
             <br />
-            your codebase
+            <span className="accent">memory</span> your
             <br />
-            never had
+            system never had
           </h1>
           <p className="sub">
-            Archietect is an evidence-backed record of what a codebase <b>is</b> — what
-            exists, what&rsquo;s canonical, who uses it, why it&rsquo;s shaped this way. One
-            engine, queried identically by CLI, REST, and MCP, so an AI agent, a human, and
-            a CI job stop independently reconstructing the same facts every single session.
+            Most systems know a lot about themselves — git knows what changed, Docker knows
+            what&rsquo;s running, the source tree knows what files exist. None of that is a
+            <b> memory</b> of the system. Archietect is: a persistent, evidence-backed record
+            of what exists, how it relates, and what remains unknown — queried identically by
+            CLI, REST, and MCP, so a human, an AI agent, and a CI job stop independently
+            rediscovering the same facts every single session.
           </p>
 
           <div className="install">
@@ -182,53 +184,72 @@ export default function Page() {
           </div>
         </section>
 
-        {/* ============================== SHEET 01 — PROBLEM ============================== */}
+        {/* ============================== SHEET 01 — THE PROBLEM ============================== */}
         <section className="sheet" id="problem">
           <div className="wrap">
             <div className="sheet-head">
               <span className="sheet-no">SHEET 01</span>
-              <h2>The rediscovery tax</h2>
+              <h2>The missing memory layer</h2>
             </div>
             <p className="sheet-kicker">
-              An independent account from Kiro, an AI coding agent, after using Archietect on
-              itself for the first time — commands run live, outputs real. The full write-up
-              is{" "}
-              <a href="https://github.com/Neville777/Archietect/blob/main/AI_AGENT_REPORT.md">
-                in the repo
-              </a>
-              .
+              Most systems know a lot about themselves. Git knows what changed. Docker knows
+              what&rsquo;s running. The source tree knows what files exist. None of that is
+              really a <b>memory</b> of the system.
             </p>
-            <div className="quotes">
+            <div className="prose">
+              <p>
+                Ask a new tool whether a particular service exists, what depends on it, or
+                whether something is actually being used, and it usually starts searching from
+                scratch. That works — it also means the same system gets rediscovered over and
+                over again. An AI agent searches the repository. A developer searches it again
+                later. A CI job builds its own representation. Each one produces a temporary
+                understanding and then throws most of it away.
+              </p>
+              <p>
+                <strong>
+                  The problem isn&rsquo;t that the information doesn&rsquo;t exist. The problem
+                  is that the system doesn&rsquo;t have a place where established knowledge
+                  about itself persists.
+                </strong>{" "}
+                That&rsquo;s the problem architectural memory is designed to address.
+              </p>
+            </div>
+
+            <div className="quotes" style={{ marginTop: "32px" }}>
               <blockquote>
                 &ldquo;Every time an AI agent starts a conversation, it knows nothing about the
                 project&hellip; the agent reads README.md, scans files one by one, builds a
                 mental model, and presents that model as if it were fact. The user cannot
                 verify it. It does not persist. Nothing accumulates.&rdquo;
-                <cite>Kiro — before Archietect</cite>
+                <cite>Kiro, an AI coding agent — before Archietect</cite>
               </blockquote>
               <blockquote>
                 &ldquo;That is the architectural state of the project — not my reconstruction
                 of it. It is reproducible. You can run the same command and get the same
                 answer. It does not evaporate when this conversation ends.&rdquo;
                 <cite>
-                  Kiro — after running <code>archietect doctor</code>
+                  Kiro — after running <code>archietect doctor</code>,{" "}
+                  <a href="https://github.com/Neville777/Archietect/blob/main/AI_AGENT_REPORT.md">
+                    full account in the repo
+                  </a>
                 </cite>
               </blockquote>
             </div>
           </div>
         </section>
 
-        {/* ============================== SHEET 02 — HOW IT WORKS ============================== */}
+        {/* ============================== SHEET 02 — SEARCH VS MEMORY ============================== */}
         <section className="sheet" id="how">
           <div className="wrap">
             <div className="sheet-head">
               <span className="sheet-no">SHEET 02</span>
-              <h2>How it answers</h2>
+              <h2>Search finds things. Memory keeps them.</h2>
             </div>
             <p className="sheet-kicker">
-              Every answer is ranked by evidence tier, never invented, and ends in one of four
-              verdicts — the same shape whether you&rsquo;re asking from a terminal or an AI is
-              asking on your behalf.
+              A conventional tool searches filenames and source code, finds something that
+              looks relevant, and leaves the consumer to decide what it means. Architectural
+              memory represents a concept as a resource and keeps the evidence with it — so the
+              answer to &ldquo;does this exist&rdquo; is never just a yes or no.
             </p>
 
             <div className="split">
@@ -320,11 +341,146 @@ export default function Page() {
           </div>
         </section>
 
-        {/* ============================== SHEET 03 — COVERAGE ============================== */}
-        <section className="sheet" id="coverage">
+        {/* ============================== SHEET 03 — EVIDENCE & RELATIONSHIPS ============================== */}
+        <section className="sheet" id="evidence">
           <div className="wrap">
             <div className="sheet-head">
               <span className="sheet-no">SHEET 03</span>
+              <h2>Evidence has to survive the query</h2>
+            </div>
+            <p className="sheet-kicker">
+              A memory that only stores conclusions isn&rsquo;t particularly trustworthy — it
+              needs to remember <em>why</em> the conclusion exists. A fact can be declared,
+              observed, derived, or inferred. Those aren&rsquo;t interchangeable, and a
+              relationship has the same problem as a concept does.
+            </p>
+            <div className="prose">
+              <p>
+                Suppose a system contains a dependency: an order service that depends on Redis.
+                That relationship needs its own evidence, separate from the two things it
+                connects — it might come from a Docker Compose definition, from configuration,
+                or from an observed connection. The existence of the order service and the
+                existence of Redis do not, by themselves, establish that dependency.
+              </p>
+              <p>
+                It&rsquo;s a small distinction, but it changes the shape of the memory. It
+                isn&rsquo;t just a collection of things — it&rsquo;s a representation of{" "}
+                <strong>things, relationships, and the evidence supporting both.</strong>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================== SHEET 04 — BOUNDARIES ============================== */}
+        <section className="sheet" id="boundaries">
+          <div className="wrap">
+            <div className="sheet-head">
+              <span className="sheet-no">SHEET 04</span>
+              <h2>A memory needs a boundary</h2>
+            </div>
+            <p className="sheet-kicker">
+              A memory system can become dangerous if it treats absence of evidence as evidence
+              of absence — and this matters most once it can observe more than source code. A
+              machine may contain documents, photos, and message stores alongside its
+              repositories. Knowing something exists doesn&rsquo;t mean it should be opened.
+            </p>
+            <div className="prose">
+              <p>
+                The documents domain can establish metadata about files without reading their
+                contents. The photos domain can establish metadata without looking at the
+                pixels. The messages domain can detect known local message stores (iMessage,
+                Signal, WhatsApp, Slack, Discord) without opening the underlying database. That
+                means Archietect can know <em>a message store exists</em> without ever claiming
+                to know what was said. That isn&rsquo;t a missing feature — it&rsquo;s an
+                intentional boundary, and it holds in both directions: if a photo has never been
+                inspected, Archietect cannot infer what&rsquo;s depicted in it. The memory
+                records the boundary instead of silently crossing it.
+              </p>
+            </div>
+            <div className="verdicts" style={{ marginTop: "28px" }}>
+              <div className="verdict-card" style={{ ["--v" as any]: "var(--accent)" }}>
+                <div className="label">Documents</div>
+                <p>Filename, extension, size, mtime. Content never read.</p>
+              </div>
+              <div className="verdict-card" style={{ ["--v" as any]: "var(--accent)" }}>
+                <div className="label">Photos</div>
+                <p>Same metadata contract. Pixels never inspected.</p>
+              </div>
+              <div className="verdict-card" style={{ ["--v" as any]: "var(--accent)" }}>
+                <div className="label">Messages</div>
+                <p>Store existence and mtime only. Nothing opened or queried.</p>
+              </div>
+              <div className="verdict-card" style={{ ["--v" as any]: "var(--accent)" }}>
+                <div className="label">Docker</div>
+                <p>Live running/stopped state — the one domain that shells out at all.</p>
+              </div>
+            </div>
+
+            <div className="tier" style={{ marginTop: "28px", gridTemplateColumns: "1fr" }}>
+              <div>
+                <span className="name">THE REGISTER</span>
+                <p className="desc" style={{ marginTop: "6px" }}>
+                  Once this exists, one query answers four questions together — what&rsquo;s
+                  known, what&rsquo;s not known, why it&rsquo;s not known, and what&rsquo;s
+                  allowed. If a domain is disabled, that explains a gap. If a concept is
+                  declared but never observed in use, that&rsquo;s a different kind of gap.
+                  <code style={{ marginLeft: "8px" }}>archietect register</code> — call it
+                  before trusting any <code>ABSENT</code>.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================== SHEET 05 — SCOPE & CONSUMERS ============================== */}
+        <section className="sheet" id="scope">
+          <div className="wrap">
+            <div className="sheet-head">
+              <span className="sheet-no">SHEET 05</span>
+              <h2>One memory, many consumers</h2>
+            </div>
+            <p className="sheet-kicker">
+              Before a system can tell you what it is, it needs some basis for deciding{" "}
+              <em>which</em> system you&rsquo;re talking about. Pointing a scanner at a parent
+              directory containing several independent repositories and treating the whole
+              thing as one project produces a false representation — so Archietect detects when
+              a location looks like a workspace of many projects and warns before treating it as
+              a single architectural scope. A genuine project root stays quiet; the scan itself
+              is never blocked.
+            </p>
+            <div className="prose">
+              <p>
+                Archietect isn&rsquo;t built as memory for one particular AI. Claude, Cursor,
+                Codex, a developer, a CI system, or a monitoring process can all query the same
+                persistent representation instead of each maintaining its own. If the system has
+                already established that three components depend on a particular service, every
+                consumer gets that same relationship rather than independently reconstructing
+                it.
+              </p>
+              <p>
+                <strong>AI is a client of the memory. The memory doesn&rsquo;t need AI to
+                exist.</strong>
+              </p>
+            </div>
+
+            <div className="diagram-wrap reveal" style={{ marginTop: "32px" }}>
+              <img src="/gui-demo.gif" alt="Archietect's GUI: overview with real hierarchy, a nested domain → file → concept drill-down, and the query tab answering a raw endpoint call." />
+              <div className="titleblock">
+                <span>
+                  <strong>FIG. 2</strong> — THE GUI, LIVE
+                </span>
+                <span>SAME ENGINE, THIRD TRANSPORT</span>
+                <span>ARCHIETECT / README.MD</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ============================== SHEET 06 — COVERAGE ============================== */}
+        <section className="sheet" id="coverage">
+          <div className="wrap">
+            <div className="sheet-head">
+              <span className="sheet-no">SHEET 06</span>
               <h2>Structural coverage</h2>
             </div>
             <p className="sheet-kicker">
@@ -368,11 +524,11 @@ export default function Page() {
           </div>
         </section>
 
-        {/* ============================== SHEET 04 — BENCHMARK ============================== */}
+        {/* ============================== SHEET 07 — BENCHMARK ============================== */}
         <section className="sheet" id="benchmark">
           <div className="wrap">
             <div className="sheet-head">
-              <span className="sheet-no">SHEET 04</span>
+              <span className="sheet-no">SHEET 07</span>
               <h2>The benchmark</h2>
             </div>
             <p className="sheet-kicker">
@@ -403,11 +559,11 @@ export default function Page() {
           </div>
         </section>
 
-        {/* ============================== SHEET 05 — GET IT ============================== */}
+        {/* ============================== SHEET 08 — GET IT ============================== */}
         <section className="sheet" id="get-it">
           <div className="wrap">
             <div className="sheet-head">
-              <span className="sheet-no">SHEET 05</span>
+              <span className="sheet-no">SHEET 08</span>
               <h2>Get it running</h2>
             </div>
             <p className="sheet-kicker">Three ways in, depending on how much terminal you want.</p>
