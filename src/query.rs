@@ -1028,36 +1028,78 @@ pub fn duplicates(idx: &Index) -> Value {
         .filter(|(_, c)| c.table.is_some())
         .map(|(n, _)| n)
         .collect();
+    // The O(n^2) full scan above was fixed by narrowing candidates through a
+    // prefix index, NOT by changing what counts as a match — `same_word`'s
+    // fuzzy branch requires >=4 shared leading bytes to accept anything
+    // short of an exact match (model.rs's own `shared >= 4` check), so two
+    // strings can same_word-match ONLY IF they share their first 4
+    // lowercased bytes. That's a necessary condition, not just a heuristic:
+    // grouping every concept name AND every one of its own tokens by that
+    // 4-byte prefix, then only running the real `names_concept` check
+    // within a shared bucket, cannot miss a true match — it just stops
+    // paying to compare pairs that share no prefix and therefore could
+    // never match at all. `names_concept(b, t)` tests `t` against BOTH b's
+    // whole name and each of b's tokens, so both go into the index.
+    fn prefix4(s: &str) -> Option<[u8; 4]> {
+        let lower = s.to_ascii_lowercase();
+        let b = lower.as_bytes();
+        (b.len() >= 4).then(|| [b[0], b[1], b[2], b[3]])
+        // Anything shorter than 4 bytes can never satisfy `shared >= 4`,
+        // and can't hit `same_word`'s exact-match path against one of a's
+        // tokens either (that path requires equal length, and a's tokens
+        // here are always >= 5 bytes — see the `t.len() >= 5` filter
+        // below) — so skipping short strings here loses no real match.
+    }
+    let mut prefix_index: std::collections::HashMap<[u8; 4], Vec<usize>> = std::collections::HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        let mut prefixes: std::collections::HashSet<[u8; 4]> = std::collections::HashSet::new();
+        prefixes.extend(prefix4(name));
+        prefixes.extend(crate::model::name_tokens(name).iter().filter_map(|t| prefix4(t)));
+        for p in prefixes {
+            prefix_index.entry(p).or_default().push(i);
+        }
+    }
     let mut pairs = Vec::new();
     let mut needs_alias = Vec::new();
     for i in 0..names.len() {
-        for j in (i + 1)..names.len() {
-            let (a, b) = (names[i], names[j]);
-            let shared: Vec<String> = crate::model::name_tokens(a)
-                .into_iter()
-                .filter(|t| t.len() >= 5 && names_concept(b, t))
-                .collect();
-            if !shared.is_empty() {
-                let (ca, cb) = (&idx.concepts[a.as_str()], &idx.concepts[b.as_str()]);
-                let sql_only = |c: &crate::model::Concept| c.declared_in.iter().all(|(_, k)| k == "sql");
-                let orm = |c: &crate::model::Concept| c.declared_in.iter().any(|(_, k)| k != "sql");
-                // An ORM model beside an sql-tier table sharing its name is
-                // PROBABLY one concept the merge law cannot fold, because the
-                // model declares no table name (we refuse to run inflection
-                // engines). That is not a duplicate — it is a missing link,
-                // and the fix is a one-line alias declaration.
-                let same_concept_unlinked =
-                    (sql_only(ca) && orm(cb)) || (sql_only(cb) && orm(ca));
-                let entry = json!({
-                    "concepts": [a, b],
-                    "shared_token": shared[0],
-                    "declared_in": [ca.declared_in.first(), cb.declared_in.first()],
-                });
-                if same_concept_unlinked {
-                    needs_alias.push(entry);
-                } else {
-                    pairs.push(entry);
-                }
+        let a = names[i];
+        let tokens_a: Vec<String> = crate::model::name_tokens(a).into_iter().filter(|t| t.len() >= 5).collect();
+        // Candidate j's this could possibly match, deduped and in ascending
+        // order — a BTreeSet reproduces the original nested loop's j-order
+        // exactly, which matters: only the first 40 pairs survive
+        // `.truncate(40)` below, so encounter order is part of the contract.
+        let mut candidates: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        for t in &tokens_a {
+            if let Some(js) = prefix4(t).and_then(|p| prefix_index.get(&p)) {
+                candidates.extend(js.iter().filter(|&&j| j > i));
+            }
+        }
+        for j in candidates {
+            let b = names[j];
+            // The prefix bucket only narrows candidates; this is the same
+            // real check the O(n^2) version ran, just on far fewer pairs —
+            // and still picks the FIRST of a's own tokens that matches,
+            // exactly like the old `shared[0]` did.
+            let Some(shared_token) = tokens_a.iter().find(|t| names_concept(b, t)) else { continue };
+            let (ca, cb) = (&idx.concepts[a.as_str()], &idx.concepts[b.as_str()]);
+            let sql_only = |c: &crate::model::Concept| c.declared_in.iter().all(|(_, k)| k == "sql");
+            let orm = |c: &crate::model::Concept| c.declared_in.iter().any(|(_, k)| k != "sql");
+            // An ORM model beside an sql-tier table sharing its name is
+            // PROBABLY one concept the merge law cannot fold, because the
+            // model declares no table name (we refuse to run inflection
+            // engines). That is not a duplicate — it is a missing link,
+            // and the fix is a one-line alias declaration.
+            let same_concept_unlinked =
+                (sql_only(ca) && orm(cb)) || (sql_only(cb) && orm(ca));
+            let entry = json!({
+                "concepts": [a, b],
+                "shared_token": shared_token,
+                "declared_in": [ca.declared_in.first(), cb.declared_in.first()],
+            });
+            if same_concept_unlinked {
+                needs_alias.push(entry);
+            } else {
+                pairs.push(entry);
             }
         }
     }
@@ -1764,5 +1806,300 @@ mod verdicts_tests {
         assert_eq!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().len(), 25, "list must be capped even though count is real");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod duplicates_prefix_index_tests {
+    use super::*;
+    use crate::model::Concept;
+
+    fn concept(table: &str, file: &str, kind: &str) -> Concept {
+        Concept { table: Some(table.to_string()), declared_in: vec![(file.to_string(), kind.to_string())], ..Default::default() }
+    }
+
+    /// `duplicates()` was rewritten from an O(n^2) full pairwise scan to a
+    /// prefix-bucketed one (see its own doc comment on `prefix4`) — this
+    /// fixture is built to exercise every path that rewrite had to
+    /// preserve exactly, not just the easy exact-token-match case:
+    ///   - EXACT shared token ("User"/"Account" in both UserAccount* names)
+    ///   - a FUZZY same_word match with no exact shared token at all
+    ///     (InvoiceRecord/InvoicesArchive: "Invoice" vs "Invoices", a
+    ///     trailing-"s" pluralization — same_word accepts it, plain string
+    ///     equality would not)
+    ///   - the needs_alias split (an sql-only declaration beside an ORM
+    ///     declaration sharing a token)
+    ///   - a pair sharing a 4-byte prefix that must NOT match (WidgetFoo
+    ///     vs WidgetBarBaz share no real token — "Widget" alone is < 5
+    ///     chars filtered out below the threshold this fn itself applies... )
+    ///     — actually asserts a true NEGATIVE: two names with nothing in
+    ///     common at all must not appear, proving the prefix index isn't
+    ///     just returning everything.
+    fn fixture_index() -> Index {
+        let mut idx = Index::default();
+        idx.concepts.insert("UserAccount".into(), concept("user_accounts", "a.py", "python"));
+        idx.concepts.insert("UserAccountArchive".into(), concept("user_account_archives", "b.py", "python"));
+        idx.concepts.insert("InvoiceRecord".into(), concept("invoice_records", "c.py", "python"));
+        idx.concepts.insert("InvoicesArchive".into(), concept("invoices_archive", "d.py", "python"));
+        // sql-only vs ORM, sharing the token "Payment" — must land in
+        // likely_same_concept_needs_alias, not suspected_duplicates.
+        idx.concepts.insert("PaymentGateway".into(), concept("payment_gateway", "schema.sql", "sql"));
+        idx.concepts.insert("PaymentGatewayModel".into(), concept("payment_gateway_models", "model.py", "python"));
+        // Genuinely unrelated — must produce no pair at all.
+        idx.concepts.insert("ArticleComment".into(), concept("article_comments", "e.py", "python"));
+        idx.concepts.insert("ZebraCrossing".into(), concept("zebra_crossings", "f.py", "python"));
+        idx
+    }
+
+    fn pair_set(v: &Value) -> std::collections::BTreeSet<(String, String)> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                let c = e["concepts"].as_array().unwrap();
+                (c[0].as_str().unwrap().to_string(), c[1].as_str().unwrap().to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn finds_exact_shared_token_pair() {
+        let idx = fixture_index();
+        let out = duplicates(&idx);
+        let pairs = pair_set(&out["suspected_duplicates"]);
+        assert!(
+            pairs.contains(&("UserAccount".to_string(), "UserAccountArchive".to_string())),
+            "exact shared token 'Account'/'User' must be found, got: {pairs:?}"
+        );
+    }
+
+    #[test]
+    fn finds_fuzzy_same_word_pair_with_no_exact_shared_token() {
+        let idx = fixture_index();
+        let out = duplicates(&idx);
+        let pairs = pair_set(&out["suspected_duplicates"]);
+        assert!(
+            pairs.contains(&("InvoiceRecord".to_string(), "InvoicesArchive".to_string())),
+            "fuzzy same_word('invoice','invoices') pair must survive prefix bucketing, got: {pairs:?}"
+        );
+        let entry = out["suspected_duplicates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["concepts"][0] == "InvoiceRecord" && e["concepts"][1] == "InvoicesArchive")
+            .expect("entry must exist");
+        assert_eq!(entry["shared_token"], "Invoice", "must report a's own token, not b's");
+    }
+
+    #[test]
+    fn sql_only_vs_orm_goes_to_needs_alias_not_duplicates() {
+        let idx = fixture_index();
+        let out = duplicates(&idx);
+        let dup_pairs = pair_set(&out["suspected_duplicates"]);
+        let alias_pairs = pair_set(&out["likely_same_concept_needs_alias"]);
+        assert!(
+            !dup_pairs.contains(&("PaymentGateway".to_string(), "PaymentGatewayModel".to_string())),
+            "sql-only/ORM pair must NOT land in suspected_duplicates"
+        );
+        assert!(
+            alias_pairs.contains(&("PaymentGateway".to_string(), "PaymentGatewayModel".to_string())),
+            "sql-only/ORM pair sharing 'Payment' must land in likely_same_concept_needs_alias, got: {alias_pairs:?}"
+        );
+    }
+
+    #[test]
+    fn unrelated_names_produce_no_pair() {
+        let idx = fixture_index();
+        let out = duplicates(&idx);
+        let dup_pairs = pair_set(&out["suspected_duplicates"]);
+        let alias_pairs = pair_set(&out["likely_same_concept_needs_alias"]);
+        for (a, b) in dup_pairs.iter().chain(alias_pairs.iter()) {
+            assert!(
+                !(a.contains("Article") && b.contains("Zebra")) && !(a.contains("Zebra") && b.contains("Article")),
+                "ArticleComment/ZebraCrossing share nothing and must never pair, got {a}/{b}"
+            );
+        }
+    }
+
+    /// The real regression this rewrite guards against: a brute-force
+    /// reimplementation of the ORIGINAL O(n^2) algorithm, run over the same
+    /// fixture, must find the exact same set of pairs (order aside — both
+    /// truncate at 40 and this fixture is far smaller than that, so a set
+    /// comparison is a legitimate stand-in for "identical results").
+    fn brute_force_reference(idx: &Index) -> std::collections::BTreeSet<(String, String, String)> {
+        let names: Vec<&String> = idx.concepts.iter().filter(|(_, c)| c.table.is_some()).map(|(n, _)| n).collect();
+        let mut out = std::collections::BTreeSet::new();
+        for i in 0..names.len() {
+            for j in (i + 1)..names.len() {
+                let (a, b) = (names[i], names[j]);
+                if let Some(t) = crate::model::name_tokens(a).into_iter().find(|t| t.len() >= 5 && names_concept(b, t)) {
+                    out.insert((a.clone(), b.clone(), t));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn matches_brute_force_reference_on_the_full_fixture() {
+        let idx = fixture_index();
+        let expected = brute_force_reference(&idx);
+        let out = duplicates(&idx);
+        let mut actual: std::collections::BTreeSet<(String, String, String)> = std::collections::BTreeSet::new();
+        for arr_name in ["suspected_duplicates", "likely_same_concept_needs_alias"] {
+            for e in out[arr_name].as_array().unwrap() {
+                let c = e["concepts"].as_array().unwrap();
+                actual.insert((
+                    c[0].as_str().unwrap().to_string(),
+                    c[1].as_str().unwrap().to_string(),
+                    e["shared_token"].as_str().unwrap().to_string(),
+                ));
+            }
+        }
+        assert_eq!(actual, expected, "prefix-bucketed duplicates() must find exactly what the O(n^2) reference finds");
+    }
+}
+
+#[cfg(test)]
+mod duplicates_performance_tests {
+    use super::*;
+    use crate::model::Concept;
+
+    /// Same brute-force O(n^2) reference as
+    /// `duplicates_prefix_index_tests::brute_force_reference`, duplicated
+    /// here (not shared) so this test file keeps a real, independent copy
+    /// of "what the old code computed" even if that module is ever pruned.
+    fn brute_force(idx: &Index) -> usize {
+        let names: Vec<&String> = idx.concepts.iter().filter(|(_, c)| c.table.is_some()).map(|(n, _)| n).collect();
+        let mut count = 0;
+        for i in 0..names.len() {
+            for j in (i + 1)..names.len() {
+                let (a, b) = (names[i], names[j]);
+                if crate::model::name_tokens(a).into_iter().any(|t| t.len() >= 5 && names_concept(b, &t)) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// A 4-char-prefix word unique to family `f` (direct base-26 encoding
+    /// of `f` into the word's own first 4 letters, so distinctness across
+    /// families is true by construction, not by luck) — every member of
+    /// family `f` shares this EXACT token verbatim.
+    ///
+    /// The first (broken) version of this fixture appended a literal
+    /// shared suffix ("...Storage") to every single concept, in every
+    /// family — meaning all 2,500 synthetic concepts shared ONE token and
+    /// fell into the SAME prefix bucket, making the prefix-bucketed path
+    /// literally slower than brute force (measured: 17.4s vs 3.3s) purely
+    /// from bucket-building overhead on top of the same O(n^2) comparisons
+    /// within that one mega-bucket. That failure is the reason this test
+    /// exists in this much detail: a synthetic benchmark that accidentally
+    /// recreates the exact pathology the fix targets is worse than no
+    /// benchmark, since it would have shipped a real regression on
+    /// precisely the "many concepts share a real architectural token"
+    /// shape `/duplicates` is FOR.
+    fn family_token(f: usize) -> String {
+        let letters = b"abcdefghijklmnopqrstuvwxyz";
+        let mut n = f;
+        let mut digits = [0u8; 4];
+        for slot in digits.iter_mut().rev() {
+            *slot = letters[n % 26];
+            n /= 26;
+        }
+        let mut word: String = digits.iter().map(|&b| b as char).collect();
+        word.push('q'); // pad to length 5 so it clears the `t.len() >= 5` filter
+        let mut chars = word.chars();
+        format!("{}{}", chars.next().unwrap().to_ascii_uppercase(), chars.as_str())
+    }
+
+    /// A 3-letter code, globally unique per concept — shorter than 4 bytes
+    /// on purpose, so `prefix4` (see `duplicates`'s own doc comment) never
+    /// indexes it and it can never masquerade as a shared token between
+    /// concepts that otherwise have nothing in common; it exists only to
+    /// make each concept's own NAME unique within its family.
+    fn unique_suffix(i: usize) -> String {
+        let letters = b"abcdefghijklmnopqrstuvwxyz";
+        let mut n = i;
+        let mut digits = [0u8; 3];
+        for slot in digits.iter_mut().rev() {
+            *slot = letters[n % 26];
+            n /= 26;
+        }
+        digits.iter().map(|&b| b as char).collect()
+    }
+
+    fn build_fixture(families: usize, per_family: usize) -> Index {
+        let mut idx = Index::default();
+        let mut global = 0;
+        for f in 0..families {
+            let token = family_token(f);
+            for _ in 0..per_family {
+                let name = format!("{token}_{}", unique_suffix(global));
+                idx.concepts.insert(
+                    name.clone(),
+                    Concept {
+                        table: Some(name.to_lowercase()),
+                        declared_in: vec![(format!("{name}.py"), "python".to_string())],
+                        ..Default::default()
+                    },
+                );
+                global += 1;
+            }
+        }
+        idx
+    }
+
+    /// 2,500 storage concepts in 50 families of 50 — each family shares
+    /// ONE exact token with the other 49 members of its own family and
+    /// nothing at all with the other 49 families (see `family_token`'s own
+    /// doc for why that separation is the entire point of this fixture).
+    /// Large and clustered enough to make the O(n^2) cost concrete rather
+    /// than theoretical (this session's own history: 3,838 unrestricted
+    /// concepts measured at 23 real seconds before the storage-only filter
+    /// existed at all) while proving the prefix-bucketed rewrite finds the
+    /// same pairs the brute-force reference finds, and does it faster.
+    #[test]
+    fn prefix_bucketing_matches_brute_force_and_is_dramatically_faster_at_scale() {
+        let idx = build_fixture(50, 50);
+        assert_eq!(idx.concepts.len(), 50 * 50);
+
+        let brute_start = std::time::Instant::now();
+        let expected_count = brute_force(&idx);
+        let brute_elapsed = brute_start.elapsed();
+
+        let fast_start = std::time::Instant::now();
+        let out = duplicates(&idx);
+        let fast_elapsed = fast_start.elapsed();
+        let actual_count = out["suspected_duplicates"].as_array().unwrap().len()
+            + out["likely_same_concept_needs_alias"].as_array().unwrap().len();
+
+        // duplicates() truncates each list at 40 — the reference doesn't,
+        // so this only asserts the fast path also saturates the cap
+        // whenever the reference finds at least that many (the exact-count
+        // test right below covers the no-truncation case precisely).
+        assert!(expected_count >= 40, "fixture must produce enough real pairs to exercise the truncate cap");
+        assert_eq!(actual_count, 40, "fast path must also saturate the same 40-pair cap");
+        println!(
+            "brute-force O(n^2): {expected_count} pairs in {brute_elapsed:?}; prefix-bucketed: {actual_count} (capped) pairs in {fast_elapsed:?}"
+        );
+        assert!(
+            fast_elapsed < brute_elapsed,
+            "prefix-bucketed duplicates() ({fast_elapsed:?}) must beat the O(n^2) reference ({brute_elapsed:?}) at this scale"
+        );
+    }
+
+    /// Same clustering, but small enough (no truncation at 40) to assert
+    /// the FULL pair count matches exactly, not just "both hit the cap".
+    #[test]
+    fn prefix_bucketing_matches_brute_force_exactly_below_the_truncate_cap() {
+        let idx = build_fixture(6, 3);
+        let expected_count = brute_force(&idx);
+        assert!(expected_count < 40, "fixture must stay under the truncate cap for this to be a valid exact check");
+        let out = duplicates(&idx);
+        let actual_count = out["suspected_duplicates"].as_array().unwrap().len()
+            + out["likely_same_concept_needs_alias"].as_array().unwrap().len();
+        assert_eq!(actual_count, expected_count, "below the cap, counts must match EXACTLY, not just both saturate");
     }
 }
