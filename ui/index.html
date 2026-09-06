@@ -44,6 +44,7 @@
   <button data-tab="drift" onclick="show('drift')">drift</button>
   <button data-tab="laws" onclick="show('laws')">laws</button>
   <button data-tab="memory" onclick="show('memory')" title="every file archietect currently holds facts for — persistent, not tied to an in-flight scan">memory</button>
+  <button data-tab="query" onclick="show('query')" title="owner, impact, guard, plan, tour, verdicts, register, permissions, docker observe, documents/photos/messages scan — CLI/MCP-only elsewhere">query</button>
   <span id="timer" class="muted" style="margin-left:auto; align-self:center;"></span>
   <button id="reload" onclick="reload()" title="re-fetch the current tab">⟳ reload</button>
 </nav>
@@ -118,7 +119,24 @@ window.addEventListener('unhandledrejection', e => showErr(`unhandled promise re
 function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); }
 
 let progressTimer = null;
+// Separate from isCurrentLoad(gen): that answers "does this generation
+// still own #out", which stays TRUE for the whole window between a load
+// starting and the NEXT one starting — including the moment right after
+// the load's own real content has already rendered. A `/scan-progress`
+// poll already in flight when that happens (dispatched the instant
+// startProgressPolling was called, same generation, nothing superseded it
+// yet) can still resolve afterward and, since isCurrentLoad(gen) alone
+// says nothing changed, overwrite the just-rendered real content with a
+// stale "finishing up" — found live switching tabs mid-query: `/doctor`
+// happened to resolve before that tab's own `/scan-progress` tick did,
+// and the poll's late arrival clobbered the already-correct overview
+// screen. clearInterval only stops FUTURE ticks; it does nothing about
+// one already awaiting a response. This flag is what actually closes
+// that window — poll() checks it fresh every time its own await resolves,
+// not just once when it was dispatched.
+let progressPollingActive = false;
 function stopProgressPolling(){
+  progressPollingActive = false;
   if (progressTimer){ clearInterval(progressTimer); progressTimer = null; }
 }
 // Flat relative paths -> a nested {dirs, files} tree, rendered as an
@@ -213,9 +231,15 @@ function setScrollPreserved(elId, html){
 // project-by-project effort than one UI fix covers.
 function startProgressPolling(gen, signal, started){
   stopProgressPolling();
+  progressPollingActive = true;
   const poll = async () => {
     const d = await api('/scan-progress', '', signal).catch(() => null);
-    if (!isCurrentLoad(gen)) return; // superseded — a newer load owns #out now
+    // Both checks are load-bearing, and check different things: isCurrentLoad
+    // catches a NEWER load starting; progressPollingActive catches THIS
+    // load already finishing (stopProgressPolling ran) before this one
+    // in-flight request got its answer back — see progressPollingActive's
+    // own doc comment for why isCurrentLoad alone misses that case.
+    if (!progressPollingActive || !isCurrentLoad(gen)) return;
     if (!d || d.total == null || d.total === 0) return;
     if (d.done >= d.total) {
       $('out').innerHTML = `<span class="muted">loading… finishing up (${fmtDuration(performance.now() - started)} so far — the file scan is done; this is the query itself still running)</span>`;
@@ -263,10 +287,22 @@ async function show(name){
   $('out').innerHTML = '<span class="muted">loading…</span>';
   $('timer').textContent = '';
   const started = performance.now();
-  startProgressPolling(gen, signal, started);
-  startLiveTimer(gen, started);
+  // "query" renders its own endpoint-picker form synchronously — there is
+  // no scan in flight yet to poll for (that only starts once "run" is
+  // clicked; see runQuery(), which starts its own polling/timer then).
+  // Starting the poller here anyway would race its own first tick against
+  // a render with no `await` in it at all, which the poller always wins
+  // (any real fetch outlasts code that yields control to nothing) —
+  // clobbering the freshly-rendered form the instant that first tick
+  // resolves with whatever this root's scan progress happened to already
+  // say (typically "done", left in place by an earlier tab's real scan;
+  // see rest.rs's own doc on why a finished scan stays recorded).
+  if (name !== 'query') {
+    startProgressPolling(gen, signal, started);
+    startLiveTimer(gen, started);
+  }
   try {
-    await ({overview, timeline, drift, laws, memory})[name](gen, signal);
+    await ({overview, timeline, drift, laws, memory, query})[name](gen, signal);
   } finally {
     // Only the load that's still current gets to stop polling/timer and
     // report a final time — see the "Load ownership" note above `startLoad`.
@@ -611,6 +647,86 @@ async function memory(gen, signal){
   $('out').innerHTML = `
     <h3>known files <span class="muted">(${files.length} — everything this warm index currently holds facts for, whether or not a scan is running right now — click one to see what it declares)</span></h3>
     <div style="max-height:500px; overflow:auto;">${tree}</div>`;
+}
+
+// Every endpoint below is otherwise CLI/MCP-only — no dedicated tab renders
+// any of them, and giving each one its own bespoke view is a lot of UI for
+// data nobody's asked to browse yet. This tab is the minimum real bar
+// instead: pick one, run it, read the actual JSON — better than "you can't
+// see this from the GUI at all". `param: null` disables the argument box
+// for endpoints that take none.
+const QUERY_ENDPOINTS = {
+  'owner':          { ep: '/owner',          param: 'q',   placeholder: 'concept or term' },
+  'impact':         { ep: '/impact',         param: 'q',   placeholder: 'concept or term' },
+  'guard':          { ep: '/guard',          param: 'sql', placeholder: 'CREATE TABLE ...' },
+  'plan':           { ep: '/plan',           param: 'q',   placeholder: 'goal, e.g. add invoicing' },
+  'tour':           { ep: '/tour',           param: null },
+  'verdicts':       { ep: '/verdicts',       param: null },
+  'register':       { ep: '/register',       param: null },
+  'permissions':    { ep: '/permissions',    param: null },
+  'docker observe': { ep: '/docker/observe', param: null },
+  'documents scan': { ep: '/documents/scan', param: 'dir', placeholder: '/absolute/path to scan' },
+  'photos scan':    { ep: '/photos/scan',    param: 'dir', placeholder: '/absolute/path to scan' },
+  'messages scan':  { ep: '/messages/scan',  param: null },
+};
+
+function updateQueryPlaceholder(){
+  const spec = QUERY_ENDPOINTS[$('queryEndpoint').value];
+  const input = $('queryArg');
+  input.disabled = !spec.param;
+  input.placeholder = spec.param ? spec.placeholder : '(no argument needed)';
+  if (!spec.param) input.value = '';
+}
+
+// This tab's own #out just holds the picker — nothing to fetch until the
+// user picks an endpoint and clicks run, unlike every other tab here.
+async function query(gen, signal){
+  const opts = Object.keys(QUERY_ENDPOINTS).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+  $('out').innerHTML = `
+    <h3>run a query <span class="muted">(every endpoint below is CLI/MCP-only elsewhere — this reads the raw JSON straight back)</span></h3>
+    <div><select id="queryEndpoint" onchange="updateQueryPlaceholder()">${opts}</select>
+    <input id="queryArg" size="40"> <button onclick="runQuery()">run</button></div>
+    <div id="queryResult" class="card" style="margin-top:.6rem;"></div>`;
+  updateQueryPlaceholder();
+}
+
+// Triggered by the "run" button, not a tab switch — same
+// startLoad/isCurrentLoad contract show() itself uses (see the "Load
+// ownership" note near the top of this file), just entered from a button
+// instead of nav, since most of QUERY_ENDPOINTS (owner/impact/guard/plan/
+// tour/verdicts/register) are real INDEX_ENDPOINTS that scan like any
+// other tab load — they deserve the same progress bar and live timer any
+// other tab-triggered scan gets, not a bare "loading…" with no feedback.
+async function runQuery(){
+  const spec = QUERY_ENDPOINTS[$('queryEndpoint').value];
+  const arg = $('queryArg').value.trim();
+  const { gen, signal } = startLoad();
+  const resultEl = $('queryResult');
+  resultEl.innerHTML = '<span class="muted">loading…</span>';
+  $('timer').textContent = '';
+  const started = performance.now();
+  // NOT startProgressPolling(): it unconditionally replaces the WHOLE
+  // #out on every tick (every other tab's own render does too, so
+  // whichever wins is still self-consistent) — this tab keeps the picker
+  // form persistent and only updates the nested #queryResult div, so a
+  // poll tick winning the race would wipe out the form along with it, not
+  // just the stale result. The live timer writes to the separate #timer
+  // element instead, which has no such conflict, and is real feedback on
+  // its own for a single ad-hoc lookup like this.
+  startLiveTimer(gen, started);
+  try {
+    const extra = spec.param && arg ? `&${spec.param}=${encodeURIComponent(arg)}` : '';
+    const d = await api(spec.ep, extra, signal);
+    if (!isCurrentLoad(gen)) return; // superseded — another run/tab switch owns #out now
+    resultEl.innerHTML = d.error
+      ? `<span class="bad">${esc(d.error)}</span>`
+      : `<pre>${esc(JSON.stringify(d, null, 2))}</pre>`;
+  } finally {
+    if (isCurrentLoad(gen)) {
+      stopLiveTimer();
+      $('timer').textContent = `loaded in ${fmtDuration(performance.now() - started)}`;
+    }
+  }
 }
 
 // A ?root= query param (set by `archietect gui /path/to/project`) wins
