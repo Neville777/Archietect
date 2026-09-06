@@ -246,6 +246,20 @@ Linux, `launchd` on macOS) so the index stays warm and architectural events
 are recorded to history as they happen, instead of being recomputed cold on
 every query.
 
+**Option D — desktop app**, no terminal at all: `archietect-desktop` is a
+native window wrapper around the same `archietect serve` + `ui/index.html`
+every other client uses (see `desktop/src-tauri/src/lib.rs`'s own module
+doc — no separate business logic lives there). A tagged release's GitHub
+Release page carries a `.deb`/`.rpm` for Linux, `.dmg` for macOS, and
+`.msi` for Windows — download the one for your OS and install it like any
+other app. Until a release with those attached exists, build it yourself:
+
+```bash
+git clone git@github.com:Neville777/Archietect.git archietect && cd archietect/desktop
+cargo install tauri-cli --version "^2" --locked   # once
+cargo tauri build                                 # produces an installer under src-tauri/target/release/bundle/
+```
+
 ## Usage
 
 From inside any onboarded project — no `--root` needed, it walks upward
@@ -300,6 +314,11 @@ Full command reference:
 | CLI | scripting, terminal, CI | `archietect <cmd>` |
 | REST | GUI, dashboards, anything HTTP-shaped | `archietect serve --port 7373` (127.0.0.1 only) |
 | MCP | every AI coding tool | `archietect mcp` (stdio) |
+
+REST has two front doors onto the same server: `archietect gui` opens your
+default browser to it, and `archietect-desktop` (Installation, Option D)
+wraps it in a native window instead — same port-search-and-serve, same
+`ui/index.html`, no browser tab or terminal required either way.
 
 Long-running processes (MCP, REST, `watch`) detect if the binary on disk has
 been rebuilt out from under them since they started, and return a
