@@ -25,6 +25,7 @@
 //!   GET /concept?q=invoice[&root=/path]      GET /doctor
 //!   GET /intent?q=add+invoicing              GET /tour
 //!   GET /impact?q=payments                   GET /duplicates
+//!   GET /duplicate-logic (suspected duplicate BUSINESS LOGIC across files/languages — see query::duplicate_logic)
 //!   GET /imports?file=src/foo.ts (exact relative-import edges only)
 //!   GET /owner?q=invoice                     GET /status
 //!   GET /guard?sql=CREATE+TABLE+...          GET /laws
@@ -391,7 +392,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 /// as one-off hand-rolled cache peeks with duplicated logic).
 const INDEX_ENDPOINTS: &[&str] = &[
     "/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-    "/status", "/doctor", "/tour", "/duplicates", "/verdicts", "/ci", "/register",
+    "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts", "/ci", "/register",
     "/known-files", "/declaration-files", "/file-concepts",
 ];
 
@@ -414,6 +415,7 @@ fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path
         "/doctor" => query::doctor(idx, graph, root),
         "/tour" => query::tour(idx, graph),
         "/duplicates" => query::duplicates(idx),
+        "/duplicate-logic" => query::duplicate_logic(graph),
         "/verdicts" => query::verdicts(idx),
         "/ci" => query::ci(
             idx,
@@ -890,7 +892,7 @@ fn handle_request(
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-                                          "/status", "/doctor", "/tour", "/duplicates", "/verdicts",
+                                          "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts",
                                           "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
                                           "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe",

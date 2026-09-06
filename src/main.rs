@@ -87,6 +87,12 @@ enum Cmd {
     Tour,
     /// Suspected duplicate concepts (name-token overlap — risk, not proof)
     Duplicates,
+    /// Suspected duplicate BUSINESS LOGIC — two functions in different
+    /// files/languages sharing no name but independently encoding the same
+    /// rule, evidenced by shared literal string values. See
+    /// src/query.rs::duplicate_logic for how this differs from `duplicates`
+    /// above (concept-name overlap vs function-BEHAVIOR overlap).
+    DuplicateLogic,
     /// Every declared concept bucketed by verdict (ACTIVE vs DECLARED_ONLY)
     /// instead of querying one name at a time. See src/query.rs::verdicts
     /// for why UNKNOWN/ABSENT are deliberately not listable here.
@@ -537,6 +543,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
+        Cmd::DuplicateLogic => { let (_idx, g) = index_for(&root); query::duplicate_logic(&g) }
         Cmd::Verdicts => { let (idx, _g) = index_for(&root); query::verdicts(&idx) }
         Cmd::Owner { term } => { let (idx, g) = index_for(&root); query::owner(&idx, &g, &term) }
         Cmd::History { concept, limit, include_archived: _, digest } if digest => {

@@ -202,6 +202,23 @@ declared routes by path, path-parameter-aware (`/orders/{id}` matches
 `f"/orders/{order_id}"`) — surfaced as `route_call_dependents` in `impact()`
 and as `Used`-tier evidence in `concept()`'s STRUCTURAL verdict.
 
+**Duplicate business logic (`archietect duplicate-logic`):** `duplicates()`
+catches redundant CONCEPTS by name/schema overlap; it has no way to catch two
+functions that encode the *same rule* under completely different names with
+no shared import edge (`updateCandidateStage` in one service, `moveStageTo`
+in another, both hard-coding the same status-string transitions). This walks
+every top-level function body (TS/JS/Rust/Python) for its literal string
+constants and flags cross-file pairs sharing several of them — evidence of
+risk, not proof of duplication. Tuned against a real 1492-file production
+repo, not guessed: a naive 4-character literal floor produced ~4,000
+suspected pairs, almost all noise from generic JSON field names ("name",
+"note") recurring across unrelated handlers. Raising the floor to 10
+characters, excluding CSS color values (design tokens, not logic), and
+capping how many functions a single literal may appear in before it's
+treated as boilerplate (15, not 50) cut that to a shortlist dominated by real
+duplicated logic — e.g. two independently written "repair" functions in
+different files sharing a dozen identical error-message strings.
+
 ## Prerequisites
 
 - No Rust toolchain needed if using a prebuilt binary (below).
@@ -328,6 +345,7 @@ archietect status             # what's declared, used, and — per coverage — 
 archietect concept <name>     # does X exist, where, what's the evidence
 archietect impact <name>      # what breaks if X changes
 archietect duplicates         # suspected redundant concepts, before you add a new one
+archietect duplicate-logic    # suspected duplicate BUSINESS LOGIC across files/languages
 ```
 
 Full command reference:
@@ -345,6 +363,7 @@ Full command reference:
 | `archietect doctor --root DIR` | repository summary for someone who just cloned it |
 | `archietect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
 | `archietect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
+| `archietect duplicate-logic --root DIR` | suspected duplicate business logic across files/languages — risk, not proof |
 | `archietect verdicts --root DIR` | every declared concept bucketed by verdict (ACTIVE vs DECLARED_ONLY), project-wide |
 | `archietect register --root DIR [--since-last]` | the map of the bag: what's known, not known, and why — see below |
 | `archietect history --root DIR [TERM] [--digest]` | the architectural timeline (what git can't say); `--digest` narrates it instead of listing raw events |

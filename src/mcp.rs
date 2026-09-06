@@ -245,6 +245,11 @@ fn tool_defs_inner() -> Value {
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
+            "name": "duplicate_logic",
+            "description": "Suspected duplicate BUSINESS LOGIC: two top-level functions in DIFFERENT files (often different languages), sharing no name worth acting on and no import/call edge, that independently encode the same rule — evidenced by sharing several literal string values (status names, error messages) inside their bodies. Different question from `duplicates` (concept-NAME overlap): this finds behavior reimplemented under a completely unrelated name, e.g. a server's validation logic quietly drifting from a client's copy of the same rule. Evidence of risk, not proof.",
+            "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
             "name": "verdicts",
             "description": "Every declared concept bucketed by verdict — ACTIVE (declared and observably used) vs DECLARED_ONLY (declared, never observed in use) — with counts, instead of querying one concept name at a time. UNKNOWN and ABSENT are deliberately not listable here: those describe a search TERM's outcome, not a property a declared concept holds on its own.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -512,6 +517,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
+                            "duplicate_logic" => query::duplicate_logic(&graph),
                             "verdicts" => query::verdicts(&idx),
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),

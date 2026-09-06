@@ -327,6 +327,314 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
     }
 }
 
+/// One top-level function's own literal-string "fingerprint" — the distinct
+/// string literals it contains, not its full body text or behavior. Found
+/// investigating a real reported case: `updateCandidateStage` (a Node/JS
+/// backend) and `moveCandidateToStage` (a TypeScript frontend) independently
+/// reimplement the same stage-derivation business rule — same decisions,
+/// same status strings, completely different function names and no shared
+/// import or call edge, so NOTHING this engine had before this could ever
+/// connect them: not the schema-usage matchers (no ORM/schema concept
+/// involved at all), not `structural_dependents` (no import edge — they're
+/// independent reimplementations, not one calling the other), not
+/// `duplicates()` (that compares CONCEPT names sharing a token, not
+/// arbitrary function names, and these two functions' names don't even
+/// share one: "update"/"stage" vs "move"/"to"/"stage" is the ONLY overlap,
+/// too thin and too generic to mean anything on its own).
+///
+/// The literal strings inside two such functions are real, checkable
+/// evidence a name comparison can never see: two functions that both
+/// compare against the literal string `"Passed Screening"` are provably
+/// encoding the same business rule, regardless of what either function or
+/// its file is called. This is the exact same "shared token implies
+/// possible duplication — risk, not proof" shape `duplicates()` already
+/// uses for concept names, applied to function bodies instead of names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionBody {
+    pub file: String,
+    pub name: String,
+    /// Sorted, deduplicated. Short/trivial literals are filtered at
+    /// extraction time (see `extract_function_bodies`'s own doc) — this is
+    /// never the function's full literal population, only the ones long
+    /// enough to mean something as evidence.
+    pub literals: Vec<String>,
+}
+
+/// String literals inside `body`, filtered to ones actually meaningful as
+/// duplicate-logic evidence (see the length floor and color exclusion
+/// inline below, both tuned against a real repo, not guessed). Deliberately
+/// NOT filtering by "looks like a status value" or any other guess at what
+/// the literal MEANS — that would be exactly the kind of invented semantic
+/// judgment this engine's whole design avoids; length and "is this a CSS
+/// color" are objective, checkable properties, "probably an enum-like
+/// business value" is not.
+/// `ext` gates whether single-quoted strings count as literals. Rust has no
+/// multi-char single-quoted string syntax — `'` there is either a 1-char
+/// char literal or an unmatched lifetime marker like `&'static`/`'a`. Verified
+/// against a real repo: treating `'` as a string delimiter in Rust paired a
+/// lifetime's opening quote with an unrelated apostrophe much later in the
+/// same function (a comment like "the polygon's rings", or a `''` empty-string
+/// SQL literal), capturing everything between as a fake "shared literal".
+///
+/// The boundary regex matches a string's full content (any length, with
+/// `\\.` so an escaped quote doesn't end it early) and the 4-char floor is
+/// applied AFTERWARD as a filter, not baked into the match itself. Also
+/// verified against a real repo: with the floor inside the regex (`{4,}?`),
+/// a literal shorter than 4 chars (e.g. `"id"`) can't match at its own
+/// quotes, so the engine skipped past it and matched from the NEXT open
+/// quote onward instead — capturing the source code between two adjacent
+/// short literals (e.g. `: r.try_get::<i64, _>(` between two `"id"` calls)
+/// as a fake shared "literal" purely because nearby functions had
+/// similar-shaped boilerplate, not because they shared any real string
+/// constant.
+fn literals_in(body: &str, ext: &str) -> Vec<String> {
+    // `\\[\s\S]` (not `\\.`) — the regex crate's `.` excludes `\n` by
+    // default, and a Rust string can contain a real backslash-newline
+    // continuation (`"SELECT ... \` at end of line). With `\\.` that
+    // continuation matched neither alternative, so the match failed at
+    // that string's own quotes and slid forward to some unrelated later
+    // quote instead — merging the code between two real strings into one
+    // bogus "literal". Verified against a real repo (a multi-line SQL
+    // query built this way) before this fix landed.
+    let re = if ext == "rs" {
+        Regex::new(r#""((?:[^"\\]|\\[\s\S])*)""#).unwrap()
+    } else {
+        Regex::new(r#"'((?:[^'\\]|\\[\s\S])*)'|"((?:[^"\\]|\\[\s\S])*)""#).unwrap()
+    };
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for cap in re.captures_iter(body) {
+        let s = cap.get(1).or_else(|| cap.get(2)).unwrap().as_str();
+        // Floor of 10, not 4: verified against a real 1492-file repo that a
+        // 4-char floor (matching JSON-shaped field names like "name"/"note"/
+        // "id") let near-unrelated functions pair up on shared vocabulary —
+        // 3946 suspected-duplicate pairs, almost all noise. Raising the floor
+        // to 10 cut that to ~100 pairs dominated by real shared business
+        // strings (SQL fragments, distinctive error messages, event-status
+        // names) rather than generic short field names.
+        if s.len() >= 10 && !looks_like_color_literal(s) {
+            out.insert(s.to_string());
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// A CSS color value (`#rrggbb` or `rgb(...)`/`rgba(...)`) is a design
+/// token, not business logic — verified against a real repo where two
+/// unrelated "status color" UI components recurred across dozens of pairs
+/// purely because they drew from the same small traffic-light palette.
+fn looks_like_color_literal(s: &str) -> bool {
+    let is_hex = s.starts_with('#')
+        && matches!(s.len(), 4 | 5 | 7 | 9)
+        && s[1..].chars().all(|c| c.is_ascii_hexdigit());
+    is_hex || s.starts_with("rgb(") || s.starts_with("rgba(")
+}
+
+/// Finds the matching closing brace for the `{` at-or-after `start` in
+/// `text`, returning the byte range of everything BETWEEN the braces
+/// (excluding both). Tracks string-literal contents separately so a quote
+/// mark or brace-like character INSIDE a string can't desynchronize the
+/// depth count — found necessary immediately: a function body containing
+/// `"{"` as a literal (entirely plausible — JSON-shaped strings are common)
+/// would otherwise close the scan early. Doesn't need a real parser's
+/// escape-sequence table to do this well: skipping over anything between
+/// two matching quote characters is enough for the vast majority of real
+/// code, and this is a bounded heuristic feeding a "risk, not proof"
+/// signal, not a correctness-critical parse.
+///
+/// `ext == "rs"` disables `'` as a string-open character, for the same
+/// reason as `literals_in`: verified against a real repo that a Rust
+/// lifetime (`&'static`) or lone apostrophe (a comment like "the polygon's
+/// rings") was being treated as opening a string with no real closing
+/// quote, which swallowed the depth count until some unrelated later `'`
+/// happened to appear — letting the scan run past the function's real
+/// closing `}` into unrelated code and pull unrelated functions' text into
+/// the extracted "body".
+fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let open = start + text[start..].find('{')?;
+    let mut depth = 0i32;
+    let mut i = open;
+    let mut in_string: Option<u8> = None;
+    let quote_chars: &[u8] = if ext == "rs" { b"\"`" } else { b"'\"`" };
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_string {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                in_string = None;
+            }
+        } else {
+            match b {
+                b if quote_chars.contains(&b) => in_string = Some(b),
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((open + 1, i));
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Top-level function bodies, for the duplicate-logic signal `RouteCall`'s
+/// own sibling comment describes. TS/JS and Rust use `brace_body_span`
+/// (both are brace-delimited); Python's body is bounded by indentation
+/// instead, matched separately below. Reuses the EXACT same function-start
+/// patterns already used to find declarations for the symbol index — this
+/// is deliberately not a second, independent guess at "what counts as a
+/// function" that could quietly drift from what `extract_ts_js`/`extract_py`/
+/// `extract_rs` already decided.
+fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<FunctionBody>) {
+    match ext {
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" | "vue" => {
+            let decl_re = Regex::new(
+                r"(?m)^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)"
+            ).unwrap();
+            for cap in decl_re.captures_iter(text) {
+                let end = cap.get(0).unwrap().end();
+                if let Some((s, e)) = brace_body_span(text, end, ext) {
+                    let literals = literals_in(&text[s..e], ext);
+                    if !literals.is_empty() {
+                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                    }
+                }
+            }
+            let const_re = Regex::new(
+                r"(?m)^(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
+            ).unwrap();
+            for cap in const_re.captures_iter(text) {
+                let end = cap.get(0).unwrap().end();
+                if let Some((s, e)) = brace_body_span(text, end, ext) {
+                    let literals = literals_in(&text[s..e], ext);
+                    if !literals.is_empty() {
+                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                    }
+                }
+            }
+        }
+        "rs" => {
+            let re = Regex::new(r"(?m)^pub\s+(?:async\s+)?fn\s+([a-z_][A-Za-z0-9_]*)").unwrap();
+            for cap in re.captures_iter(text) {
+                let end = cap.get(0).unwrap().end();
+                if let Some((s, e)) = brace_body_span(text, end, ext) {
+                    let literals = literals_in(&text[s..e], ext);
+                    if !literals.is_empty() {
+                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                    }
+                }
+            }
+        }
+        "py" => {
+            let re = Regex::new(r"(?m)^(?:async\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*\(").unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for cap in re.captures_iter(text) {
+                let name = cap[1].to_string();
+                let def_line_start = line_of(text, cap.get(0).unwrap().start()) - 1; // 0-indexed
+                let def_indent = lines[def_line_start].len() - lines[def_line_start].trim_start().len();
+                let mut body_lines = Vec::new();
+                for line in lines.iter().skip(def_line_start + 1) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let indent = line.len() - line.trim_start().len();
+                    if indent <= def_indent {
+                        break;
+                    }
+                    body_lines.push(*line);
+                }
+                let literals = literals_in(&body_lines.join("\n"), ext);
+                if !literals.is_empty() {
+                    out.push(FunctionBody { file: rel.to_string(), name, literals });
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Two functions' shared literal count meets `duplicate_logic`'s threshold —
+/// see `query::duplicate_logic`'s own doc for what this evidence means and
+/// why the threshold is set where it is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspectedDuplicateLogic {
+    pub a_file: String,
+    pub a_name: String,
+    pub b_file: String,
+    pub b_name: String,
+    pub shared_literals: Vec<String>,
+}
+
+/// Cross-references every `FunctionBody` in `graph` against every other in
+/// a DIFFERENT file, reporting pairs sharing at least `min_shared` literal
+/// values. Same defensive shape `duplicates()` already uses for concept
+/// names (an inverted index keeps this from being a blind O(n²) scan over
+/// every function pair in a large repo — found necessary the same way
+/// `duplicates()` needed it, for the same reason: this is exactly the kind
+/// of pairwise comparison that gets slow fast once a real repo has
+/// thousands of functions).
+pub fn suspected_duplicate_logic(graph: &StructuralGraph, min_shared: usize) -> Vec<SuspectedDuplicateLogic> {
+    let mut literal_index: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, f) in graph.function_bodies.iter().enumerate() {
+        for lit in &f.literals {
+            literal_index.entry(lit.as_str()).or_default().push(i);
+        }
+    }
+    let mut shared_counts: std::collections::HashMap<(usize, usize), Vec<&str>> = std::collections::HashMap::new();
+    for (_, indices) in literal_index.iter() {
+        if indices.len() < 2 || indices.len() > 15 {
+            // A literal shared by more than 15 functions is common
+            // boilerplate, not a meaningful fingerprint — including it
+            // would connect nearly every function in a large repo to
+            // nearly every other one. Verified against a real 1492-file
+            // repo: at the original cap of 50, common-but-not-universal
+            // strings (schema field names occurring in 20-40 functions)
+            // alone produced thousands of spurious pairs; 15 was the point
+            // where the remaining pairs were dominated by real shared
+            // business strings, not schema-shaped boilerplate.
+            continue;
+        }
+        for i in 0..indices.len() {
+            for j in (i + 1)..indices.len() {
+                let (a, b) = (indices[i], indices[j]);
+                if graph.function_bodies[a].file == graph.function_bodies[b].file {
+                    continue;
+                }
+                let key = if a < b { (a, b) } else { (b, a) };
+                shared_counts.entry(key).or_default();
+            }
+        }
+    }
+    // Second pass: now that pairs are known, compute each pair's REAL full
+    // shared-literal set (not just the ones the sampling above happened to
+    // iterate) via a plain set intersection — cheap once the candidate
+    // pairs are already narrowed to a small list.
+    let mut out = Vec::new();
+    for (a, b) in shared_counts.keys() {
+        let fa = &graph.function_bodies[*a];
+        let fb = &graph.function_bodies[*b];
+        let shared: Vec<String> = fa.literals.iter().filter(|l| fb.literals.contains(l)).cloned().collect();
+        if shared.len() >= min_shared {
+            out.push(SuspectedDuplicateLogic {
+                a_file: fa.file.clone(),
+                a_name: fa.name.clone(),
+                b_file: fb.file.clone(),
+                b_name: fb.name.clone(),
+                shared_literals: shared,
+            });
+        }
+    }
+    out.sort_by(|x, y| (x.a_file.as_str(), x.a_name.as_str()).cmp(&(y.a_file.as_str(), y.a_name.as_str())));
+    out
+}
+
 impl Route {
     /// Whether/why this route is believed to relate to `concept_name` — the
     /// evidence `routes_for_concept` previously computed as a bare boolean
@@ -526,6 +834,11 @@ pub struct StructuralGraph {
     /// `file_facts`/`extractor_version` below.
     #[serde(default)]
     pub route_calls: Vec<RouteCall>,
+    /// Top-level function bodies' literal-string fingerprints — see
+    /// `FunctionBody`'s own doc for why this exists (cross-file/cross-
+    /// language duplicate BUSINESS LOGIC, not just duplicate declarations).
+    #[serde(default)]
+    pub function_bodies: Vec<FunctionBody>,
     /// Per-file extraction cache — same shape as `Index::file_facts`.
     #[serde(default)]
     pub file_facts: BTreeMap<String, StructuralFileFacts>,
@@ -546,6 +859,8 @@ pub struct StructuralFileFacts {
     pub routes: Vec<Route>,
     #[serde(default)]
     pub route_calls: Vec<RouteCall>,
+    #[serde(default)]
+    pub function_bodies: Vec<FunctionBody>,
 }
 
 /// Bump this when the structural extractors change semantics. Invalidates
@@ -556,7 +871,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 14; // +TS/JS type alias declarations, +Angular Routes-array route recognition — a cached TS/JS file_facts entry from before this predates both entirely
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 15; // +function-body literal-string extraction (TS/JS/Rust/Python) for cross-file duplicate-logic detection — a cached file_facts entry from before this predates function_bodies entirely
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -575,7 +890,7 @@ pub fn extract(
     let prior_version_matches =
         prior.map(|p| p.extractor_version == STRUCTURAL_EXTRACTOR_VERSION).unwrap_or(false);
 
-    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>)> = files
+    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>, Vec<FunctionBody>)> = files
         .par_iter()
         .map(|f| {
             let unchanged = prior_version_matches
@@ -594,18 +909,21 @@ pub fn extract(
                     pf.imports.clone(),
                     pf.routes.clone(),
                     pf.route_calls.clone(),
+                    pf.function_bodies.clone(),
                 );
             }
 
             let Ok(text) = std::fs::read_to_string(&f.path) else {
-                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
             };
 
             let ext = f.path.extension().and_then(|x| x.to_str()).unwrap_or("");
             let (symbols, imports, routes) = extract_file(&f.rel, ext, &text);
             let mut route_calls = Vec::new();
             extract_route_calls(&f.rel, ext, &text, &mut route_calls);
-            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls)
+            let mut function_bodies = Vec::new();
+            extract_function_bodies(&f.rel, ext, &text, &mut function_bodies);
+            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls, function_bodies)
         })
         .collect();
 
@@ -614,10 +932,14 @@ pub fn extract(
         ..Default::default()
     };
 
-    for (rel, size, mtime_ms, symbols, imports, routes, route_calls) in results {
+    for (rel, size, mtime_ms, symbols, imports, routes, route_calls, function_bodies) in results {
         graph.file_facts.insert(
             rel.clone(),
-            StructuralFileFacts { size, mtime_ms, symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone(), route_calls: route_calls.clone() },
+            StructuralFileFacts {
+                size, mtime_ms,
+                symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone(),
+                route_calls: route_calls.clone(), function_bodies: function_bodies.clone(),
+            },
         );
         for s in &symbols {
             graph.symbols.insert(format!("{}::{}", rel, s.name), s.clone());
@@ -625,6 +947,7 @@ pub fn extract(
         graph.imports.extend(imports);
         graph.routes.extend(routes);
         graph.route_calls.extend(route_calls);
+        graph.function_bodies.extend(function_bodies);
     }
 
     graph
@@ -3430,6 +3753,222 @@ export const routes: Routes = [
             !routes.iter().any(|r| r.path == "a" && r.handler == "BComponent"),
             "route A's path must never pair with route B's component, got: {routes:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod duplicate_logic_tests {
+    use super::*;
+
+    /// The real reported shape, reproduced with generic names: two
+    /// functions in two DIFFERENT files/languages, different names sharing
+    /// no meaningful token, independently encoding the same business rule —
+    /// evidenced by both containing the same status-string literals.
+    #[test]
+    fn cross_file_cross_language_shared_literals_are_detected() {
+        let js_src = r#"
+function updateStage(record, nextStage) {
+  let status = null;
+  if (nextStage === 'Passed Screening') {
+    status = 'Screened';
+  }
+  if (nextStage === 'Fully Hired') {
+    status = 'Candidate Hired';
+  }
+  return status;
+}
+"#;
+        let ts_src = r#"
+function moveStage(record: Record, nextStage: string) {
+  let status = null;
+  if (nextStage === 'Passed Screening') {
+    status = 'Screened';
+  }
+  if (nextStage === 'Fully Hired') {
+    status = 'Candidate Hired';
+  }
+  return status;
+}
+"#;
+        let mut bodies = Vec::new();
+        extract_function_bodies("server/repository.js", "js", js_src, &mut bodies);
+        extract_function_bodies("src/app/service.ts", "ts", ts_src, &mut bodies);
+        assert_eq!(bodies.len(), 2, "got: {bodies:?}");
+
+        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let dups = suspected_duplicate_logic(&graph, 2);
+        assert_eq!(dups.len(), 1, "got: {dups:?}");
+        assert!(dups[0].shared_literals.contains(&"Passed Screening".to_string()));
+        assert!(dups[0].shared_literals.contains(&"Candidate Hired".to_string()));
+    }
+
+    /// Two functions in the SAME file sharing literals is not this
+    /// feature's concern — same-file duplication is either normal (a
+    /// switch-like sequence of ifs each checking the same constants) or
+    /// something a human reading the one file in front of them will
+    /// already see; the actual risk this exists for is business logic
+    /// silently drifting apart ACROSS files.
+    #[test]
+    fn same_file_pairs_are_never_reported() {
+        let src = r#"
+function a() {
+  if (x === 'Passed Screening') { return 'Screened'; }
+}
+function b() {
+  if (y === 'Passed Screening') { return 'Screened'; }
+}
+"#;
+        let mut bodies = Vec::new();
+        extract_function_bodies("one.js", "js", src, &mut bodies);
+        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let dups = suspected_duplicate_logic(&graph, 1);
+        assert!(dups.is_empty(), "got: {dups:?}");
+    }
+
+    /// A single shared literal below the threshold must not be reported —
+    /// one coincidentally shared string (a common error message, say) is
+    /// not evidence of duplicated business logic on its own.
+    #[test]
+    fn single_shared_literal_below_threshold_is_not_reported() {
+        let a_src = "function a() {\n  return 'Resource Not Found';\n}\n";
+        let b_src = "function b() {\n  return 'Resource Not Found';\n}\n";
+        let mut bodies = Vec::new();
+        extract_function_bodies("a.js", "js", a_src, &mut bodies);
+        extract_function_bodies("b.js", "js", b_src, &mut bodies);
+        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let dups = suspected_duplicate_logic(&graph, 2);
+        assert!(dups.is_empty(), "one shared literal must not clear a threshold of 2, got: {dups:?}");
+    }
+
+    /// A literal shared by a large number of functions (generic boilerplate
+    /// like "error"/"success") must not connect all of them to each other —
+    /// that would flood real results with noise instead of surfacing an
+    /// actual duplicated rule.
+    #[test]
+    fn overly_common_literal_does_not_create_a_flood_of_pairs() {
+        let mut bodies = Vec::new();
+        for i in 0..60 {
+            let src = format!("function f{i}() {{\n  return 'Generic Value';\n}}\n");
+            extract_function_bodies(&format!("file{i}.js"), "js", &src, &mut bodies);
+        }
+        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let dups = suspected_duplicate_logic(&graph, 1);
+        assert!(
+            dups.is_empty(),
+            "a literal shared by 60 functions must be treated as generic boilerplate, not evidence — got {} pairs",
+            dups.len()
+        );
+    }
+
+    /// A string literal INSIDE another string literal (a brace-like
+    /// character as literal text, e.g. a JSON-shaped string) must not
+    /// desynchronize brace-depth counting and truncate the function body
+    /// early.
+    #[test]
+    fn braces_inside_string_literals_do_not_break_body_bounds() {
+        let src = r#"
+function build() {
+  const template = "{\"key\": \"value\"}";
+  if (template === 'Passed Screening Marker') {
+    return 'Hired Marker';
+  }
+}
+"#;
+        let mut bodies = Vec::new();
+        extract_function_bodies("weird.js", "js", src, &mut bodies);
+        assert_eq!(bodies.len(), 1, "got: {bodies:?}");
+        assert!(
+            bodies[0].literals.iter().any(|l| l == "Passed Screening Marker"),
+            "a literal AFTER a brace-containing string must still be captured — the body must not have been cut short, got: {:?}", bodies[0].literals
+        );
+    }
+
+    /// Python's indentation-bounded body extraction, exercised end-to-end
+    /// against JS via the real cross-reference pipeline — the other half of
+    /// the real reported case (a Node/JS backend and a Python service, not
+    /// just two JS-family files).
+    #[test]
+    fn python_function_body_bounds_are_indentation_based() {
+        let py_src = "def approve(record):\n    if record.stage == 'Passed Screening':\n        return 'Candidate Hired'\n    return None\n\ndef unrelated():\n    return 1\n";
+        let mut bodies = Vec::new();
+        extract_function_bodies("service.py", "py", py_src, &mut bodies);
+        let approve = bodies.iter().find(|b| b.name == "approve").expect("got: {bodies:?}");
+        assert!(approve.literals.contains(&"Passed Screening".to_string()));
+        assert!(approve.literals.contains(&"Candidate Hired".to_string()));
+        assert!(
+            !bodies.iter().any(|b| b.name == "unrelated" && !b.literals.is_empty()),
+            "unrelated()'s trivial body (no literal >=10 chars) must not spuriously match anything"
+        );
+    }
+
+    /// A Rust lifetime (`&'static`) or a lone apostrophe in a comment/SQL
+    /// empty-string literal (`''`) must never be treated as opening a
+    /// string — the real bug this reproduces: `'` paired the lifetime's
+    /// quote with an unrelated LATER apostrophe, swallowing everything
+    /// between as a fake "string" and desyncing brace-depth counting so the
+    /// function body ran past its real closing `}` into the next function.
+    #[test]
+    fn rust_lifetimes_and_apostrophes_do_not_desync_body_bounds() {
+        let src = r#"
+pub fn first(db: &'static Pool) -> Value {
+    // handles the polygon's rings correctly
+    let empty = "" ;
+    let q = "SELECT 1 WHERE x <> ''";
+    json!({ "marker one long": empty, "other marker long": q })
+}
+
+pub fn second() -> Value {
+    json!({ "second marker long": "unique second value here" })
+}
+"#;
+        let mut bodies = Vec::new();
+        extract_function_bodies("admin1.rs", "rs", src, &mut bodies);
+        let first = bodies.iter().find(|b| b.name == "first").expect("got: {bodies:?}");
+        let second = bodies.iter().find(|b| b.name == "second").expect("got: {bodies:?}");
+        assert!(
+            !first.literals.iter().any(|l| l.contains("second marker")),
+            "first()'s body must not have swallowed second()'s content, got: {:?}", first.literals
+        );
+        assert!(
+            second.literals.iter().any(|l| l.contains("unique second value")),
+            "second() must still be extracted as its own function, got: {:?}", second.literals
+        );
+    }
+
+    /// A Rust string built with backslash-newline line continuations
+    /// (common for multi-line SQL queries) must be captured as ONE literal,
+    /// not broken apart — with `.` excluding `\n` by default, `\` followed
+    /// by a literal newline matched neither "not a quote" nor "escaped
+    /// character", so the match failed at the string's own quotes and slid
+    /// forward to an unrelated later quote, merging the CODE between two
+    /// real strings into one fake "literal".
+    #[test]
+    fn backslash_newline_continuations_do_not_break_string_bounds() {
+        let src = "pub fn q() -> Value {\n    let query = \"SELECT admin1, \\\n         FROM world_events\";\n    json!({ \"result marker\": query })\n}\n";
+        let mut bodies = Vec::new();
+        extract_function_bodies("q.rs", "rs", src, &mut bodies);
+        let f = &bodies[0];
+        assert!(
+            f.literals.iter().any(|l| l.contains("SELECT admin1") && l.contains("FROM world_events")),
+            "the backslash-newline-continued SQL string must be captured whole, got: {:?}", f.literals
+        );
+        assert!(
+            !f.literals.iter().any(|l| l.contains("query))")),
+            "no literal should contain raw code from between two real strings, got: {:?}", f.literals
+        );
+    }
+
+    /// A CSS color value is a design token, not business logic — it must
+    /// be excluded even though `rgba(...)` values easily clear the 10-char
+    /// floor, since two wholly unrelated "status color" components sharing
+    /// nothing but a common traffic-light palette is not evidence of
+    /// duplicated business logic.
+    #[test]
+    fn color_literals_are_excluded_from_duplicate_logic_evidence() {
+        let a = "function barColor() {\n  return 'rgba(52,211,153,1)';\n}\n";
+        let mut bodies = Vec::new();
+        extract_function_bodies("a.js", "js", a, &mut bodies);
+        assert!(bodies.is_empty(), "a function with ONLY a color literal must yield no FunctionBody at all, got: {bodies:?}");
     }
 }
 

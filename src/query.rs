@@ -1176,6 +1176,52 @@ pub fn duplicates(idx: &Index) -> Value {
     })
 }
 
+/// Suspected duplicate BUSINESS LOGIC — two functions, in different files
+/// (often different languages), independently encoding the same rule with
+/// no shared name and no import/call edge between them. `duplicates()`
+/// above answers "do two DECLARED CONCEPTS look like the same thing by
+/// name" — a real, different question from this one: two functions can
+/// have completely unrelated names and still be reimplementing the exact
+/// same decision logic, which is exactly what happened in the case that
+/// motivated this (a Node/JS backend's `updateCandidateStage` and a
+/// TypeScript frontend's `moveCandidateToStage`, sharing no name token
+/// worth acting on, both independently encoding the same stage-derivation
+/// rule — caught only by both containing the same status-string literals).
+///
+/// Evidence, not proof, same as `duplicates()`: two functions sharing
+/// several literal string values is real, checkable signal that they
+/// encode the same rule — it is not certainty, and a legitimate reason for
+/// the overlap (a client-side optimistic-update mirroring a server's
+/// validation on purpose) is a real possibility this can't distinguish
+/// from an unintentional drift risk. That's why this is framed as
+/// something to review, not something to merge automatically.
+pub fn duplicate_logic(graph: &StructuralGraph) -> Value {
+    // Verified against a real 1492-file repo (universal_trader/backend), not
+    // guessed: a length-4 literal floor with min_shared=2 produced 3946
+    // suspected pairs — almost all noise from generic short JSON field names
+    // ("name", "note", "id") that recur across unrelated handlers. Raising
+    // the per-literal length floor to 10 (in `literals_in`), excluding CSS
+    // color values, tightening the boilerplate cap to 15 functions, and
+    // requiring 3+ shared literals cut that to ~100 pairs dominated by real
+    // duplicated business logic — e.g. two independently-written repair
+    // functions sharing a dozen identical error-message strings, and three
+    // separate functions each re-issuing the same `SELECT count(*) FROM
+    // belief_experiments WHERE status=...` query.
+    const MIN_SHARED_LITERALS: usize = 3;
+    let pairs = crate::structural::suspected_duplicate_logic(graph, MIN_SHARED_LITERALS);
+    json!({
+        "suspected_duplicate_logic": pairs.iter().map(|p| json!({
+            "a": { "file": p.a_file, "function": p.a_name },
+            "b": { "file": p.b_file, "function": p.b_name },
+            "shared_literals": p.shared_literals,
+        })).collect::<Vec<_>>(),
+        "note": format!(
+            "Evidence of RISK, not proof — two top-level functions in DIFFERENT files sharing {}+ literal string values at least 10 characters long (shorter strings, like \"ok\"/\"id\"/\"name\", are excluded as too generic to mean anything on their own). CSS color values (#rrggbb, rgb()/rgba()) are excluded as design tokens, not business logic. A literal shared by more than 15 functions repo-wide is treated as generic boilerplate and excluded, not evidence. This can only see what a real function body written in TS/JS/Rust/Python (brace- or indentation-bounded) contains — it cannot see logic expressed as data (a config table, a database-driven rule engine) or duplication where the shared decision uses different literal values on each side.",
+            MIN_SHARED_LITERALS
+        ),
+    })
+}
+
 /// Who owns a concept — the directory that DECLARES it, then the directories
 /// that use it. Declarations outweigh usage 2:1: maintaining the contract is
 /// ownership; calling it is only interest.
