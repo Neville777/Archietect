@@ -373,7 +373,16 @@ compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
 `CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
 against a project can never drop its history or decisions.
 
-## Contributing: the proposal protocol
+## Contributing
+
+Opening a normal human PR (a bug fix, a feature, anything you typed
+yourself)? See [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, what this
+codebase expects from a PR, and what's off-limits without a maintainer.
+
+The rest of this section is the OTHER door: the proposal protocol, for a
+change an AI agent proposes rather than a human types.
+
+### The proposal protocol
 
 The only door through which a change — a new structural extractor, or a new
 `archietect.toml` decision/alias — can reach a repository, and it never opens
