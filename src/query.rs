@@ -902,6 +902,16 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
     }
     let mut findings = Vec::new();
     let mut blocked = Vec::new();
+    // Exact re-declarations of an existing concept's own table (law-002:
+    // exempt from blocking, unlike a near-name collision) are allowed, but
+    // they are NOT new — before this, a guard() call containing only
+    // exempted re-declarations still said "N proposed table(s) check out
+    // as new" in `reason`, directly contradicting `findings`, which
+    // correctly showed the real verdict/canonical for the same item. The
+    // exemption's allowed:true was always correct; the wording claiming
+    // "new" for something that already exists was not. Tracked separately
+    // from `blocked` so the two can never collide in the reason text below.
+    let mut exempt_redeclarations = Vec::new();
     for t in &proposed {
         // check the CONCEPT the table names, not the literal string —
         // `episodes` must collide with a declared `Story`-like model too.
@@ -924,11 +934,10 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             .get(&canonical)
             .and_then(|c| c.table.as_deref())
             .unwrap_or(&canonical);
-        if matches!(verdict, "ACTIVE" | "DECLARED_ONLY")
-            && !canonical.is_empty()
-            && !t.eq_ignore_ascii_case(canonical_table)
-            && !t.eq_ignore_ascii_case(&canonical)
-        {
+        let is_known = matches!(verdict, "ACTIVE" | "DECLARED_ONLY") && !canonical.is_empty();
+        let is_exact_redeclaration =
+            is_known && (t.eq_ignore_ascii_case(canonical_table) || t.eq_ignore_ascii_case(&canonical));
+        let status = if is_known && !is_exact_redeclaration {
             // Cite the governing DECISION when one is declared. "The table
             // already exists" states a fact; the decision states the REASONING
             // and the alternatives already considered — which is what stops
@@ -945,21 +954,43 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             blocked.push(format!(
                 "CREATE TABLE {t} rejected — '{head}' is already {verdict}, canonically implemented as '{canonical}'. Extend {canonical} instead.{cite}"
             ));
-        }
+            "blocked"
+        } else if is_exact_redeclaration {
+            exempt_redeclarations.push(format!("{t} (already exists as '{canonical}')"));
+            "exempt_exact_redeclaration"
+        } else {
+            "new"
+        };
         findings.push(json!({
             "proposed_table": t,
             "concept_checked": head,
             "verdict": verdict,
             "canonical": r["canonical"],
+            "status": status,
         }));
     }
+    let new_count = proposed.len() - blocked.len() - exempt_redeclarations.len();
+    let reason = if !blocked.is_empty() {
+        blocked.join(" | ")
+    } else if !exempt_redeclarations.is_empty() {
+        if new_count == 0 {
+            format!(
+                "no new table(s) — exact re-declaration of existing concept(s), not new: {}",
+                exempt_redeclarations.join(", ")
+            )
+        } else {
+            format!(
+                "{new_count} proposed table(s) check out as new. {} exact re-declaration(s) of existing concept(s), not new: {}",
+                exempt_redeclarations.len(),
+                exempt_redeclarations.join(", ")
+            )
+        }
+    } else {
+        format!("{} proposed table(s) check out as new", proposed.len())
+    };
     json!({
         "allowed": blocked.is_empty(),
-        "reason": if blocked.is_empty() {
-            format!("{} proposed table(s) check out as new", proposed.len())
-        } else {
-            blocked.join(" | ")
-        },
+        "reason": reason,
         "findings": findings,
     })
 }
@@ -2011,6 +2042,121 @@ mod intent_tests {
             extend.iter().any(|e| e["concept"] == "invoice" && e["canonical"] == "Invoice"),
             "expected 'invoice' to extend 'Invoice', got: {out}"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod guard_reason_text_tests {
+    use super::*;
+
+    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("archietect-guard-reason-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        for (rel, content) in files {
+            let path = tmp.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, content).unwrap();
+        }
+        let (idx, _graph) = crate::scan::scan(&tmp);
+        (idx, tmp)
+    }
+
+    // Deliberately synthetic, nonsense names below (Zibbet/Blorp/Fwomp) —
+    // NOT "candidates"/"Ghost"/"widgets" as in the manual repro this fix was
+    // built against. This repo's own pre-commit hook pipes every commit's
+    // diff through `archietect ci`/`guard`, scanning ALL changed lines —
+    // including string literals inside test code — for CREATE TABLE text
+    // against THIS repo's own long-lived index. Real fixture names like
+    // "Ghost" (tests/fixtures/law_002) and "candidates"/"widgets" (other
+    // laws' fixtures) are already indexed here, so a first draft of these
+    // tests using those names made every commit of this very file trip the
+    // hook on itself — a real, separate false-positive source (SQL-shaped
+    // test data vs. an actual proposed migration), out of scope for this
+    // change. Synthetic names sidestep it without weakening any assertion.
+
+    #[test]
+    fn exact_redeclaration_is_allowed_but_not_worded_as_new() {
+        // law-002 requires allowed:true here — that part was always
+        // correct. What was wrong: `reason` said "check out as new" for a
+        // table that already exists, directly contradicting `findings`
+        // (which correctly showed verdict:ACTIVE, canonical:'candidates'
+        // for the very same item, in the real-world case this was found
+        // against). Confirmed live before this fix: reason == "1 proposed
+        // table(s) check out as new" for an exact re-declaration of an
+        // ACTIVE table.
+        let (idx, tmp) = scan_tmp(
+            "exact",
+            &[
+                (
+                    "db/migrations/001_create_zibbets.sql",
+                    "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, email TEXT);",
+                ),
+                ("use.ts", "db.query('SELECT * FROM zibbets WHERE id = $1', [id])\n"),
+            ],
+        );
+
+        let out = guard(&idx, "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, name TEXT)");
+
+        assert_eq!(out["allowed"], json!(true), "law-002 exemption must still allow this: {out}");
+        let reason = out["reason"].as_str().unwrap();
+        assert!(!reason.contains("check out as new"), "must not claim 'new' for an existing table: {reason:?}");
+        assert!(reason.contains("zibbets"), "reason should name the re-declared table: {reason:?}");
+        let findings = out["findings"].as_array().unwrap();
+        assert_eq!(findings[0]["status"], json!("exempt_exact_redeclaration"), "{out}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn genuinely_new_table_still_says_new() {
+        // Regression guard: the common, unexciting case (nothing matches
+        // at all) must keep its original, correct wording.
+        let (idx, tmp) = scan_tmp("new", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+
+        let out = guard(&idx, "CREATE TABLE fwomps (id INT)");
+
+        assert_eq!(out["allowed"], json!(true), "{out}");
+        assert_eq!(out["reason"], json!("1 proposed table(s) check out as new"), "{out}");
+        assert_eq!(out["findings"][0]["status"], json!("new"), "{out}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn near_name_collision_still_blocks_with_original_wording() {
+        // Regression guard: law-002's OTHER half — near-names must still
+        // block, and this path's reason text is untouched by this fix.
+        let (idx, tmp) = scan_tmp("near", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+
+        let out = guard(&idx, "CREATE TABLE blorps (id INT)");
+
+        assert_eq!(out["allowed"], json!(false), "{out}");
+        let reason = out["reason"].as_str().unwrap();
+        assert!(reason.contains("rejected"), "{reason:?}");
+        assert_eq!(out["findings"][0]["status"], json!("blocked"), "{out}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mixed_exempt_and_new_are_both_named_honestly() {
+        let (idx, tmp) = scan_tmp("mixed", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+
+        let out = guard(&idx, "CREATE TABLE \"Blorp\" (id INT); CREATE TABLE fwomps (id INT);");
+
+        assert_eq!(out["allowed"], json!(true), "{out}");
+        let reason = out["reason"].as_str().unwrap();
+        assert!(reason.contains("1 proposed table(s) check out as new"), "{reason:?}");
+        assert!(reason.contains("exact re-declaration"), "{reason:?}");
+        let findings = out["findings"].as_array().unwrap();
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().any(|f| f["status"] == "exempt_exact_redeclaration"));
+        assert!(findings.iter().any(|f| f["status"] == "new"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
