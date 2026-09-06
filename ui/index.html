@@ -38,6 +38,7 @@
   root <input id="root" size="52" placeholder="/absolute/path/to/repo">
   <button onclick="setRoot()">load</button>
 </div>
+<div id="aiStatus" class="muted" style="margin:.3rem 0;"></div>
 <nav>
   <button data-tab="overview" class="active" onclick="show('overview')">overview</button>
   <button data-tab="timeline" onclick="show('timeline')">timeline</button>
@@ -116,7 +117,75 @@ function showErr(text){
 window.onerror = (msg, src, line, col) => showErr(`JS error: ${msg} (${src}:${line}:${col})`);
 window.addEventListener('unhandledrejection', e => showErr(`unhandled promise rejection: ${e.reason}`));
 
-function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); }
+function setRoot(){ localStorage.setItem('arch_root', $('root').value); show(tab); refreshAiStatus(); }
+
+function agoText(ms){
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 5) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+// "an AI used this once" (mcp_client_connected, one per session) is not the
+// same claim as "an AI is using this RIGHT NOW" — the first is a single old
+// log line; the second needs a signal that decays. mcp.rs writes a
+// mcp_client_active heartbeat roughly every 60s while a session keeps
+// calling tools (see its own doc comment), so ACTIVE_MS a little over that
+// is "still going" and anything older is "was here, isn't now". Lives
+// outside the tab system entirely — visible and refreshing regardless of
+// which tab is open, unlike everything in #out — so it polls on its own
+// timer instead of participating in loadGeneration/isCurrentLoad at all; a
+// stale response here just gets silently superseded by the next tick, the
+// same tolerance any polling loop needs, not a correctness requirement.
+const ACTIVE_MS = 90 * 1000;
+let aiStatusTimer = null;
+async function refreshAiStatus(){
+  const root = $('root').value;
+  if (!root) { $('aiStatus').textContent = ''; return; }
+  const d = await fetch(`/history?root=${encodeURIComponent(root)}&limit=100`).then(r => r.json()).catch(() => null);
+  if ($('root').value !== root) return; // root changed while this was in flight
+  const events = (d && d.events) || [];
+  const seen = {};
+  for (const e of events) {
+    if (e.kind !== 'mcp_client_connected' && e.kind !== 'mcp_client_active') continue;
+    const prev = seen[e.concept];
+    // `tools` is THIS event's own tools-since-last-heartbeat (mcp.rs
+    // clears it after every write) — kept from whichever event is most
+    // recent, same as ts_ms/version, not accumulated across events: "what
+    // is it asking about" means recently, not a lifetime list.
+    if (!prev || e.ts_ms > prev.ts_ms) {
+      seen[e.concept] = { ts_ms: e.ts_ms, version: e.detail && e.detail.version, tools: (e.detail && e.detail.tools) || [] };
+    }
+  }
+  const names = Object.keys(seen).sort((a, b) => seen[b].ts_ms - seen[a].ts_ms);
+  if (!names.length) {
+    $('aiStatus').innerHTML = '<span class="muted">no AI has connected to this project yet</span>';
+    return;
+  }
+  // What it's asking about is the honest, answerable version of "what does
+  // the AI see" — the full request/response JSON for every call is a much
+  // bigger feature (logging arbitrary-size payloads forever); which
+  // questions it's been asking is real signal without that cost.
+  const toolsText = c => c.tools && c.tools.length ? ` — asking about: ${c.tools.map(esc).join(', ')}` : '';
+  const now = Date.now();
+  const active = names.filter(n => now - seen[n].ts_ms < ACTIVE_MS);
+  if (active.length) {
+    const label = active.map(n => `${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}${toolsText(seen[n])}`).join('; ');
+    $('aiStatus').innerHTML = `<span class="ok">●</span> ${label} — using this right now`;
+  } else {
+    const n = names[0];
+    $('aiStatus').innerHTML = `<span class="muted">○ last AI activity: ${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}, ${agoText(seen[n].ts_ms)}${toolsText(seen[n])}</span>`;
+  }
+}
+function startAiStatusPolling(){
+  if (aiStatusTimer) return;
+  refreshAiStatus();
+  aiStatusTimer = setInterval(refreshAiStatus, 15000);
+}
 
 let progressTimer = null;
 // Separate from isCurrentLoad(gen): that answers "does this generation
@@ -335,7 +404,21 @@ async function overview(gen, signal){
   openStat = null;
   lastDeclarationFiles = null; // per-load; don't reuse a previous load's snapshot
   const c = d.counts;
+  const unusedPct = c.concepts ? Math.round(100 * d.declared_but_never_observed_in_use.length / c.concepts) : 0;
+  // A number needs a sentence around it to say anything — "15 never
+  // observed" told you a count exists, not whether that's fine (a young
+  // repo, most things freshly declared) or a real problem (a fifth of
+  // everything declared is dead weight). Same counts as the stat buttons
+  // below, just read as a claim instead of five disconnected numbers.
+  const headline = c.concepts
+    ? `<p style="margin:0 0 .6rem;">${c.concepts} concept${c.concepts===1?'':'s'} declared across ${Object.keys(d.domains).length} domain${Object.keys(d.domains).length===1?'':'s'}, in ${c.files_scanned} scanned file${c.files_scanned===1?'':'s'}.${
+        d.declared_but_never_observed_in_use.length
+          ? ` <span class="warn">${d.declared_but_never_observed_in_use.length} (${unusedPct}%) are declared but never observed in use</span> — click "never observed" below to see which.`
+          : ' None are declared-but-unused — everything declared has at least one observed use.'
+      }</p>`
+    : '';
   $('out').innerHTML = `
+    ${headline}
     <div>
       <button class="stat" data-stat="concepts" onclick="toggleStat('concepts')"><b>${c.concepts}</b>concepts</button>
       <button class="stat" data-stat="files" onclick="toggleStat('files')"><b>${c.files_scanned}</b>files</button>
@@ -344,7 +427,7 @@ async function overview(gen, signal){
       <button class="stat" data-stat="unused" onclick="toggleStat('unused')"><b>${d.declared_but_never_observed_in_use.length}</b><span class="warn">never observed</span></button>
     </div>
     <div id="statDetail" class="card"></div>
-    <h3>domains <span class="muted">(where declarations live — click one to see its files)</span></h3>
+    <h3>domains <span class="muted">(where declarations live, biggest first — click one to see its files)</span></h3>
     ${renderDomainsTable(d.domains)}
     <h3>top concepts <span class="muted">(by observed use — click one for its evidence)</span></h3>
     <table>${d.top_concepts.map(x=>`<tr><td><span data-concept="${esc(x.concept)}">${esc(x.concept)}</span></td><td>${x.observed_uses} uses</td></tr>`).join('')}</table>
@@ -452,9 +535,20 @@ function topSegment(path){
   }
   return first;
 }
+// Sorted biggest-first, not alphabetical: a flat A-Z list put "actuators"
+// (1 file) ahead of the domain actually carrying most of the repo, telling
+// a reader nothing about where the weight of the codebase actually is —
+// exactly the "just a list, communicates nothing" complaint this fixes.
+// The percentage bar is the same idea again: 129 next to 1 says more as
+// "41% of declaration files" than as two bare integers a reader has to
+// mentally divide themselves.
 function renderDomainsTable(domains){
-  return `<table>${Object.entries(domains).map(([k,v]) =>
-    `<tr><td><span data-domain="${esc(k)}">${esc(k)}</span></td><td>${v} declaration files</td></tr>`).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
+  const entries = Object.entries(domains).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((sum, [, v]) => sum + v, 0) || 1;
+  return `<table>${entries.map(([k,v]) => {
+    const pct = Math.round(100 * v / total);
+    return `<tr><td><span data-domain="${esc(k)}">${esc(k)}</span></td><td>${v} declaration file${v===1?'':'s'}</td><td class="muted">${pct}%</td></tr>`;
+  }).join('') || '<tr><td class="muted">none</td></tr>'}</table>`;
 }
 // /declaration-files, not /status — /status also runs coverage_report's
 // live directory walk plus git/docker sections, none of which this needs;
@@ -556,14 +650,22 @@ function toggleClientFilter(name){
 function renderTimelineTable(){
   const box = $('timelineEvents');
   if (!box) return;
-  const events = clientFilter ? lastTimelineEvents.filter(e => e.concept === clientFilter) : lastTimelineEvents;
+  // mcp_client_active is plumbing for the "is an AI active right now"
+  // signal (see refreshAiStatus/aiStatus banner and mcp.rs's own doc on
+  // why it exists at all), not narrative history — a long session calling
+  // tools every few seconds would otherwise flood this table with a
+  // heartbeat every ~60s and push the real architectural events (the
+  // entire point of this tab) out of the visible window.
+  const baseEvents = lastTimelineEvents.filter(e => e.kind !== 'mcp_client_active');
+  const events = clientFilter ? baseEvents.filter(e => e.concept === clientFilter) : baseEvents;
   const filterBar = clientFilter
     ? `<div class="muted" style="margin-bottom:.4rem;">showing only <b>${esc(clientFilter)}</b> — <span data-client="${esc(clientFilter)}" style="text-decoration:underline;">clear filter</span></div>`
     : '';
   const rows = events.map(e => {
     const isClient = e.kind === 'mcp_client_connected';
+    const tools = e.detail && e.detail.tools;
     const detailText = isClient
-      ? `connected via MCP${e.detail && e.detail.version ? ' — v' + esc(e.detail.version) : ''}`
+      ? `connected via MCP${e.detail && e.detail.version ? ' — v' + esc(e.detail.version) : ''}${tools && tools.length ? ' — asked about: ' + tools.map(esc).join(', ') : ''}`
       : esc(JSON.stringify(e.detail).slice(0,180));
     const conceptCell = isClient
       ? `<span data-client="${esc(e.concept)}">${esc(e.concept)}</span>`
@@ -591,14 +693,16 @@ async function timeline(gen, signal){
   // as one more row in the raw table below.
   const clientsSeen = {};
   for (const e of events) {
-    if (e.kind !== 'mcp_client_connected') continue;
+    if (e.kind !== 'mcp_client_connected' && e.kind !== 'mcp_client_active') continue;
     const prev = clientsSeen[e.concept];
-    if (!prev || e.ts_ms > prev.ts_ms) clientsSeen[e.concept] = { ts_ms: e.ts_ms, version: e.detail && e.detail.version };
+    if (!prev || e.ts_ms > prev.ts_ms) {
+      clientsSeen[e.concept] = { ts_ms: e.ts_ms, version: e.detail && e.detail.version, tools: (e.detail && e.detail.tools) || [] };
+    }
   }
   const clientNames = Object.keys(clientsSeen).sort((a,b) => clientsSeen[b].ts_ms - clientsSeen[a].ts_ms);
   const clientsSummary = clientNames.length
     ? `<h3 class="ok">AI clients seen on this project <span class="muted">(click one to filter the timeline below)</span></h3>
-       <table>${clientNames.map(name => `<tr><td><b><span data-client="${esc(name)}">${esc(name)}</span></b></td><td class="muted">v${esc(clientsSeen[name].version || '?')}</td><td class="muted">last connected ${t(clientsSeen[name].ts_ms)}</td></tr>`).join('')}</table>`
+       <table>${clientNames.map(name => `<tr><td><b><span data-client="${esc(name)}">${esc(name)}</span></b></td><td class="muted">v${esc(clientsSeen[name].version || '?')}</td><td class="muted">last seen ${t(clientsSeen[name].ts_ms)}</td><td class="muted">${(clientsSeen[name].tools||[]).map(esc).join(', ') || '—'}</td></tr>`).join('')}</table>`
     : `<div class="muted">no MCP client has connected to this project yet — an AI tool calling \`archietect mcp\` records itself here on its first tool call.</div>`;
 
   lastTimelineEvents = events;
@@ -737,4 +841,5 @@ const urlRoot = new URLSearchParams(location.search).get('root');
 $('root').value = urlRoot || localStorage.getItem('arch_root') || '';
 if (urlRoot) localStorage.setItem('arch_root', urlRoot);
 if ($('root').value) show('overview');
+startAiStatusPolling();
 </script>

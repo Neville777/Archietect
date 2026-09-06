@@ -132,7 +132,7 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "history",
-            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written by the daemon, `archietect ci`, or an MCP client's first tool call in a session (as mcp_client_connected — the record of which AI used this project, and when). Pass digest=true for a narrative-quality summary of the window (grouped, phrased sentences — still fully deterministic, generated from the same events, never an LLM) instead of the raw event list.",
+            "description": "The architectural timeline: what changed, when, and what the engine said about it — Git knows files changed; this knows ARCHITECTURE changed. Append-only, written by the daemon, `archietect ci`, or an MCP client (mcp_client_connected on first tool call, mcp_client_active as a roughly-60s heartbeat thereafter — together, which AI used this project, when, and whether it is still active). Pass digest=true for a narrative-quality summary of the window (grouped, phrased sentences — still fully deterministic, generated from the same events, never an LLM) instead of the raw event list.",
             "inputSchema": { "type": "object", "properties": {
                 "concept": { "type": "string", "description": "Optional — filter to events touching this concept. Ignored if digest=true." },
                 "limit": { "type": "number", "description": "Max events to return, or events considered for the digest (default 50)." },
@@ -297,6 +297,26 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // one" with evidence instead of a guess.
     let mut client_info: Option<(String, String)> = None;
     let mut recorded_connection_for: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    // `mcp_client_connected` alone answers "has an AI ever used this
+    // project" — it does NOT answer "is one using it RIGHT NOW", since it
+    // fires exactly once per (session, root) and a session can run for
+    // hours. Found live: a user demanding to SEE an AI actively working in
+    // the GUI, not go find a single old log line and guess whether the
+    // session behind it is even still open. This tracks, per root, the
+    // timestamp of the last heartbeat WRITTEN (not merely the last tool
+    // call — every tool call would spam the history log, one event per
+    // query, forever) so a heartbeat only gets appended when at least
+    // HEARTBEAT_INTERVAL_MS has passed since the last one for that root.
+    let mut last_heartbeat_for: std::collections::HashMap<PathBuf, i64> = std::collections::HashMap::new();
+    // "Which tools has it actually called" is the honest, answerable
+    // version of "what does the AI see" — the FULL request/response payload
+    // for every call would be the literal answer, but logging that
+    // permanently is a different, much larger feature (arbitrary-size
+    // repeated writes to the history log) than showing which questions were
+    // asked. Accumulates between heartbeats, cleared on write — so each
+    // mcp_client_connected/mcp_client_active event reports exactly the
+    // tools called SINCE the previous one, not a lifetime total.
+    let mut tools_since_heartbeat: std::collections::HashMap<PathBuf, std::collections::BTreeSet<String>> = std::collections::HashMap::new();
 
     for line in stdin.lock().lines() {
         let line = line?;
@@ -347,13 +367,43 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                     }
                     Some(root) => {
                         if let Some((client_name, client_version)) = &client_info {
+                            let now = crate::humanize::now_ms();
+                            if !name.is_empty() {
+                                tools_since_heartbeat.entry(root.clone()).or_default().insert(name.to_string());
+                            }
                             if recorded_connection_for.insert(root.clone()) {
+                                let tools: Vec<&String> = tools_since_heartbeat.get(&root).into_iter().flatten().collect();
                                 let _ = crate::store::append_events(&root, &[(
-                                    crate::humanize::now_ms(),
+                                    now,
                                     "mcp_client_connected".to_string(),
                                     client_name.clone(),
-                                    json!({ "version": client_version }).to_string(),
+                                    json!({ "version": client_version, "tools": tools }).to_string(),
                                 )]);
+                                last_heartbeat_for.insert(root.clone(), now);
+                                if let Some(t) = tools_since_heartbeat.get_mut(&root) { t.clear(); }
+                            } else {
+                                // Every tool call reaches here, but only one
+                                // in HEARTBEAT_INTERVAL_MS actually writes —
+                                // see this fn's own doc on `last_heartbeat_for`
+                                // for why: a live "still active" signal
+                                // without turning every query into a
+                                // permanent history entry.
+                                const HEARTBEAT_INTERVAL_MS: i64 = 60_000;
+                                let stale = last_heartbeat_for
+                                    .get(&root)
+                                    .map(|last| now - last >= HEARTBEAT_INTERVAL_MS)
+                                    .unwrap_or(true);
+                                if stale {
+                                    let tools: Vec<&String> = tools_since_heartbeat.get(&root).into_iter().flatten().collect();
+                                    let _ = crate::store::append_events(&root, &[(
+                                        now,
+                                        "mcp_client_active".to_string(),
+                                        client_name.clone(),
+                                        json!({ "version": client_version, "tools": tools }).to_string(),
+                                    )]);
+                                    last_heartbeat_for.insert(root.clone(), now);
+                                    if let Some(t) = tools_since_heartbeat.get_mut(&root) { t.clear(); }
+                                }
                             }
                         }
                         let prior = cache.remove(&root);
@@ -384,7 +434,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                     args.get("concept").and_then(|c| c.as_str()),
                                     args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize,
                                 ),
-                                "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client's first tool call in a session (mcp_client_connected).",
+                                "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client (mcp_client_connected on first tool call, mcp_client_active as a roughly-60s heartbeat thereafter).",
                             }),
                             "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
                             "proposal_submit" => {
