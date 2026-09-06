@@ -3,6 +3,7 @@
 **The persistent architectural brain of a software project.**
 
 [![CI](https://github.com/Neville777/Archietect/actions/workflows/ci.yml/badge.svg)](https://github.com/Neville777/Archietect/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/archietect.svg)](https://crates.io/crates/archietect)
 [![License: BSL 1.1](https://img.shields.io/badge/license-BSL--1.1-blue)](LICENSE)
 [![Rust 2021](https://img.shields.io/badge/rust-2021-orange)](Cargo.toml)
 
