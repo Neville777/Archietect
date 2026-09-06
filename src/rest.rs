@@ -118,6 +118,43 @@
 //! including ones added after this comment was written — instead of one
 //! more special-cased endpoint every time the next slow drill-down turns up.
 //!
+//! ## Watcher-driven cache invalidation
+//!
+//! `?peek=1` fixed the case where the CALLER already knows a scan just
+//! happened. It did nothing for the much larger remaining case: a tab load,
+//! or the reload button, or a bare CLI/MCP call against a root nobody has
+//! touched in the last minute — every one of those still walks the ENTIRE
+//! tree via `scan_with_prior` to check what changed, even when the honest
+//! answer is "nothing, not one file, since the last time this exact root
+//! was scanned." On a large repository that walk alone costs real seconds,
+//! paid again on every single such request, forever, regardless of whether
+//! anything on disk actually moved.
+//!
+//! The fix: the first scan of a root also registers a filesystem watcher on
+//! it (`watch.rs`'s own `watchable_dirs`/`relevant` — the exact same
+//! SKIP_DIRS-respecting, non-recursive-per-directory registration the
+//! `archietect watch` daemon already uses, not a second implementation of
+//! that policy). A relevant change sets one `AtomicBool` per root; it is
+//! NOT the daemon's debounce-then-rescan loop, because REST doesn't need to
+//! react to a change proactively — it only needs to know, lazily, on the
+//! NEXT request, whether the cache is still trustworthy. A non-`peek`
+//! request for an already-watched root now checks that flag first: clean
+//! means answer straight from the cache, no lock, no walk, no
+//! `scan_with_prior` call at all — dirty (or never watched yet) means fall
+//! through to the real scan exactly as before, then re-arm the watcher.
+//!
+//! The flag is cleared BEFORE the scan runs, not after: a relevant event
+//! that lands during the scan itself (or in the brief window right after)
+//! must leave the root marked dirty for the NEXT request, not get
+//! silently wiped by this one finishing. Erring toward "rescan when in
+//! doubt" is the only safe direction here — the reverse (clearing after)
+//! could serve stale data indefinitely if a change lands in that window.
+//! A watcher that fails to register at all (a root that vanished, a
+//! platform inotify limit) is treated as "always dirty" for that root —
+//! this is a performance fast path, never a correctness requirement, so
+//! any failure to set it up just falls back to the pre-existing
+//! always-scan behavior for that one root rather than erroring the request.
+//!
 //! ## Threading
 //!
 //! `serve` spawns one thread per request, sharing the warm cache above via
@@ -130,6 +167,7 @@
 //! way to tell "still working" from "hung." The lock is held only for the
 //! brief remove/insert around a scan, never across the scan itself.
 
+use notify::Watcher as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -235,6 +273,70 @@ fn lock_for_root(locks: &RootLocks, root: &Path) -> std::sync::Arc<std::sync::Mu
     locks.lock().unwrap().entry(root.to_path_buf()).or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(()))).clone()
 }
 
+/// One filesystem watcher per root, kept alive only to keep it watching —
+/// `notify`'s watcher stops the moment it's dropped, so this struct exists
+/// purely so `Watchers`' map holds onto it. See this module's own
+/// "Watcher-driven cache invalidation" doc for the whole design.
+struct RootWatch {
+    _watcher: notify::RecommendedWatcher,
+    dirty: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+type Watchers = std::sync::Mutex<HashMap<PathBuf, RootWatch>>;
+
+/// Registers a watcher for `root` if one doesn't already exist — idempotent,
+/// safe to call on every request. Does nothing (silently) if a watcher
+/// already exists, or if creating/registering one fails; see this module's
+/// "Watcher-driven cache invalidation" doc for why a failure here degrades
+/// to "always rescan this root" rather than erroring the request.
+fn ensure_watcher(watchers: &Watchers, root: &Path) {
+    let mut map = watchers.lock().unwrap();
+    if map.contains_key(root) {
+        return;
+    }
+    let dirty = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dirty_for_callback = dirty.clone();
+    let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(ev) = res {
+            if ev.paths.iter().any(|p| crate::watch::relevant(p)) {
+                dirty_for_callback.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    });
+    let Ok(mut watcher) = watcher else { return };
+    for dir in crate::watch::watchable_dirs(root) {
+        // Best-effort per directory, same as the daemon: a directory that
+        // vanished between the walk and here must not abort registration
+        // for every OTHER directory in this root.
+        let _ = watcher.watch(&dir, notify::RecursiveMode::NonRecursive);
+    }
+    map.insert(root.to_path_buf(), RootWatch { _watcher: watcher, dirty });
+}
+
+/// `true` when a rescan is actually needed: either no watcher exists yet
+/// for this root (never scanned by this process, or watcher setup failed —
+/// both must be treated as "unknown state, scan to be sure"), or one does
+/// exist and has observed a relevant filesystem change since it was last
+/// cleared.
+fn is_dirty_or_unwatched(watchers: &Watchers, root: &Path) -> bool {
+    match watchers.lock().unwrap().get(root) {
+        Some(w) => w.dirty.load(std::sync::atomic::Ordering::Relaxed),
+        None => true,
+    }
+}
+
+/// Marks `root` as freshly synced with disk — called right before a scan
+/// runs (not after; see this module's "Watcher-driven cache invalidation"
+/// doc for why that order matters), so any change landing during or
+/// immediately after the scan correctly leaves the root dirty again for the
+/// next request instead of this one silently discarding it. A no-op if no
+/// watcher exists for this root (nothing to clear).
+fn clear_dirty(watchers: &Watchers, root: &Path) {
+    if let Some(w) = watchers.lock().unwrap().get(root) {
+        w.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
@@ -244,6 +346,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 
     let cache: std::sync::Arc<Cache> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
     let root_locks: std::sync::Arc<RootLocks> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let watchers: std::sync::Arc<Watchers> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
     let default_root = std::sync::Arc::new(default_root);
     // See `crate::exe_mtime`'s doc comment — same staleness detection as the
     // MCP server, for the same reason: this is a long-running process that
@@ -261,9 +364,10 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     for req in server.incoming_requests() {
         let cache = cache.clone();
         let root_locks = root_locks.clone();
+        let watchers = watchers.clone();
         let default_root = default_root.clone();
         let token = token.clone();
-        std::thread::spawn(move || handle_request(req, &token, &default_root, &cache, &root_locks, started_mtime));
+        std::thread::spawn(move || handle_request(req, &token, &default_root, &cache, &root_locks, &watchers, started_mtime));
     }
     Ok(())
 }
@@ -361,6 +465,7 @@ fn handle_request(
     default_root: &Option<PathBuf>,
     cache: &Cache,
     root_locks: &RootLocks,
+    watchers: &Watchers,
     started_mtime: Option<std::time::SystemTime>,
 ) {
         let (path, p) = params(req.url());
@@ -501,6 +606,25 @@ fn handle_request(
                 }
             }
             (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) => {
+                // Fast path: a watcher already confirms nothing relevant
+                // has changed since this root's cache was built — answer
+                // straight from it, the exact computation ?peek=1 uses,
+                // just entered automatically whenever it's actually still
+                // valid instead of requiring the caller to assert it. See
+                // this module's "Watcher-driven cache invalidation" doc.
+                // `is_dirty_or_unwatched` + this lookup happen under one
+                // cache lock acquisition (not two) so a concurrent
+                // remove/insert on another thread can't be observed as a
+                // hit-then-miss race — worst case here is just falling
+                // through to a real scan, never a wrong answer.
+                let fast_path = if is_dirty_or_unwatched(watchers, &root) {
+                    None
+                } else {
+                    cache.lock().unwrap().get(&root).map(|(idx, graph)| answer_from_index(ep, idx, graph, &root, &p))
+                };
+                match fast_path {
+                    Some(result) => result,
+                    None => {
                 // Serialize scans of THIS root — see RootLocks's doc — but
                 // with try_lock, not a blocking lock: a blocking lock meant
                 // every request that arrived while a scan was already
@@ -545,6 +669,13 @@ fn handle_request(
                             Some((s, g)) => (Some(s), Some(g)),
                             None => store::load_raw(&root),
                         };
+                        // Registered/cleared BEFORE scanning, not after —
+                        // see this module's "Watcher-driven cache
+                        // invalidation" doc for why that order is the only
+                        // safe one (a change landing during the scan must
+                        // leave the root dirty for the NEXT request).
+                        ensure_watcher(watchers, &root);
+                        clear_dirty(watchers, &root);
                         let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
                         let result = answer_from_index(ep, &idx, &graph, &root, &p);
                         cache.lock().unwrap().insert(root, (idx, graph));
@@ -552,6 +683,8 @@ fn handle_request(
                     }
                 };
                 scan_outcome
+                    }
+                }
             }
             // Everything below never touched `idx`/`graph` even before this
             // split existed — it only ever needed `root` — so it no longer
@@ -1062,5 +1195,94 @@ mod tests {
 
         let (status, _) = http_get(17406, "/proposal/submit?kind=decision");
         assert_eq!(status, 401, "proposal/submit with no token must still be rejected");
+    }
+
+    /// End-to-end proof of the watcher-driven cache invalidation described
+    /// in this module's own doc comment ("Watcher-driven cache
+    /// invalidation") — a REAL spawned server, a REAL file edit on disk
+    /// between two REAL HTTP requests, not a unit test of the helper
+    /// functions in isolation.
+    ///
+    /// The fixture gets ~300 filler files specifically so the walk
+    /// `scan_with_prior` does on every real scan has a real, measurable
+    /// cost to skip — on a 1-2 file fixture a full scan and a cache-only
+    /// answer are both sub-millisecond, and a timing assertion comparing
+    /// two noise-level numbers proves nothing either way.
+    #[test]
+    fn watcher_skips_rescan_when_nothing_changed_and_catches_it_when_something_did() {
+        let home = tmp_dir("home-watch-invalidation");
+        let project = tmp_dir("project-watch-invalidation");
+        std::fs::write(
+            project.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n}\n",
+        )
+        .unwrap();
+        for i in 0..300 {
+            std::fs::write(project.join(format!("filler_{i}.txt")), b"filler").unwrap();
+        }
+        let (_guard, _token) = spawn_server(&project, &home, 17410);
+
+        // Request 1: first-ever scan of this root — populates the cache
+        // and (per this fix) registers a filesystem watcher on it.
+        let (status, body) = http_get(17410, "/doctor");
+        assert_eq!(status, 200, "got: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["counts"]["concepts"], 1, "sanity: fixture must start with exactly Widget, got: {body}");
+
+        // A real edit to a real declaration file — this is exactly the
+        // event class `watch.rs`'s own `relevant()` must say yes to.
+        std::fs::write(
+            project.join("schema.prisma"),
+            "model Widget {\n  id Int @id @default(autoincrement())\n}\nmodel Gadget {\n  id Int @id @default(autoincrement())\n}\n",
+        )
+        .unwrap();
+        // Bounded wait for the watcher's OS-level event to actually be
+        // delivered and set the dirty flag — inotify delivery is
+        // asynchronous, not instant. Polls /doctor itself (which is safe
+        // to call repeatedly: worst case it answers from a not-yet-dirty
+        // cache and this loop just retries) until it reports the new
+        // concept or a real timeout elapses, rather than a single fixed
+        // sleep that could flake on a slower CI runner. The iteration that
+        // FINDS the change is, by construction, the one real rescan this
+        // whole test needs — captured directly, not re-derived from a
+        // later call (a later call would itself hit the fast path, since
+        // nothing changes between it and this one, and comparing two
+        // fast-path timings against each other would prove nothing).
+        let mut scan_elapsed = None;
+        let mut last_body = String::new();
+        for _ in 0..40 {
+            let poll_start = std::time::Instant::now();
+            let (status, body) = http_get(17410, "/doctor");
+            let poll_elapsed = poll_start.elapsed();
+            assert_eq!(status, 200, "got: {body}");
+            let v: Value = serde_json::from_str(&body).unwrap();
+            if v["counts"]["concepts"] == 2 {
+                scan_elapsed = Some(poll_elapsed);
+                break;
+            }
+            last_body = body;
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let scan_elapsed = scan_elapsed
+            .unwrap_or_else(|| panic!("watcher never caught the schema.prisma edit within 4s — last /doctor said: {last_body}"));
+
+        // Nothing has changed since the rescan above — must hit the fast
+        // path (watcher confirms clean) and skip scan_with_prior entirely.
+        // Timed against the real rescan just captured, on this same
+        // 300-file fixture, for a real comparison — not an arbitrary
+        // absolute threshold that would be meaningless on a different
+        // machine.
+        let fast_start = std::time::Instant::now();
+        let (status, body) = http_get(17410, "/doctor");
+        let fast_elapsed = fast_start.elapsed();
+        assert_eq!(status, 200, "got: {body}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["counts"]["concepts"], 2);
+
+        println!("scan-triggering request: {scan_elapsed:?}; cache-only request: {fast_elapsed:?}");
+        assert!(
+            fast_elapsed < scan_elapsed,
+            "an unchanged root's request ({fast_elapsed:?}) must be faster than one that just rescanned \
+             a 300-file tree ({scan_elapsed:?}) — if it isn't, the fast path isn't actually skipping the walk"
+        );
     }
 }

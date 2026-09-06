@@ -67,7 +67,13 @@ fn skip_dir(e: &walkdir::DirEntry) -> bool {
 /// smaller one than "the daemon cannot start on any repository with a
 /// large build-artifact directory" — which is what the recursive call
 /// produced in practice.
-fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
+///
+/// `pub(crate)`: `rest.rs` registers the exact same per-directory watches
+/// for its own cache-invalidation use, and reuses this rather than
+/// re-deriving the SKIP_DIRS exclusion list a second time — one place that
+/// decides what a watcher should never look inside, not two that could
+/// quietly drift apart.
+pub(crate) fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
     WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| !skip_dir(e))
@@ -77,7 +83,7 @@ fn watchable_dirs(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn relevant(path: &Path) -> bool {
+pub(crate) fn relevant(path: &Path) -> bool {
     // Never react to our own database — the daemon writing it must not wake
     // the daemon. PREFIX match, not exact.
     // SQLite's rollback-journal file (archietect.db-journal) is created and
