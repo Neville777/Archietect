@@ -16,7 +16,7 @@
 
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{docker_domain, documents_domain, permissions, photos_domain, query, root, scan, system_db};
 
@@ -83,6 +83,98 @@ fn describe_call(name: &str, args: &Value) -> String {
         Some(a) => format!("{name}({a})"),
         None => name.to_string(),
     }
+}
+
+/// Shared, mutex-protected AI-activity state — read/written by both the
+/// main stdin-processing loop and the background flush thread below (see
+/// `spawn_activity_flusher`). A plain per-call HashMap sufficed as long as
+/// the only thing that could trigger a flush was another tool call arriving
+/// late enough — which is exactly the bug this replaces: a session's LAST
+/// call before going quiet never flushed at all, because nothing ever
+/// arrived afterward to notice. Reported live: `duplicates` then
+/// `impact(akt_wallet_state)` back to back — `duplicates` happened to cross
+/// the old interval and flushed (itself plus whatever came before), but
+/// `impact` started a fresh, empty accumulator that no third call ever
+/// came along to flush. It would have sat there forever.
+#[derive(Default)]
+struct McpActivity {
+    client_info: Option<(String, String)>,
+    recorded_connection_for: std::collections::HashSet<PathBuf>,
+    tools_since_heartbeat: std::collections::HashMap<PathBuf, std::collections::BTreeSet<String>>,
+    last_heartbeat_for: std::collections::HashMap<PathBuf, i64>,
+}
+
+/// At most one history write per root per this many ms — bounds writes
+/// during a rapid burst of tool calls without meaningfully delaying the
+/// "an AI is using this" signal a human is actually watching for in the
+/// GUI (which itself polls every 15s — a few seconds of write-throttling
+/// underneath that is invisible; the old 60s value was not).
+const HEARTBEAT_INTERVAL_MS: i64 = 3_000;
+
+/// The one place either the main loop or the background flusher actually
+/// appends to history, so the two can't diverge on what "due" means.
+/// Writes `root`'s pending activity as `mcp_client_connected` (first
+/// contact) or `mcp_client_active` (thereafter), then clears it. Registers
+/// the project into system.db on first contact — see
+/// `mcp_client_connected`'s own doc for why that lives here rather than
+/// requiring a separate manual `system_register` call.
+fn flush_if_due(activity: &mut McpActivity, root: &Path, now: i64) {
+    let Some(tools) = activity.tools_since_heartbeat.get(root) else { return };
+    if tools.is_empty() {
+        return;
+    }
+    let due = activity
+        .last_heartbeat_for
+        .get(root)
+        .map(|last| now - last >= HEARTBEAT_INTERVAL_MS)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    let Some((client_name, client_version)) = activity.client_info.clone() else { return };
+    let tools: Vec<String> = tools.iter().cloned().collect();
+    let first_contact = activity.recorded_connection_for.insert(root.to_path_buf());
+    let kind = if first_contact { "mcp_client_connected" } else { "mcp_client_active" };
+    let _ = crate::store::append_events(root, &[(
+        now,
+        kind.to_string(),
+        client_name,
+        json!({ "version": client_version, "tools": tools }).to_string(),
+    )]);
+    activity.last_heartbeat_for.insert(root.to_path_buf(), now);
+    if let Some(t) = activity.tools_since_heartbeat.get_mut(root) {
+        t.clear();
+    }
+    if first_contact {
+        if let Ok(db_path) = system_db::default_db_path() {
+            let _ = system_db::register_project(&db_path, root);
+        }
+    }
+}
+
+/// The fix for "the last tool call in a session never shows up": a new
+/// call arriving used to be the ONLY thing that ever rechecked whether a
+/// flush was due. This thread rechecks every root with pending activity on
+/// a timer instead, so a flush happens within HEARTBEAT_INTERVAL_MS of the
+/// last call regardless of whether anything else ever arrives after it.
+/// 500ms tick: fine-grained enough that the GUI's own 15s poll never
+/// visibly waits on this thread's own latency, coarse enough to cost
+/// nothing noticeable over a session that may run for hours.
+fn spawn_activity_flusher(activity: std::sync::Arc<std::sync::Mutex<McpActivity>>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let now = crate::humanize::now_ms();
+        let mut guard = activity.lock().unwrap();
+        let pending: Vec<PathBuf> = guard
+            .tools_since_heartbeat
+            .iter()
+            .filter(|(_, tools)| !tools.is_empty())
+            .map(|(root, _)| root.clone())
+            .collect();
+        for root in pending {
+            flush_if_due(&mut guard, &root, now);
+        }
+    });
 }
 
 fn tool_defs_inner() -> Value {
@@ -337,28 +429,16 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // already writes to beside the watch daemon, not a new mechanism. This
     // is the only way to answer "is an AI actually using this, and which
     // one" with evidence instead of a guess.
-    let mut client_info: Option<(String, String)> = None;
-    let mut recorded_connection_for: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     // `mcp_client_connected` alone answers "has an AI ever used this
     // project" — it does NOT answer "is one using it RIGHT NOW", since it
     // fires exactly once per (session, root) and a session can run for
     // hours. Found live: a user demanding to SEE an AI actively working in
     // the GUI, not go find a single old log line and guess whether the
-    // session behind it is even still open. This tracks, per root, the
-    // timestamp of the last heartbeat WRITTEN (not merely the last tool
-    // call — every tool call would spam the history log, one event per
-    // query, forever) so a heartbeat only gets appended when at least
-    // HEARTBEAT_INTERVAL_MS has passed since the last one for that root.
-    let mut last_heartbeat_for: std::collections::HashMap<PathBuf, i64> = std::collections::HashMap::new();
-    // "Which tools has it actually called" is the honest, answerable
-    // version of "what does the AI see" — the FULL request/response payload
-    // for every call would be the literal answer, but logging that
-    // permanently is a different, much larger feature (arbitrary-size
-    // repeated writes to the history log) than showing which questions were
-    // asked. Accumulates between heartbeats, cleared on write — so each
-    // mcp_client_connected/mcp_client_active event reports exactly the
-    // tools called SINCE the previous one, not a lifetime total.
-    let mut tools_since_heartbeat: std::collections::HashMap<PathBuf, std::collections::BTreeSet<String>> = std::collections::HashMap::new();
+    // session behind it is even still open. See `McpActivity`'s own doc for
+    // the rest of this design, including the bug (a call with nothing after
+    // it never flushed) that made a background thread necessary.
+    let activity = std::sync::Arc::new(std::sync::Mutex::new(McpActivity::default()));
+    spawn_activity_flusher(activity.clone());
 
     for line in stdin.lock().lines() {
         let line = line?;
@@ -380,7 +460,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
         let result: Result<Value, (i64, String)> = match method {
             "initialize" => {
                 if let Some(ci) = msg["params"].get("clientInfo") {
-                    client_info = Some((
+                    activity.lock().unwrap().client_info = Some((
                         ci.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
                         ci.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     ));
@@ -408,59 +488,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         Err((-32602i64, format!("root does not exist: {}", root.display())))
                     }
                     Some(root) => {
-                        if let Some((client_name, client_version)) = &client_info {
+                        {
+                            let mut guard = activity.lock().unwrap();
+                            if guard.client_info.is_some() && !name.is_empty() {
+                                let desc = describe_call(name, args);
+                                guard.tools_since_heartbeat.entry(root.clone()).or_default().insert(desc);
+                            }
                             let now = crate::humanize::now_ms();
-                            if !name.is_empty() {
-                                tools_since_heartbeat.entry(root.clone()).or_default().insert(describe_call(name, args));
-                            }
-                            if recorded_connection_for.insert(root.clone()) {
-                                let tools: Vec<&String> = tools_since_heartbeat.get(&root).into_iter().flatten().collect();
-                                let _ = crate::store::append_events(&root, &[(
-                                    now,
-                                    "mcp_client_connected".to_string(),
-                                    client_name.clone(),
-                                    json!({ "version": client_version, "tools": tools }).to_string(),
-                                )]);
-                                last_heartbeat_for.insert(root.clone(), now);
-                                if let Some(t) = tools_since_heartbeat.get_mut(&root) { t.clear(); }
-                                // A project an AI actually works on should be
-                                // findable via `system_list`/the GUI's own
-                                // project picker without a human separately
-                                // remembering to run `system_register` first
-                                // — that extra manual step is exactly why
-                                // universal_trader/backend, worked on all
-                                // session via MCP, never showed up there.
-                                // Idempotent upsert (see system_db's own
-                                // doc): safe to call once per (session,
-                                // root), same gate as the connected event
-                                // above, never resets first_registered_ms.
-                                if let Ok(db_path) = system_db::default_db_path() {
-                                    let _ = system_db::register_project(&db_path, &root);
-                                }
-                            } else {
-                                // Every tool call reaches here, but only one
-                                // in HEARTBEAT_INTERVAL_MS actually writes —
-                                // see this fn's own doc on `last_heartbeat_for`
-                                // for why: a live "still active" signal
-                                // without turning every query into a
-                                // permanent history entry.
-                                const HEARTBEAT_INTERVAL_MS: i64 = 60_000;
-                                let stale = last_heartbeat_for
-                                    .get(&root)
-                                    .map(|last| now - last >= HEARTBEAT_INTERVAL_MS)
-                                    .unwrap_or(true);
-                                if stale {
-                                    let tools: Vec<&String> = tools_since_heartbeat.get(&root).into_iter().flatten().collect();
-                                    let _ = crate::store::append_events(&root, &[(
-                                        now,
-                                        "mcp_client_active".to_string(),
-                                        client_name.clone(),
-                                        json!({ "version": client_version, "tools": tools }).to_string(),
-                                    )]);
-                                    last_heartbeat_for.insert(root.clone(), now);
-                                    if let Some(t) = tools_since_heartbeat.get_mut(&root) { t.clear(); }
-                                }
-                            }
+                            flush_if_due(&mut guard, &root, now);
                         }
                         let prior = cache.remove(&root);
                         let (schema_prior, graph_prior) = match prior {
@@ -968,6 +1003,42 @@ mod tests {
         assert_eq!(
             out["enabled"], false,
             "no explicit config for 'documents' in this project, so MCP must report disabled — got: {out}"
+        );
+    }
+
+    /// Real regression test for the exact bug reported live this session:
+    /// `duplicates` then `impact(x)` back to back — `duplicates` happened to
+    /// land on a heartbeat boundary and flushed (itself included), but
+    /// `impact` started a fresh accumulator that nothing ever arrived to
+    /// flush, because the old design only ever rechecked "is a flush due"
+    /// when the NEXT call showed up. This makes exactly ONE call and then
+    /// sends NOTHING further — the real subprocess, real stdio, no second
+    /// call standing in for a background timer. If `spawn_activity_flusher`
+    /// doesn't work, this call's info sits in memory forever and the
+    /// assertion below finds nothing.
+    #[test]
+    fn last_call_in_a_session_flushes_even_with_no_call_after_it() {
+        let home = tmp_dir("home-lone-call");
+        let project = tmp_dir("project-lone-call");
+        let (_guard, mut stdin, rx) = spawn_mcp(&project, &home);
+        let _ = call(&mut stdin, &rx, 1, "initialize", json!({
+            "clientInfo": { "name": "lone-call-test", "version": "9.9.9" }
+        }));
+        let _ = call(&mut stdin, &rx, 2, "tools/call", json!({ "name": "doctor", "arguments": {} }));
+
+        // Nothing sent after this — real wall-clock wait, comfortably past
+        // HEARTBEAT_INTERVAL_MS (3s) plus the flusher's own 500ms tick.
+        std::thread::sleep(Duration::from_millis(4_500));
+
+        let events = crate::store::read_history(&project, None, 10);
+        let found = events.iter().any(|e| {
+            e["kind"] == "mcp_client_connected"
+                && e["concept"] == "lone-call-test"
+                && e["detail"]["tools"].as_array().map(|t| t.iter().any(|x| x == "doctor")).unwrap_or(false)
+        });
+        assert!(
+            found,
+            "the lone 'doctor' call never flushed to history with no follow-up call — got events: {events:#?}"
         );
     }
 }
