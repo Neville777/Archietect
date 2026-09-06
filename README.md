@@ -1,6 +1,7 @@
 # archietect
 
-**The persistent architectural brain of a software project.**
+**A deterministic, evidence-backed memory of what a codebase is — shared
+across every project on the machine, not rebuilt from scratch per session.**
 
 [![CI](https://github.com/Neville777/Archietect/actions/workflows/ci.yml/badge.svg)](https://github.com/Neville777/Archietect/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/archietect.svg)](https://crates.io/crates/archietect)
@@ -9,9 +10,12 @@
 
 A deterministic engine that maintains a living record of what a project's
 concepts ARE — what exists, what is canonical, who uses it, why it is shaped
-this way, and how that has changed over time. AI agents, editors, CI, and
-humans all query the same continuously maintained state instead of each
-reconstructing a partial, inconsistent understanding per session.
+this way, and how that has changed over time — behind an explicit permission
+boundary controlling what it's even allowed to look at, and a registry that
+knows about every project it's been pointed at on the machine, not just the
+one open right now. AI agents, editors, CI, and humans all query the same
+continuously maintained state instead of each reconstructing a partial,
+inconsistent understanding per session.
 
 **Archietect does not use AI. AI uses Archietect.**
 
@@ -22,16 +26,20 @@ reconstructing a partial, inconsistent understanding per session.
                 │
           Archietect (CLI / REST / MCP)
                 │
-        Architectural state              ← truth lives HERE
-   laws · concepts · decisions · aliases
-   evidence · provenance · history
-                │
-    source code · schemas · ADRs
+     ┌──────────┴───────────┐
+     ▼                       ▼
+Architectural state    System registry
+   (per project)      (every project this
+laws · concepts ·      machine knows about
+decisions · aliases   — which one, and when
+evidence · history     an AI last touched it)
+     │
+source code · schemas · ADRs
 ```
 
 ## Demo
 
-![The GUI: an overview with real hierarchy, a nested domain → file → concept drill-down, and the query tab answering a raw endpoint call — all live REST fetches against this repository's own source, nothing staged.](docs/gui-demo.gif)
+![Archietect's GUI: overview, a domain → file → concept drill-down, and the query tab.](docs/gui-demo.gif)
 
 The GUI (`archietect gui` or the desktop app, Installation Option D below)
 is a thin, read-only client of the same REST API the CLI and MCP server
