@@ -30,6 +30,13 @@ reconstructing a partial, inconsistent understanding per session.
 
 ## Demo
 
+![The GUI: an overview with real hierarchy, a nested domain → file → concept drill-down, and the query tab answering a raw endpoint call — all live REST fetches against this repository's own source, nothing staged.](docs/gui-demo.gif)
+
+The GUI (`archietect gui` or the desktop app, Installation Option D below)
+is a thin, read-only client of the same REST API the CLI and MCP server
+answer from — every number above is a real fetch against this repo's own
+`archietect.db`, not a mockup.
+
 ```
 $ archietect concept doctor
 {
