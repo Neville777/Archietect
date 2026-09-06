@@ -463,11 +463,15 @@ pub fn intent(idx: &Index, text: &str) -> Value {
     let mut needs_confirmation = Vec::new();
     // Pass an empty structural graph — intent only needs schema-layer facts.
     // Structural enrichment is available on concept() directly when needed.
+    // NOTE: this means concept()'s STRUCTURAL verdict can never actually be
+    // returned here (it needs graph.symbols/graph.routes, both empty by
+    // construction) — the STRUCTURAL arm below is defensive, not dead-code
+    // removal bait, in case this ever gets called with a real graph.
     let empty_graph = StructuralGraph::default();
     for t in &terms {
         let r = concept(idx, &empty_graph, t);
         match r["verdict"].as_str().unwrap_or("") {
-            "ACTIVE" | "DECLARED_ONLY" => extend.push(json!({
+            "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" => extend.push(json!({
                 "concept": t,
                 "canonical": r["canonical"],
                 "verdict": r["verdict"],
@@ -477,6 +481,31 @@ pub fn intent(idx: &Index, text: &str) -> Value {
                 "concept": t,
                 "note": "name-resemblance only — confirm by hand",
             })),
+            // INSUFFICIENT_COVERAGE means concept() found source it cannot
+            // parse at all (no extractor for that language) — concept()'s
+            // own recommendation text says outright "this is not a
+            // confirmed absence." Routing it into `create` anyway silently
+            // discarded that caveat and told the caller to go build
+            // something concept() explicitly said it couldn't rule out.
+            // Found live: a term matching only files in an unsupported
+            // language reported "genuinely new" instead of "can't tell."
+            "INSUFFICIENT_COVERAGE" => needs_confirmation.push(json!({
+                "concept": t,
+                "note": "this repo has source Archietect cannot parse for this term — not a confirmed absence, confirm by hand",
+            })),
+            // ABSENT ("no declaration, no usage, no name resemblance") is
+            // the only verdict genuinely suited to `create` — but it's still
+            // purely a NAME-matching result (concept()'s alias/token/prefix
+            // matching, `model.rs`'s `same_word` requiring >=4 shared
+            // leading bytes). It cannot and does not check whether a
+            // DIFFERENT word already names the same idea — e.g. a request
+            // mentioning "moves" when `candidate_timeline` already records
+            // stage moves under different vocabulary. Confirmed live: this
+            // exact case. That's not a false ABSENT (nothing IS named
+            // "moves") — it's `create`'s caller-facing claim overreaching
+            // what a name match can actually prove, so the caveat lives
+            // here rather than trying to catch every synonym (a much larger,
+            // separate feature — real semantic matching, not scoped here).
             _ => create.push(t.clone()),
         }
     }
@@ -492,11 +521,14 @@ pub fn intent(idx: &Index, text: &str) -> Value {
             if create.is_empty() {
                 "Nothing genuinely new required.".to_string()
             } else {
-                format!("Only genuinely new: {}.", create.join(", "))
+                format!(
+                    "No NAME match for: {} — but name-matching cannot rule out the same idea existing under different vocabulary; check by hand before building.",
+                    create.join(", ")
+                )
             }
         )
     } else if !create.is_empty() && needs_confirmation.is_empty() {
-        "No named concept exists here — this intent is greenfield for this project.".to_string()
+        "No name match for this vocabulary in this project's declared concepts — likely greenfield, but this is a name-based check, not a semantic one; a same-idea concept under different words would not be caught.".to_string()
     } else {
         "Nothing matched declarations. Either the vocabulary differs from the project's or this is new territory.".to_string()
     };
@@ -1836,6 +1868,103 @@ mod verdicts_tests {
         let out = verdicts(&idx);
         assert_eq!(out["DECLARED_ONLY"]["count"], json!(30), "{out}");
         assert_eq!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().len(), 25, "list must be capped even though count is real");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod intent_tests {
+    use super::*;
+
+    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, StructuralGraph, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("archietect-intent-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        for (rel, content) in files {
+            let path = tmp.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, content).unwrap();
+        }
+        let (idx, graph) = crate::scan::scan(&tmp);
+        (idx, graph, tmp)
+    }
+
+    #[test]
+    fn insufficient_coverage_goes_to_needs_confirmation_not_create() {
+        // "widget" only appears inside a .lua file — a language with no
+        // extractor at all (same case the tool's own KNOWN_UNSUPPORTED doc
+        // comment cites: a synthetic Lua file). Before this fix, concept()'s
+        // own INSUFFICIENT_COVERAGE verdict — whose recommendation text
+        // says outright "this is not a confirmed absence" — was silently
+        // downgraded to a confident `create` entry by intent()'s catch-all.
+        let (idx, _graph, tmp) = scan_tmp(
+            "coverage",
+            &[("script.lua", "local widget = require('widget_lib')\n")],
+        );
+
+        let out = intent(&idx, "add a widget dashboard");
+
+        let needs_confirmation = out["needs_confirmation"].as_array().unwrap();
+        assert!(
+            needs_confirmation.iter().any(|e| e["concept"] == "widget"),
+            "expected 'widget' in needs_confirmation, got: {out}"
+        );
+        assert!(
+            !out["create"].as_array().unwrap().iter().any(|c| c == "widget"),
+            "'widget' must not be confidently claimed as create-worthy when coverage is insufficient, got: {out}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn true_absent_still_lands_in_create_but_summary_carries_the_name_matching_caveat() {
+        // A fully-covered repo (plain .ts, no unsupported languages) where
+        // the queried term genuinely matches nothing by name. `create` is
+        // still the right bucket — but the surrounding text must not
+        // overclaim semantic certainty a name-only check can't back up.
+        let (idx, _graph, tmp) = scan_tmp(
+            "absent",
+            &[("src/index.ts", "export class Invoice {}\n")],
+        );
+
+        let out = intent(&idx, "add zephyr notifications");
+
+        assert!(
+            out["create"].as_array().unwrap().iter().any(|c| c == "zephyr"),
+            "expected 'zephyr' in create, got: {out}"
+        );
+        let summary = out["smallest_correct_change"].as_str().unwrap();
+        assert!(
+            summary.contains("name") || summary.contains("vocabulary"),
+            "summary must flag this as a name-based check, not a semantic guarantee, got: {summary:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn active_concept_still_extends_normally() {
+        // Regression guard: the routing changes above must not disturb the
+        // existing, correct ACTIVE/DECLARED_ONLY -> extend path.
+        let (idx, _graph, tmp) = scan_tmp(
+            "extend",
+            &[
+                ("schema.prisma", "model Invoice {\n  id Int @id\n}\n"),
+                ("src/use.ts", "db.invoice.findMany()\n"),
+            ],
+        );
+
+        let out = intent(&idx, "add invoice export");
+
+        let extend = out["extend"].as_array().unwrap();
+        assert!(
+            extend.iter().any(|e| e["concept"] == "invoice" && e["canonical"] == "Invoice"),
+            "expected 'invoice' to extend 'Invoice', got: {out}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
