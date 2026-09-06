@@ -95,6 +95,10 @@
   <label for="root">root</label>
   <input id="root" size="52" placeholder="/absolute/path/to/repo">
   <button onclick="setRoot()">load</button>
+  <label style="margin-left:auto; display:flex; align-items:center; gap:.35rem; cursor:pointer;" title="When the project you're looking at goes quiet and a different registered project lights up with AI activity, switch to it automatically instead of requiring a click.">
+    <input type="checkbox" id="followAi" style="width:auto;" onchange="setFollowEnabled(this.checked)">
+    follow active project
+  </label>
 </div>
 <div id="aiStatus"></div>
 <nav>
@@ -287,10 +291,50 @@ async function refreshAiStatus(){
     setAiStatus('ai-idle', `<span class="dot"></span> <span class="muted">last AI activity: ${esc(n)}${seen[n].version ? ' v' + esc(seen[n].version) : ''}, ${agoText(seen[n].ts_ms)}${toolsText(seen[n])}</span>`);
   }
 }
+// "the GUI should just change the root" — literally: when the project
+// you're currently looking at has gone quiet and a DIFFERENT registered
+// project just lit up, follow it there automatically instead of making
+// someone click "projects" and pick it by hand. Deliberately does NOT
+// switch while the CURRENT root is itself active — yanking someone off a
+// project an AI is still actively working on, because some unrelated
+// session touched a different one, would be worse than the manual click
+// it's replacing. Toggle exists (default on) because auto-navigating out
+// from under someone reading something IS a real cost, even bounded this
+// way — someone reading a quiet project should be able to opt out.
+let followEnabled = localStorage.getItem('arch_follow_ai') !== 'false';
+function setFollowEnabled(v){
+  followEnabled = v;
+  localStorage.setItem('arch_follow_ai', v ? 'true' : 'false');
+}
+async function checkFollowActiveProject(){
+  if (!followEnabled) return;
+  const currentRoot = $('root').value;
+  const listResp = await fetch('/system/list').then(r => r.json()).catch(() => null);
+  const list = (listResp && listResp.projects) || [];
+  if (list.length < 2) return; // nothing else to follow to
+  const latestActivity = async (root) => {
+    const d = await fetch(`/history?root=${encodeURIComponent(root)}&limit=20`).then(r => r.json()).catch(() => null);
+    const seen = clientActivityFromEvents((d && d.events) || []);
+    const values = Object.values(seen).map(s => s.ts_ms);
+    return values.length ? Math.max(...values) : 0;
+  };
+  const now = Date.now();
+  if (currentRoot && now - (await latestActivity(currentRoot)) < ACTIVE_MS) return; // current root is itself active — stay
+  if ($('root').value !== currentRoot) return; // root changed while the above was in flight
+  const others = list.filter(p => p.root !== currentRoot);
+  const latests = await Promise.all(others.map(p => latestActivity(p.root)));
+  if ($('root').value !== currentRoot) return; // root changed while THIS was in flight
+  let best = null;
+  others.forEach((p, i) => {
+    if (now - latests[i] < ACTIVE_MS && (!best || latests[i] > best.latest)) best = { root: p.root, latest: latests[i] };
+  });
+  if (best) loadProject(best.root);
+}
 function startAiStatusPolling(){
   if (aiStatusTimer) return;
   refreshAiStatus();
-  aiStatusTimer = setInterval(refreshAiStatus, 15000);
+  checkFollowActiveProject();
+  aiStatusTimer = setInterval(() => { refreshAiStatus(); checkFollowActiveProject(); }, 15000);
 }
 
 let progressTimer = null;
@@ -1015,5 +1059,6 @@ if (urlRoot) localStorage.setItem('arch_root', urlRoot);
 // root above" placeholder with nothing to click. A remembered/passed root
 // still goes straight to overview, unchanged.
 show($('root').value ? 'overview' : 'projects');
+$('followAi').checked = followEnabled;
 startAiStatusPolling();
 </script>
