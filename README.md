@@ -43,8 +43,7 @@ source code · schemas · ADRs
 
 The GUI (`archietect gui` or the desktop app, Installation Option D below)
 is a thin, read-only client of the same REST API the CLI and MCP server
-answer from — every number above is a real fetch against this repo's own
-`archietect.db`, not a mockup.
+answer from.
 
 ```
 $ archietect concept doctor
