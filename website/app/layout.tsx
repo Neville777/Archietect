@@ -32,9 +32,11 @@ export const metadata: Metadata = {
   title: "Archietect — deterministic architectural memory for AI coding tools",
   description:
     "Archietect is a deterministic, evidence-backed memory of what a codebase is — shared across every project on the machine, queried identically by CLI, REST, and MCP.",
-  icons: {
-    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%90%3C/text%3E%3C/svg%3E",
-  },
+  // No manual `icons` entry — app/favicon.ico (Next's own file convention)
+  // is what actually answers the browser's automatic GET /favicon.ico
+  // request. The data-URI this used to point at only ever produced a
+  // <link> tag; it never satisfied that separate, automatic request,
+  // which is exactly what was 500ing in production.
   openGraph: {
     title: "Archietect",
     description:
