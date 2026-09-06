@@ -556,7 +556,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 13; // +Rust Axum/Actix/Rocket route declarations, +WebSocket connection calls (websockets.connect/new WebSocket/connect_async) — a cached Rust file_facts entry from before this predates route/WS extraction for Rust entirely
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 14; // +TS/JS type alias declarations, +Angular Routes-array route recognition — a cached TS/JS file_facts entry from before this predates both entirely
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -906,8 +906,8 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         name: "TypeScript/JavaScript",
         extensions: &["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"],
         extractor: extract_ts_js,
-        symbol_support: "classes, interfaces, enums, exported functions, routes, events",
-        frameworks: &["Express", "NestJS", "Next.js", "Nuxt (server/api)"],
+        symbol_support: "classes, interfaces, type aliases, enums, exported and unexported-PascalCase functions, routes, events",
+        frameworks: &["Express", "NestJS", "Next.js", "Nuxt (server/api)", "Angular (router)"],
     },
     LanguageSpec {
         name: "Vue",
@@ -1144,6 +1144,31 @@ fn extract_ts_js(
         });
     }
 
+    // `type Foo = ...` — a completely separate declaration form from
+    // class/interface/enum above, and previously invisible regardless of
+    // export: found investigating a real Angular SPA's hand-rolled routing,
+    // `type View = 'dashboard' | 'candidates' | ...` (a discriminated-union
+    // "which screen" type driving the app's entire navigation) had no
+    // structural representation at all — not ABSENT, not STRUCTURAL, just
+    // never looked at. `export` is optional here (unlike class_re, which
+    // already permits either) since a type alias this central to an app's
+    // own control flow is routinely kept private to its declaring file.
+    // PascalCase-required for the same reason as the unexported-function
+    // patterns above: this project's own concept-identity convention, not a
+    // new rule invented for this case.
+    let type_alias_re = Regex::new(
+        r"(?m)^(?:export\s+)?type\s+([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*="
+    ).unwrap();
+    for cap in type_alias_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class, // same "named type" role interfaces/enums already play here
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+        });
+    }
+
     // Imports: import { X, Y } from './module'
     let import_re = Regex::new(
         r#"import\s+(?:\*\s+as\s+\w+|\{([^}]*)\}|(\w+))\s+from\s+['"]([^'"]+)['"]"#
@@ -1268,6 +1293,53 @@ fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
     next_app_router_routes(rel, text, routes);
     nuxt_server_api_route(rel, routes);
     graphql_tagged_template_operations(rel, text, routes);
+    angular_routes(rel, text, routes);
+}
+
+/// Angular's `@angular/router` route table: `{ path: 'orders', component:
+/// OrdersComponent }` object literals inside a `Routes`-typed array. Found
+/// investigating a real Angular SPA — Angular had NO framework recognition
+/// at all before this (its own class/interface/type/enum symbols were
+/// already caught by the generic patterns above, but the actual navigation
+/// graph — which path renders which component — was invisible, the same
+/// class of gap Rust's total absence of route recognition was before that
+/// got fixed).
+///
+/// `path` and `component` can appear in either order within one object
+/// literal (Angular's own docs show both), so this tries both orders; each
+/// is bounded with `[^{}]*?` (non-greedy, no brace crossing) so it can't
+/// walk into a SIBLING route object or a nested `data: {...}` block and
+/// pair up fields that don't actually belong to the same route. Method is
+/// always "ANY" — client-side navigation has no HTTP verb, same honest
+/// convention Django/Nuxt's method-less routes already use elsewhere in
+/// this file. A route with no `component` at all (lazy-loaded via
+/// `loadComponent`/`loadChildren`) is deliberately not attempted here — the
+/// target is a dynamic import expression, not a plain identifier, and
+/// guessing at it wrongly is worse than reporting nothing for that one
+/// route.
+fn angular_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
+    let path_then_component = Regex::new(
+        r#"\{\s*path\s*:\s*['"]([^'"]*)['"][^{}]*?component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)"#
+    ).unwrap();
+    let component_then_path = Regex::new(
+        r#"\{\s*component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)[^{}]*?path\s*:\s*['"]([^'"]*)['"]"#
+    ).unwrap();
+    for cap in path_then_component.captures_iter(text) {
+        routes.push(Route {
+            method: "ANY".to_string(),
+            path: cap[1].to_string(),
+            handler: cap[2].to_string(),
+            file: rel.to_string(),
+        });
+    }
+    for cap in component_then_path.captures_iter(text) {
+        routes.push(Route {
+            method: "ANY".to_string(),
+            path: cap[2].to_string(),
+            handler: cap[1].to_string(),
+            file: rel.to_string(),
+        });
+    }
 }
 
 /// GraphQL operations embedded as `gql`...`` / `graphql`...`` tagged
@@ -3121,6 +3193,117 @@ const config = () => ({});
         extract_ts_js("src/App.tsx", src, &mut symbols, &mut imports, &mut routes);
         let hits: Vec<&Symbol> = symbols.iter().filter(|s| s.name == "Dashboard").collect();
         assert_eq!(hits.len(), 1, "exported Dashboard must appear exactly once before dedup even runs, got: {symbols:?}");
+    }
+
+    /// Found investigating a real Angular SPA: `type View = 'dashboard' |
+    /// 'candidates' | ...` — a discriminated-union type driving the app's
+    /// entire hand-rolled navigation — had no structural representation at
+    /// all before this. Neither exported nor unexported forms were caught
+    /// by any prior pattern (class_re requires the literal keyword `class`
+    /// or `interface`, never `type`).
+    #[test]
+    fn finds_type_alias_declarations_exported_and_not() {
+        let src = r#"
+export type View = 'dashboard' | 'candidates' | 'pipeline';
+
+type StageMoveOptions = {
+  note?: string;
+};
+
+type helperAlias = string;
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/app.ts", src, &mut symbols, &mut imports, &mut routes);
+        assert!(
+            symbols.iter().any(|s| s.name == "View" && s.kind == SymbolKind::Class),
+            "exported PascalCase type alias must be captured, got: {symbols:?}"
+        );
+        assert!(
+            symbols.iter().any(|s| s.name == "StageMoveOptions"),
+            "unexported PascalCase type alias must be captured, got: {symbols:?}"
+        );
+        assert!(
+            !symbols.iter().any(|s| s.name == "helperAlias"),
+            "lowercase-led type aliases stay excluded, same convention as every other pattern here, got: {symbols:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod angular_route_tests {
+    use super::*;
+
+    /// The real reported shape: an Angular `Routes` array, `path` before
+    /// `component` (Angular's own docs' usual ordering). Before this,
+    /// Angular had NO route recognition at all — this array was invisible
+    /// to `graph.routes` entirely, the same class of gap Rust's total
+    /// absence of route recognition was before that got fixed.
+    #[test]
+    fn finds_routes_with_path_before_component() {
+        let src = r#"
+export const routes: Routes = [
+  { path: 'dashboard', component: DashboardComponent },
+  { path: 'candidates/:id', component: CandidateDetailComponent },
+];
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
+        assert!(
+            routes.iter().any(|r| r.path == "dashboard" && r.handler == "DashboardComponent"),
+            "got: {routes:?}"
+        );
+        assert!(
+            routes.iter().any(|r| r.path == "candidates/:id" && r.handler == "CandidateDetailComponent"),
+            "got: {routes:?}"
+        );
+    }
+
+    /// Angular's docs also show `component` written before `path` in some
+    /// examples — both orderings are real, valid TypeScript object-literal
+    /// syntax with identical meaning, so both must resolve to the same
+    /// Route.
+    #[test]
+    fn finds_routes_with_component_before_path() {
+        let src = r#"
+export const routes: Routes = [
+  { component: PipelineComponent, path: 'pipeline' },
+];
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
+        assert!(
+            routes.iter().any(|r| r.path == "pipeline" && r.handler == "PipelineComponent"),
+            "got: {routes:?}"
+        );
+    }
+
+    /// Two adjacent routes in one array must not bleed into each other —
+    /// the non-greedy, brace-bounded matching between `path`/`component`
+    /// must not let route A's `path` pair up with route B's `component`.
+    #[test]
+    fn adjacent_routes_do_not_cross_contaminate() {
+        let src = r#"
+export const routes: Routes = [
+  { path: 'a', component: AComponent },
+  { path: 'b', component: BComponent },
+];
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
+        assert!(routes.iter().any(|r| r.path == "a" && r.handler == "AComponent"), "got: {routes:?}");
+        assert!(routes.iter().any(|r| r.path == "b" && r.handler == "BComponent"), "got: {routes:?}");
+        assert!(
+            !routes.iter().any(|r| r.path == "a" && r.handler == "BComponent"),
+            "route A's path must never pair with route B's component, got: {routes:?}"
+        );
     }
 }
 

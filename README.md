@@ -157,7 +157,7 @@ in that directory; limitations are stated there too.
 |---|---|---|
 | Rust | structs, enums, traits, top-level functions | Axum, Actix-web, Rocket |
 | Python | classes, top-level functions | FastAPI, Flask, Django |
-| TypeScript/JavaScript | classes, interfaces, enums, exported functions, events | Express, NestJS, Next.js, Nuxt (server API) |
+| TypeScript/JavaScript | classes, interfaces, type aliases, enums, exported and unexported-PascalCase functions, events | Express, NestJS, Next.js, Nuxt (server API), Angular (router) |
 | Vue | the SFC itself as a component, plus its `<script>` block | Nuxt (pages) |
 | Go | exported structs, interfaces, functions/methods | — |
 | Java/Kotlin | classes, interfaces, Kotlin top-level functions | Spring MVC |
