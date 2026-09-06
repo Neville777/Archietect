@@ -46,6 +46,8 @@
   #aiStatus:empty { display:none; }
   #aiStatus.ai-active { background: var(--ok-bg); border-color: var(--ok-border); color: var(--fg-bright); }
   #aiStatus .dot { display:inline-block; width:.55rem; height:.55rem; border-radius:50%; flex-shrink:0; }
+  #aiStatus .ai-help { margin-left:auto; color:var(--fg-muted); cursor:help; flex-shrink:0; }
+  #aiStatus .ai-help:hover { color:var(--accent); }
   #aiStatus.ai-active .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); animation: pulse 2s ease-in-out infinite; }
   #aiStatus.ai-idle .dot, #aiStatus.ai-none .dot { background: var(--fg-muted); }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
@@ -206,10 +208,23 @@ let aiStatusTimer = null;
 // was the actual complaint: this is a status light, not a footnote, so it
 // needs to look like one — bordered, colored, sized to be seen without
 // hunting for it, not indistinguishable from the rest of the page's prose.
+// This banner shows what archietect has ITSELF observed (an MCP tool call
+// landing) — it has no way to see, and no way to fix, an AI tool's own
+// client-side connection to it. That distinction is exactly the gap a
+// non-CLI user hits: the banner going idle/none doesn't tell them WHY, and
+// the fix (reconnecting that tool's OWN MCP client) happens entirely on
+// the AI tool's side, not here — there is nothing this page could put a
+// button on that would do it. A plain-language hint via the native
+// title="" tooltip (same mechanism nav's own tab buttons already use) is
+// the honest amount of help to offer: explain the gap, name the one
+// command this project's docs know about (Claude Code's /mcp), and stop
+// short of pretending a "reconnect" button here could reach into another
+// program's process.
+const AI_HELP_HTML = `<span class="ai-help" title="This shows the last MCP tool call archietect itself has seen — it can't see or fix an AI tool's OWN connection to it. If you expect one to be connected but this says otherwise, that tool's MCP client may need reconnecting on ITS side: in Claude Code, run /mcp; in other tools, check their MCP/integrations settings.">ⓘ</span>`;
 function setAiStatus(stateClass, html){
   const el = $('aiStatus');
   el.className = stateClass;
-  el.innerHTML = html;
+  el.innerHTML = html ? `${html} ${AI_HELP_HTML}` : '';
 }
 async function refreshAiStatus(){
   const root = $('root').value;
