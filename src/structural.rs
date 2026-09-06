@@ -116,6 +116,174 @@ pub struct Route {
     pub file: String,
 }
 
+/// An OUTBOUND HTTP call — `requests.post(f"http://svc:8000/orders/{id}")`,
+/// `fetch('/api/orders')`, `axios.get(\`/orders/${id}\`)` — found live: a
+/// declared route in one language (a Rust struct behind an Axum handler) had
+/// its only real caller in a DIFFERENT file written in a DIFFERENT language,
+/// calling it over HTTP rather than an in-process function call. Every usage
+/// signal this engine had before this (ORM/schema matchers, the import-graph
+/// walk in `structural_dependents`) requires either a same-language call
+/// expression or an import edge — neither exists for a cross-service HTTP
+/// call, so `impact()` reported "declared but nothing observed touching it"
+/// for a route that was, in fact, live and load-bearing. This is the other
+/// half of a Route: not who DECLARES the endpoint, but who CALLS it.
+///
+/// `path` is the literal path text as it appeared in source, unnormalized —
+/// normalization happens once, at match time, in `paths_match` below, so a
+/// caller comparing against several declared routes doesn't need to know
+/// this struct's own extraction quirks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteCall {
+    pub file: String,
+    pub path: String,
+}
+
+/// Strip a URL down to its path: drop `scheme://host:port`, drop any query
+/// string. `f"http://ws-gateway:8001/orders/{id}?verbose=1"` becomes
+/// `/orders/{id}`. A literal with no scheme (`"/orders"`, already a bare
+/// path — the common case for a same-origin `fetch()`) passes through
+/// unchanged apart from the query-string trim.
+fn path_only(raw: &str) -> String {
+    let without_query = raw.split('?').next().unwrap_or(raw);
+    if let Some(after_scheme) = without_query.split("://").nth(1) {
+        // after_scheme is "host:port/path..." — the path starts at the
+        // first '/', or is empty (bare "http://host" with no path at all).
+        match after_scheme.find('/') {
+            Some(i) => after_scheme[i..].to_string(),
+            None => String::new(),
+        }
+    } else {
+        without_query.to_string()
+    }
+}
+
+/// Whether a DECLARED route path and a CALLED literal path are the same
+/// endpoint, treating any dynamic segment on EITHER side as a wildcard.
+/// Frameworks spell a path parameter differently (`:id`, `{id}`, `<id>`),
+/// and a caller's literal is often an f-string/template-literal interpolation
+/// (`{session_id}`, `${sessionId}`) whose braces survive into the extracted
+/// text — normalizing both to "some segment, don't care what" is what lets
+/// `/orders/{id}` (declared) match `f"/orders/{order_id}"` (called) even
+/// though neither the parameter's name nor its delimiter matches textually.
+/// Segment COUNT must still match — this only forgives what a real path
+/// parameter always varies, not a genuinely different route shape.
+fn paths_match(declared: &str, called: &str) -> bool {
+    fn is_dynamic(segment: &str) -> bool {
+        (segment.starts_with('{') && segment.ends_with('}'))
+            || (segment.starts_with('<') && segment.ends_with('>'))
+            || (segment.starts_with("${") && segment.ends_with('}'))
+            || segment.starts_with(':')
+    }
+    let norm = |p: &str| -> Vec<String> {
+        path_only(p)
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect()
+    };
+    let d = norm(declared);
+    let c = norm(called);
+    if d.len() != c.len() || d.is_empty() {
+        return false;
+    }
+    d.iter().zip(c.iter()).all(|(ds, cs)| {
+        is_dynamic(ds) || is_dynamic(cs) || ds.eq_ignore_ascii_case(cs)
+    })
+}
+
+/// Find outbound HTTP calls in `text` — the literal path passed to a common
+/// client-library call. Gated by `ext`, not by matching the caller's own
+/// language against the route's declaring language: the whole POINT of this
+/// extractor is a cross-language call (see `RouteCall`'s doc), so declared
+/// language is irrelevant here — only which client-call SYNTAX this file's
+/// language actually uses.
+///
+/// A verb-shaped call like `.get("/orders")` is genuinely ambiguous in both
+/// languages this supports: FastAPI declares routes as `@app.get("/orders")`
+/// — a DECORATOR, not a call, and one of this engine's own supported
+/// frameworks — and Express declares them as `router.get('/orders', ...)`,
+/// syntactically identical to Axios calling out to that same path. Getting
+/// this backwards would misfile a server's own route declarations as
+/// outbound calls, which is worse than missing a real call (this project's
+/// own stated principle for routes generally — "a wrong route is worse than
+/// a missing one"). So: Python is matched per LINE with decorator lines
+/// (`@...`) excluded outright, and JS/TS is narrowed to an explicit client
+/// identifier (`axios`/`apiClient`/`httpClient`) rather than any receiver —
+/// `router.get(`/`app.get(` (Express's declaration syntax) never matches
+/// that anchor, so accepting the recall loss on unnamed/rebound client
+/// instances is the trade this makes, not an oversight.
+///
+/// Rust callers (`reqwest`, `ureq`) are left out of v1 entirely for the same
+/// reason: their common call shape is bare `client.get(url)`, and there's no
+/// equally reliable anchor to require without a real parser tracking types.
+/// Whether a captured literal is plausibly a URL/path at all, not just any
+/// quoted string that happened to follow `.get(`/`.post(`/etc. Found while
+/// building this: `cache.get("some_key")` and `params.get("id")` are
+/// completely ordinary, unrelated Python/JS calls with the exact same
+/// `.get("...")` shape a route call has — without this filter, EVERY dict-
+/// or map-like `.get(` in a scanned repo would get recorded as an outbound
+/// HTTP call. A real path either starts with `/` (the overwhelmingly common
+/// same-origin/relative case) or contains `://` (an absolute URL) — neither
+/// is true of an arbitrary lookup key.
+fn looks_like_path(s: &str) -> bool {
+    s.starts_with('/') || s.contains("://")
+}
+
+fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<RouteCall>) {
+    match ext {
+        "py" => {
+            // requests.get(...) / httpx.post(...) / session.put(...) — the
+            // receiver varies (a client instance, not always the literal
+            // module name), so this matches the HTTP-verb METHOD name after
+            // ANY `.`, then excludes decorator lines separately below rather
+            // than trying to anchor the receiver — see this fn's own doc for
+            // why FastAPI's `@app.get(...)` route declarations are the
+            // specific collision this guards against.
+            let re = Regex::new(
+                r#"\.\s*(?:get|post|put|patch|delete)\s*\(\s*f?["']([^"']+)["']"#
+            ).unwrap();
+            for line in text.lines() {
+                if line.trim_start().starts_with('@') {
+                    continue;
+                }
+                for cap in re.captures_iter(line) {
+                    if looks_like_path(&cap[1]) {
+                        route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    }
+                }
+            }
+        }
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "vue" => {
+            // fetch('/orders') / fetch(`/orders/${id}`) — `fetch` has no
+            // server-side-declaration meaning in any supported framework, so
+            // this one can safely match any receiver-free call.
+            let fetch_re = Regex::new(r#"\bfetch\s*\(\s*[`"']([^`"']+)"#).unwrap();
+            for cap in fetch_re.captures_iter(text) {
+                if looks_like_path(&cap[1]) {
+                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                }
+            }
+            // axios.get('/orders') / apiClient.post(`/orders/${id}`, ...) —
+            // anchored on an explicit client-ish identifier, NOT any
+            // receiver: `router.get('/orders', handler)`/`app.post(...)` are
+            // Express's own route-DECLARATION syntax (already extracted as
+            // Routes by extract_ts_routes) and are byte-for-byte the same
+            // shape as an Axios call otherwise. A configured client
+            // reassigned to some other local name won't match this — a
+            // stated recall tradeoff, not a bug.
+            let client_re = Regex::new(
+                r#"\b(?:axios|apiClient|httpClient)\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*[`"']([^`"']+)"#
+            ).unwrap();
+            for cap in client_re.captures_iter(text) {
+                if looks_like_path(&cap[1]) {
+                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Route {
     /// Whether/why this route is believed to relate to `concept_name` — the
     /// evidence `routes_for_concept` previously computed as a bare boolean
@@ -308,6 +476,13 @@ pub struct StructuralGraph {
     pub imports: Vec<Import>,
     /// HTTP routes found in source.
     pub routes: Vec<Route>,
+    /// Outbound HTTP calls found in source — the other half of a Route; see
+    /// `RouteCall`'s own doc for why this exists. `#[serde(default)]`: an
+    /// `archietect.db` written before this field existed deserializes with
+    /// an empty Vec instead of failing, same forward-compat pattern as
+    /// `file_facts`/`extractor_version` below.
+    #[serde(default)]
+    pub route_calls: Vec<RouteCall>,
     /// Per-file extraction cache — same shape as `Index::file_facts`.
     #[serde(default)]
     pub file_facts: BTreeMap<String, StructuralFileFacts>,
@@ -326,6 +501,8 @@ pub struct StructuralFileFacts {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<Import>,
     pub routes: Vec<Route>,
+    #[serde(default)]
+    pub route_calls: Vec<RouteCall>,
 }
 
 /// Bump this when the structural extractors change semantics. Invalidates
@@ -336,7 +513,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 11; // +Gherkin (.feature), .jbuilder as Ruby; .erb moved to non-code
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 12; // +RouteCall extraction (outbound HTTP call literals) and unexported PascalCase TS/JS functions/consts — both change what a cached file_facts entry SHOULD contain, so a pre-this-version cache must be treated as stale, not truthfully empty
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -355,7 +532,7 @@ pub fn extract(
     let prior_version_matches =
         prior.map(|p| p.extractor_version == STRUCTURAL_EXTRACTOR_VERSION).unwrap_or(false);
 
-    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>)> = files
+    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>)> = files
         .par_iter()
         .map(|f| {
             let unchanged = prior_version_matches
@@ -373,16 +550,19 @@ pub fn extract(
                     pf.symbols.clone(),
                     pf.imports.clone(),
                     pf.routes.clone(),
+                    pf.route_calls.clone(),
                 );
             }
 
             let Ok(text) = std::fs::read_to_string(&f.path) else {
-                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new());
+                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new());
             };
 
             let ext = f.path.extension().and_then(|x| x.to_str()).unwrap_or("");
             let (symbols, imports, routes) = extract_file(&f.rel, ext, &text);
-            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes)
+            let mut route_calls = Vec::new();
+            extract_route_calls(&f.rel, ext, &text, &mut route_calls);
+            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls)
         })
         .collect();
 
@@ -391,16 +571,17 @@ pub fn extract(
         ..Default::default()
     };
 
-    for (rel, size, mtime_ms, symbols, imports, routes) in results {
+    for (rel, size, mtime_ms, symbols, imports, routes, route_calls) in results {
         graph.file_facts.insert(
             rel.clone(),
-            StructuralFileFacts { size, mtime_ms, symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone() },
+            StructuralFileFacts { size, mtime_ms, symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone(), route_calls: route_calls.clone() },
         );
         for s in &symbols {
             graph.symbols.insert(format!("{}::{}", rel, s.name), s.clone());
         }
         graph.imports.extend(imports);
         graph.routes.extend(routes);
+        graph.route_calls.extend(route_calls);
     }
 
     graph
@@ -576,6 +757,53 @@ pub fn routes_for_concept<'a>(
         .iter()
         .filter(|r| r.relationship_to(concept_name).is_some())
         .collect()
+}
+
+/// One real, load-bearing call this project's own import-graph walk
+/// (`structural_dependents`) can never find: a caller in a DIFFERENT file,
+/// commonly a different language, reaching a route over HTTP rather than an
+/// import + function call. See `RouteCall`'s own doc for the full story —
+/// this is where that evidence actually gets cross-referenced against
+/// `concept_name`'s declared routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteCallDependent {
+    pub file: String,
+    pub method: String,
+    pub path: String,
+    /// The declared route's own path — often not byte-identical to `path`
+    /// (different path-parameter names/delimiters; see `paths_match`), so
+    /// showing both is what lets a human confirm the match makes sense
+    /// rather than trusting a silent normalization.
+    pub matched_route: String,
+}
+
+/// Every file that calls one of `concept_name`'s declared routes over HTTP,
+/// per `RouteCall`'s path-matching rules. Independent of
+/// `structural_dependents`'s import-graph walk — this finds exactly the
+/// callers that walk can't, and only those; a caller reachable by both
+/// signals shows up in both, which is fine, not a duplicate to dedupe away
+/// (they're different evidence, arrived at differently).
+pub fn route_call_dependents(graph: &StructuralGraph, concept_name: &str) -> Vec<RouteCallDependent> {
+    let routes = routes_for_concept(graph, concept_name);
+    if routes.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for call in &graph.route_calls {
+        for route in &routes {
+            if paths_match(&route.path, &call.path) {
+                out.push(RouteCallDependent {
+                    file: call.file.clone(),
+                    method: route.method.clone(),
+                    path: call.path.clone(),
+                    matched_route: route.path.clone(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.file.cmp(&b.file).then(a.path.cmp(&b.path)));
+    out.dedup_by(|a, b| a.file == b.file && a.path == b.path);
+    out
 }
 
 // ── Language registry ────────────────────────────────────────────────────────
@@ -897,6 +1125,36 @@ fn extract_ts_js(
         r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
     ).unwrap();
     for cap in fn_const_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+
+    // Unexported PascalCase top-level declarations — every pattern above
+    // required `export`, so a React component (or any other PascalCase
+    // top-level unit) never exported from its own file — used only
+    // elsewhere in the same file, or via a barrel re-export one level up —
+    // was completely invisible: verdict ABSENT for something real, load-
+    // bearing, and sitting right there in the text. Found live: two real
+    // dashboard components in a Next.js app, `function BurrowDashboard()`
+    // and `const VantageDashboard = () => {...}`, neither `export`ed at
+    // their own declaration site, both missing from the concept index
+    // entirely. PascalCase specifically — not just "no export" — is what
+    // keeps this from flooding the index with local lowercase helpers:
+    // that casing convention is already how this project's OWN concept-
+    // naming assumption works (`class_re` above already requires
+    // `[A-Z]...`), applied here to functions/consts for exactly the same
+    // reason. A name that's ALREADY captured by the exported patterns above
+    // isn't duplicated — `symbols.dedup_by` in extract_file (name+kind)
+    // handles that the same way it already does for every other extractor.
+    let local_fn_decl_re = Regex::new(
+        r"(?m)^(?:default\s+)?(?:async\s+)?function\s+([A-Z][A-Za-z0-9_$]*)"
+    ).unwrap();
+    for cap in local_fn_decl_re.captures_iter(text) {
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+    }
+    let local_fn_const_re = Regex::new(
+        r"(?m)^const\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
+    ).unwrap();
+    for cap in local_fn_const_re.captures_iter(text) {
         symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
     }
 
@@ -2683,6 +2941,194 @@ mod structural_dependents_structural_only_tests {
         assert!(
             !files.contains(&"unrelated.ts"),
             "a file that imports nothing relevant must not be reported, got: {files:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod ts_js_local_symbol_tests {
+    use super::*;
+
+    /// Every symbol pattern in extract_ts_js used to require `export` —
+    /// found live: two real React components, neither exported at their own
+    /// declaration site (used only within the same file, or re-exported one
+    /// level up through a barrel file), were completely invisible to the
+    /// concept index. This reproduces that exact shape with generic names —
+    /// a `function` declaration and a `const` arrow, both PascalCase,
+    /// neither `export`ed.
+    #[test]
+    fn finds_unexported_pascalcase_function_and_const_declarations() {
+        let src = r#"
+function Dashboard() {
+  return null;
+}
+
+const SettingsPanel = () => {
+  return null;
+};
+
+function helper() {
+  return 1;
+}
+
+const config = () => ({});
+"#;
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/App.tsx", src, &mut symbols, &mut imports, &mut routes);
+
+        assert!(
+            symbols.iter().any(|s| s.name == "Dashboard" && s.kind == SymbolKind::Function),
+            "unexported PascalCase `function Dashboard()` must be captured, got: {symbols:?}"
+        );
+        assert!(
+            symbols.iter().any(|s| s.name == "SettingsPanel" && s.kind == SymbolKind::Function),
+            "unexported PascalCase `const SettingsPanel = () =>` must be captured, got: {symbols:?}"
+        );
+        assert!(
+            !symbols.iter().any(|s| s.name == "helper"),
+            "lowercase unexported functions must stay excluded — capturing every local helper would flood the index, got: {symbols:?}"
+        );
+        assert!(
+            !symbols.iter().any(|s| s.name == "config"),
+            "lowercase unexported consts must stay excluded, got: {symbols:?}"
+        );
+    }
+
+    /// An exported PascalCase function must not be recorded twice (once by
+    /// the pre-existing `export`-anchored pattern, once by the new
+    /// unexported-local pattern) — `extract_file`'s own `dedup_by` collapses
+    /// same name+kind, but that dedup only works if this extractor doesn't
+    /// hand it two structurally different Symbol values (e.g. different
+    /// `line`) for the same declaration in the first place.
+    #[test]
+    fn exported_pascalcase_function_is_not_double_counted() {
+        let src = "export function Dashboard() {\n  return null;\n}\n";
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/App.tsx", src, &mut symbols, &mut imports, &mut routes);
+        let hits: Vec<&Symbol> = symbols.iter().filter(|s| s.name == "Dashboard").collect();
+        assert_eq!(hits.len(), 1, "exported Dashboard must appear exactly once before dedup even runs, got: {symbols:?}");
+    }
+}
+
+#[cfg(test)]
+mod route_call_tests {
+    use super::*;
+
+    /// The collision this whole feature has to avoid: FastAPI declares a
+    /// route as `@app.get(...)` — a DECORATOR — which is textually
+    /// `.get("...")` after a dot, the exact shape an outbound call has. If
+    /// route-call extraction can't tell these apart, every FastAPI/Flask
+    /// project (two of this engine's own supported frameworks) would have
+    /// its own route declarations misfiled as outbound calls.
+    #[test]
+    fn fastapi_decorator_is_never_mistaken_for_an_outbound_call() {
+        let src = r#"
+@app.get("/orders/{order_id}")
+def get_order(order_id: str):
+    return {"id": order_id}
+"#;
+        let mut route_calls = Vec::new();
+        extract_route_calls("service.py", "py", src, &mut route_calls);
+        assert!(
+            route_calls.is_empty(),
+            "a route DECLARATION must never be recorded as a call, got: {route_calls:?}"
+        );
+    }
+
+    /// The other false-positive this has to avoid: `cache.get("some_key")`
+    /// has the exact same `.get("...")` shape as a real HTTP call, with an
+    /// argument that is not a path at all — nothing here should assume every
+    /// `.get(string)` call in a scanned repo is an HTTP request.
+    #[test]
+    fn non_path_dict_style_get_is_not_recorded_as_a_call() {
+        let src = r#"value = cache.get("some_key")"#;
+        let mut route_calls = Vec::new();
+        extract_route_calls("service.py", "py", src, &mut route_calls);
+        assert!(
+            route_calls.is_empty(),
+            "a lookup key is not a URL path, got: {route_calls:?}"
+        );
+    }
+
+    /// A genuine outbound call — the real positive case — must still be
+    /// recorded, on the same line shape that the FastAPI test above proves
+    /// does NOT fire for a decorator.
+    #[test]
+    fn genuine_outbound_call_is_recorded() {
+        let src = r#"resp = requests.post(f"http://orders-svc:8001/orders/{order_id}/approve", json=body)"#;
+        let mut route_calls = Vec::new();
+        extract_route_calls("client.py", "py", src, &mut route_calls);
+        assert_eq!(route_calls.len(), 1, "got: {route_calls:?}");
+        assert_eq!(route_calls[0].path, "http://orders-svc:8001/orders/{order_id}/approve");
+    }
+
+    /// End-to-end reproduction of the real reported bug: a route declared in
+    /// one file (Python/FastAPI) is called ONLY from a different file
+    /// (TypeScript, via axios) with NO import edge between them at all —
+    /// impossible in this pairing anyway, but that's the point: an import
+    /// graph has nothing to walk here regardless of language. Before
+    /// route_call_dependents existed, `impact()` on the concept behind this
+    /// route reported "NONE OBSERVED — declared but nothing seen touching
+    /// it" for a route that a real caller, elsewhere in the very same scan,
+    /// demonstrably calls.
+    #[test]
+    fn route_declared_in_one_file_called_from_another_is_no_longer_invisible() {
+        let tmp = std::env::temp_dir()
+            .join(format!("archietect-routecall-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("backend")).unwrap();
+        std::fs::create_dir_all(tmp.join("frontend")).unwrap();
+        std::fs::write(
+            tmp.join("backend").join("orders_service.py"),
+            "class Orders:\n    pass\n\n@app.post(\"/orders/{order_id}/approve\")\ndef approve_order(order_id: str):\n    return {\"ok\": True}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("frontend").join("orderClient.ts"),
+            "export async function approveOrder(orderId: string) {\n  return axios.post(`/orders/${orderId}/approve`, {});\n}\n",
+        )
+        .unwrap();
+
+        let (_idx, graph) = crate::scan::scan(&tmp);
+        assert!(
+            graph.routes.iter().any(|r| r.handler == "approve_order" && r.path == "/orders/{order_id}/approve"),
+            "sanity: the FastAPI route must actually be declared, got: {:?}", graph.routes
+        );
+        assert!(
+            !graph.route_calls.is_empty(),
+            "sanity: the axios call must actually be extracted, got route_calls: {:?}", graph.route_calls
+        );
+        // "Orders" isn't a token-match for handler "approve_order" (same_word
+        // requires a shared prefix, not a shared substring) — this concept
+        // is only reachable via the route's OWN path-contains-name fallback
+        // (relationship_to's NAMED tier: "/orders/.../approve" contains
+        // "orders"), same real path a concept name unrelated to its route
+        // handler's own naming convention would take.
+        assert!(
+            !crate::model::same_word("approve_order", "Orders"),
+            "sanity: this test must exercise the path-contains-name fallback, not a handler name-match"
+        );
+
+        let deps = route_call_dependents(&graph, "Orders");
+        assert!(
+            deps.iter().any(|d| d.file == "frontend/orderClient.ts"),
+            "orderClient.ts calls the /orders/{{order_id}}/approve route and must be reported as a route-call dependent of Orders, got: {deps:?}"
+        );
+
+        let impact = crate::query::impact(&_idx, &graph, "Orders");
+        assert_ne!(
+            impact["severity"], "NONE OBSERVED — declared but nothing seen touching it",
+            "a concept whose route is genuinely called from another file must not report zero touchpoints, got: {impact}"
+        );
+        assert!(
+            !impact["route_call_dependents"].as_array().unwrap().is_empty(),
+            "impact() must surface the route-call evidence, got: {impact}"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);

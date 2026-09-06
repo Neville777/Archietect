@@ -265,6 +265,15 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             .filter(|r| hit_files.contains(r.file.as_str()) || same_word(&r.handler, term) || names_concept(&r.handler, term))
             .take(10)
             .collect();
+        // See impact()'s own comment on route_call_dependents for the full
+        // story: a caller in another file (often another language) reaching
+        // this concept's route over HTTP, invisible to the import-graph walk
+        // structural_dependents does. Surfaced here too, not just in
+        // impact(), so `archietect concept X` alone — the FIRST call anyone
+        // makes, per this project's own README — already shows it instead
+        // of requiring a second impact() call to learn the concept isn't
+        // actually unused.
+        let route_call_dependents = crate::structural::route_call_dependents(graph, &canon);
         return json!({
             "concept": term,
             "verdict": "STRUCTURAL",
@@ -272,9 +281,17 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             // Via Symbol::to_resource (resource.rs) — see SYSTEM_MEMORY.md.
             // Each symbol yields exactly one evidence entry, same string as
             // before; construction just moved to one place.
-            "evidence": structural_hits.iter().take(10).map(|s| s.to_resource().evidence[0].clone()).collect::<Vec<_>>(),
+            "evidence": structural_hits.iter().take(10).map(|s| s.to_resource().evidence[0].clone())
+                .chain(route_call_dependents.iter().map(|d| Evidence {
+                    tier: Tier::Used,
+                    what: format!("called as {} {} from {}", d.method, d.path, d.file),
+                }))
+                .collect::<Vec<_>>(),
             "routes": linked_routes.iter().map(|r| json!({
                 "method": r.method, "path": r.path, "handler": r.handler, "file": r.file,
+            })).collect::<Vec<_>>(),
+            "called_via_route": route_call_dependents.iter().map(|d| json!({
+                "file": d.file, "method": d.method, "path": d.path, "matched_route": d.matched_route,
             })).collect::<Vec<_>>(),
             // Read fresh from disk at query time — not persisted, not cached,
             // just the file's own text. Same determinism guarantee as every
@@ -530,11 +547,23 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             .collect();
     }
     let structural_dependents = structural_dependents(graph, &canon, 3);
+    // The other half of "does anything touch this" that the import-graph
+    // walk above structurally cannot see: a caller in a DIFFERENT file —
+    // often a different language — reaching this concept's route over HTTP
+    // rather than an import + call. Found live: a Rust struct behind an
+    // Axum handler, called only from a Python service via `requests.post`,
+    // reported NONE OBSERVED here even though it was real, load-bearing,
+    // called-in-production code — `structural_dependents`'s import walk has
+    // nothing to walk when the only edge between caller and callee is an
+    // HTTP request, not a language-level import. See
+    // `route_call_dependents`'s own doc for exactly what this can and can't
+    // catch.
+    let route_call_dependents = crate::structural::route_call_dependents(graph, &canon);
     json!({
         "target": canon,
         "severity": if files.len() > 8 || dependents.len() > 3 || structural_dependents.len() > 5 {
             "HIGH — widely used and other models declare relations to it"
-        } else if !files.is_empty() || !dependents.is_empty() || !structural_dependents.is_empty() {
+        } else if !files.is_empty() || !dependents.is_empty() || !structural_dependents.is_empty() || !route_call_dependents.is_empty() {
             "MODERATE — several touchpoints"
         } else {
             "NONE OBSERVED — declared but nothing seen touching it"
@@ -544,7 +573,10 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         "structural_dependents": structural_dependents.iter().take(20).map(|d| json!({
             "file": d.file, "depth": d.depth, "via_symbols": d.via_symbols,
         })).collect::<Vec<_>>(),
-        "evidence_note": "used_by = observed ORM/SQL access (USED tier); dependents = schema-declared relations (DECLARED tier); structural_dependents = files that import an owner of this concept, via the structural graph (transitive, capped at depth 3).",
+        "route_call_dependents": route_call_dependents.iter().take(20).map(|d| json!({
+            "file": d.file, "method": d.method, "path": d.path, "matched_route": d.matched_route,
+        })).collect::<Vec<_>>(),
+        "evidence_note": "used_by = observed ORM/SQL access (USED tier); dependents = schema-declared relations (DECLARED tier); structural_dependents = files that import an owner of this concept, via the structural graph (transitive, capped at depth 3); route_call_dependents = files that call one of this concept's declared routes over HTTP (requests/httpx/fetch/axios call-site literals only — v0, see structural.rs's own doc on extract_route_calls for exactly which shapes this recognizes).",
     })
 }
 
