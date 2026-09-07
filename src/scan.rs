@@ -143,20 +143,11 @@ fn scan_pool_size() -> usize {
 /// changed compiler — old object files are lies).
 pub const EXTRACTOR_VERSION: u32 = 12; // systematic pass across schema extractors for the same "shallow index" gap: Mongoose's NestJS @Schema decorator style (+ destructured model() import), GORM's gorm.Model-embedding style (no explicit tags), JPA's @Table attribute-order flexibility, Eloquent's Authenticatable-extending User model outside app/Models/
 
-// `.claude` added as a real bug fix, not a guess: Claude Code's
-// `isolation: "worktree"` agents leave a full checkout of (part of) the
-// repo under `.claude/worktrees/<agent>/...`. Since a worktree is a
-// duplicate of real content at a different path, scanning it doesn't just
-// waste time — it silently doubles up real declarations under a second
-// path, producing phantom "duplicate concept" pairs (found dogfooding
-// `duplicate-logic` against this very repo) and, worse, defeating a
-// project's own `archietect.toml` `exclude` list: THIS project excludes
-// `tests/fixtures` (deliberately fake schema, regression bait for the law
-// suite) by path prefix, but `.claude/worktrees/<agent>/tests/fixtures`
-// doesn't start with that prefix, so the worktree's copy stayed un-excluded
-// and its intentionally-fake "Ghost" concept kept showing up as genuinely
-// ACTIVE — which is what made this repo's own pre-commit hook reject an
-// otherwise-correct commit.
+// `.claude`: Claude Code's `isolation: "worktree"` agents leave a full
+// checkout of (part of) the repo under `.claude/worktrees/<agent>/...`. A
+// worktree duplicates real content at a second path, which both wastes
+// scan time and can defeat a path-prefix `exclude` entry that only covers
+// the original location, not its worktree copy.
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor", ".claude",
@@ -258,9 +249,35 @@ pub struct ScannableFile {
     pub mtime_ms: i64,
 }
 
+/// A directory name list can't cover every virtualenv naming convention;
+/// this detects one structurally instead. `pyvenv.cfg` is CPython's own
+/// marker, written into every venv regardless of directory name.
+fn is_python_venv(e: &walkdir::DirEntry) -> bool {
+    if !e.file_type().is_dir() {
+        return false;
+    }
+    let p = e.path();
+    if p.join("pyvenv.cfg").exists() {
+        return true;
+    }
+    // Some virtualenvs lack pyvenv.cfg (partial/hand-assembled ones) but
+    // still have the actual noise source: a lib/pythonX.Y/site-packages
+    // tree of vendored dependencies.
+    ["lib", "lib64"].iter().any(|libdir| {
+        std::fs::read_dir(p.join(libdir))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                entry.file_name().to_str().map(|n| n.starts_with("python")).unwrap_or(false)
+                    && entry.path().join("site-packages").is_dir()
+            })
+    })
+}
+
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir()
-        && e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false)
+        && (e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false) || is_python_venv(e))
 }
 
 /// Returns true if the entry's root-relative path starts with any of the
@@ -805,31 +822,17 @@ pub fn scan_with_prior(
 /// Removes every `#[cfg(test)] mod NAME { ... }` block from Rust source
 /// before declaration extraction sees it.
 ///
-/// Real, reproducible bug this closes: `extract_sql` deliberately scans
-/// EVERY file (not just `.sql`) for embedded `CREATE TABLE` text — genuinely
-/// useful for catching a real migration string embedded in application
-/// code, not just dedicated schema files (see `extract_sql`'s own doc). But
-/// it can't tell that apart from a `CREATE TABLE` string used purely as
-/// TEST DATA inside a `#[test]` fn body (e.g. `guard(&idx, &g, "CREATE
-/// TABLE ghosts (id SERIAL);")` — a real line in this very project's own
-/// `tests/laws.rs`, checking that `guard()` blocks a near-name collision).
-/// Once such a string exists anywhere in a `.rs` file, this project's own
-/// live index treats it as a REAL declared concept forever — so a LATER,
-/// unrelated edit to that same test line (e.g. adding an unrelated function
-/// argument, which is exactly what happened threading a `StructuralGraph`
-/// through `guard()`/`intent()`/`ci()`) makes this repo's own pre-commit
-/// hook (`archietect ci`, which scans the diff's added lines) reject the
-/// commit — reporting a "collision" with a concept that only exists because
-/// of the test's own fixture text. Same problem, less visibly, for
-/// `extract_rust`'s struct/enum/trait matchers: a `#[cfg(test)]` module's
-/// own test-only types have no business counting as production schema
-/// either.
+/// `extract_sql` deliberately scans every file, not just `.sql`, for
+/// embedded `CREATE TABLE` text — genuinely useful for catching a real
+/// migration string embedded in application code (see `extract_sql`'s own
+/// doc). But it can't distinguish that from a `CREATE TABLE` string used
+/// purely as test fixture data inside a `#[test]` fn body, which would
+/// otherwise become a permanent, real declared concept. Same problem, less
+/// visibly, for `extract_rust`'s struct/enum/trait matchers: a test-only
+/// type has no business counting as production schema either.
 ///
-/// Reuses `structural::brace_body_span` (already handles a `{`/`}` INSIDE a
-/// string literal correctly) rather than re-guessing brace matching here —
-/// same reasoning as every other reuse of it in this codebase: a second,
-/// independent guess at "where does this block end" could quietly drift
-/// from the one already tested.
+/// Reuses `structural::brace_body_span` rather than re-implementing brace
+/// matching here, so string-literal edge cases stay handled in one place.
 fn strip_rust_test_modules(text: &str) -> String {
     let gate_re = Regex::new(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+\w+").unwrap();
     let mut out = String::with_capacity(text.len());
@@ -902,14 +905,10 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("sqlalchemy".into());
         }
     }
-    // Real bug, found auditing extractors for the same "shallow index" class
-    // of gap TypeORM/SQLAlchemy had: the NestJS `@Schema()`/`@Prop()`
-    // decorator style (the officially documented way `@nestjs/mongoose`
-    // recommends defining schemas) never calls `mongoose.model(` in
-    // application code at all — that call happens inside the framework's
-    // own `MongooseModule.forFeature(...)` plumbing — so a file using ONLY
-    // this style never even reached `extract_mongoose` in the first place,
-    // regardless of what its internal regexes could match.
+    // NestJS's `@nestjs/mongoose` decorator style (`@Schema()`/`@Prop()`)
+    // never calls `mongoose.model(` in application code — that call happens
+    // inside the framework's own `MongooseModule.forFeature(...)` plumbing —
+    // so a file using only this style needs its own gate.
     if matches!(ext, "js" | "ts")
         && (text.contains("mongoose.model(")
             || text.contains("@Schema(")
@@ -943,12 +942,9 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("drizzle".into());
         }
     }
-    // `extends Authenticatable` added as a real bug fix: Laravel's default
-    // User model — present in EVERY Laravel app, auth being close to
-    // universal — extends `Authenticatable` (itself a subclass of Model),
-    // never `Model` directly. In a pre-Laravel-8 app (no app/Models/
-    // directory convention), that single most universal Eloquent model was
-    // invisible: neither `path_has_models_dir` nor `extends Model` matched.
+    // Laravel's default User model extends `Authenticatable` (itself a
+    // Model subclass), never `Model` directly — worth its own check since
+    // it's present in nearly every Laravel app.
     if ext == "php"
         && text.contains("class ")
         && (path_has_models_dir(path) || text.contains("extends Model") || text.contains("extends Authenticatable"))
@@ -1098,13 +1094,7 @@ fn extract_sqlalchemy(text: &str, out: &mut Vec<DeclFragment>) {
     let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
     let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
     // Matches both the classic `id = Column(...)`/`id = db.Column(...)` form
-    // AND SQLAlchemy 2.0's now-standard annotated form,
-    // `id: Mapped[int] = mapped_column(...)` — found investigating a report
-    // of a "shallow" index: the OLD regex only matched `Column(`, so a
-    // modern SQLAlchemy 2.0 model (the officially recommended style since
-    // 2.0, not a rare variant) still got detected as a concept via
-    // `__tablename__`, but with an empty `fields` list — indistinguishable
-    // from a genuinely empty model, another shape of "shallow."
+    // and SQLAlchemy 2.0's annotated form, `id: Mapped[int] = mapped_column(...)`.
     let field_re = Regex::new(r"(?m)^    (\w+)\s*(?::[^=\n]+)?=\s*(?:db\.)?(?:Column|mapped_column)\(").unwrap();
     let top_re = Regex::new(r"(?m)^\S").unwrap();
     let starts: Vec<(usize, String, String)> = class_re
@@ -1226,22 +1216,13 @@ fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
 
 fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
     // @Entity() / @Entity('table_name') / @Entity({ name: 'table_name', ... })
-    // followed by `export class X`. Real bug, found investigating a report
-    // of a "shallow" index on a real multi-tenant RBAC codebase (only
-    // migration-file SQL concepts showing up, no rich entity facts): the
-    // OBJECT-LITERAL form of @Entity — `@Entity({ name: 'tenants' })`,
-    // arguably the MORE common real-world style since it's the only form
-    // that also supports `schema`/`synchronize`/etc — didn't match at all.
-    // The old regex required a closing `)` immediately after an OPTIONAL
-    // bare quoted string; a `{` before any quote character made the whole
-    // anchor fail, so an entity declared this way was invisible even
-    // though `@Entity(...)` genuinely appears in the source — the entity
-    // just silently never became a concept. Captures whatever sits inside
-    // the parens as its own group first, then separately decides whether
-    // that's a bare string or an object literal with a `name:` property —
-    // explicit table names are read either way; the DEFAULT (no name given
-    // at all) is a naming-strategy output that varies per project, so table
-    // stays None rather than guessed.
+    // followed by `export class X`. The object-literal form also supports
+    // `schema`/`synchronize`/etc, so it's at least as common as the bare
+    // string. Captures whatever sits inside the parens as its own group,
+    // then decides whether that's a bare string or an object literal with a
+    // `name:` property — the default (no name given at all) is a
+    // naming-strategy output that varies per project, so table stays None
+    // rather than guessed.
     let ent_re = Regex::new(r"@Entity\(([\s\S]{0,300}?)\)[\s\S]{0,200}?export class (\w+)").unwrap();
     let bare_string_re = Regex::new(r#"^\s*['"]([^'"]+)['"]\s*$"#).unwrap();
     let name_prop_re = Regex::new(r#"name\s*:\s*['"]([^'"]+)['"]"#).unwrap();
@@ -1371,25 +1352,20 @@ fn extract_eloquent(text: &str, out: &mut Vec<DeclFragment>) {
 fn extract_jpa(text: &str, out: &mut Vec<DeclFragment>) {
     // @Entity [@Table(name="owners")] public class Owner — table explicit
     // when @Table names it; the default is a naming strategy, so None.
+    // `name` doesn't have to be @Table's first attribute (e.g.
+    // `@Table(schema = "public", name = "owners")`), so it's found by
+    // searching @Table's args rather than anchoring on position.
     //
-    // `name` doesn't have to be @Table's FIRST attribute — real bug, found
-    // auditing extractors for the same "shallow" class of gap TypeORM's
-    // had: `@Table(schema = "public", name = "owners")` (schema-per-tenant
-    // is a common real pattern, same motivation as TypeORM's) never matched
-    // the old regex at all, since it required `name` to appear immediately
-    // after the opening paren.
-    //
-    // Deliberately NOT solved by embedding an optional `@Table(...)` group
-    // directly inside the entity-boundary regex between two lazy
-    // quantifiers — tried that first, and it never actually matched: a
-    // lazy quantifier always prefers the SHORTEST successful match, and
-    // skipping an optional group is always at least as short as matching
-    // it, so the engine never bothers trying to include @Table at all once
-    // skipping it already leads to success. Two-step instead, the same
-    // shape as `extract_typeorm`'s scoped-body approach: first find each
-    // entity's OWN text span (`@Entity ... class NAME`), then search ONLY
+    // Two-step, not one combined regex: an optional `@Table(...)` group
+    // embedded directly inside the entity-boundary regex, between two lazy
+    // quantifiers, never matches — a lazy quantifier always prefers the
+    // shortest successful match, and skipping an optional group is always
+    // at least as short as matching it, so the engine never tries including
+    // @Table once skipping it already succeeds. Instead: find each entity's
+    // own text span (`@Entity ... class NAME`) first, then search only
     // within that span for `@Table(...)`'s args, then search those args for
-    // `name = "..."` regardless of position.
+    // `name = "..."` regardless of position — same shape as
+    // `extract_typeorm`'s scoped-body approach.
     let ent_re = Regex::new(r"@Entity[\s\S]{0,300}?(?:public\s+)?class\s+(\w+)").unwrap();
     let table_args_re = Regex::new(r"@Table\s*\(([\s\S]{0,200}?)\)").unwrap();
     let table_name_re = Regex::new(r#"name\s*=\s*"(\w+)""#).unwrap();
@@ -1416,13 +1392,8 @@ fn extract_jpa(text: &str, out: &mut Vec<DeclFragment>) {
 fn extract_gorm(text: &str, out: &mut Vec<DeclFragment>) {
     // type ArticleModel struct { ... `gorm:"..."` ... } — a struct is a gorm
     // model when its body carries gorm tags, OR embeds `gorm.Model` (the
-    // textbook standard way to declare one, providing ID/CreatedAt/
-    // UpdatedAt/DeletedAt via convention alone, with zero explicit struct
-    // tags anywhere). Real bug, found auditing extractors for the same
-    // "shallow index" gap TypeORM/SQLAlchemy had: the old gate only checked
-    // for the tag syntax `gorm:"..."` (a colon) — `gorm.Model` (a period,
-    // an embedded field, not a tag) never matched, so the single most
-    // common, canonical GORM model shape was invisible.
+    // standard way to declare one, providing ID/CreatedAt/UpdatedAt/
+    // DeletedAt via convention alone, with zero explicit struct tags).
     // Table name is gorm's pluralizer: None (the standing refusal to
     // imitate inflection engines).
     let struct_re = Regex::new(r"(?ms)^type\s+(\w+)\s+struct\s*\{(.*?)^\}").unwrap();
@@ -1619,10 +1590,8 @@ mod merge_chain_tests {
 mod strip_rust_test_modules_tests {
     use super::*;
 
-    /// The real, reproducible self-referential loop this exists to close:
-    /// a `CREATE TABLE` string used purely as TEST DATA (a real line from
-    /// this very project's own tests/laws.rs) must never be treated as a
-    /// genuine schema declaration.
+    /// A `CREATE TABLE` string used purely as test fixture data must never
+    /// be treated as a genuine schema declaration.
     #[test]
     fn create_table_text_inside_a_test_module_is_not_a_real_declaration() {
         let src = r#"
@@ -1723,12 +1692,10 @@ pub fn after() {}
 mod claude_worktree_skip_tests {
     use super::*;
 
-    /// The real bug this closes: a Claude Code `isolation: "worktree"`
-    /// agent leaves a full duplicate checkout under `.claude/worktrees/`.
-    /// Scanning it doubled up real declarations under a second path AND
-    /// defeated a project's own `archietect.toml` `exclude` prefix match
-    /// (`.claude/worktrees/<agent>/tests/fixtures` doesn't start with
-    /// `tests/fixtures`) — see SKIP_DIRS's own comment for the full story.
+    /// A `.claude/worktrees/<agent>/...` checkout must never be scanned —
+    /// content under it duplicates the real file at a different path, and
+    /// can defeat a path-prefix `exclude` entry that only covers the
+    /// original location.
     #[test]
     fn claude_worktree_directory_is_never_scanned() {
         let root = std::env::temp_dir().join(format!("archietect-claude-skip-test-{}", std::process::id()));
@@ -1758,15 +1725,9 @@ mod claude_worktree_skip_tests {
 mod typeorm_tests {
     use super::*;
 
-    /// The real reported bug: a TypeORM-based multi-tenant RBAC codebase's
-    /// index came out "shallow" — only migration-file SQL concepts, no real
-    /// entity facts — despite genuinely declaring entities with `@Entity`.
-    /// Root cause: `@Entity({ name: 'tenants', schema: 'public' })` — the
-    /// OBJECT-LITERAL form, arguably MORE common in real code than the bare
-    /// `@Entity('tenants')` form since it's the only one that also supports
-    /// `schema`/`synchronize`/etc — never matched at all. A `{` before any
-    /// quote character made the old regex's anchor fail outright, so the
-    /// entity was invisible even though `@Entity(...)` genuinely appears.
+    /// `@Entity({ name: 'tenants', schema: 'public' })` — the object-literal
+    /// form, at least as common as the bare `@Entity('tenants')` string
+    /// since it's the only one that also supports `schema`/`synchronize`/etc.
     #[test]
     fn entity_with_object_literal_name_is_extracted() {
         let src = "@Entity({ name: 'tenants' })\nexport class Tenant {\n  @PrimaryGeneratedColumn()\n  id: number;\n}\n";
@@ -1845,12 +1806,8 @@ mod typeorm_tests {
 mod sqlalchemy_tests {
     use super::*;
 
-    /// The real reported bug's second confirmed instance, found auditing
-    /// other extractors for the same class of gap after fixing TypeORM's:
-    /// SQLAlchemy 2.0's now-standard `Mapped[]`/`mapped_column()` style
-    /// (not a rare variant — the officially recommended style since 2.0)
-    /// still got the model detected as a concept via `__tablename__`, but
-    /// with zero fields extracted — another shape of "shallow."
+    /// SQLAlchemy 2.0's `Mapped[]`/`mapped_column()` style — the
+    /// officially recommended style since 2.0, not a rare variant.
     #[test]
     fn sqlalchemy_2_0_mapped_column_style_fields_are_extracted() {
         let src = "class User(Base):\n    __tablename__ = \"users\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    name: Mapped[str] = mapped_column(String(50))\n";
@@ -1885,14 +1842,10 @@ mod sqlalchemy_tests {
 mod mongoose_tests {
     use super::*;
 
-    /// The real gap this closes: the NestJS `@nestjs/mongoose` decorator
-    /// style — the officially documented way to define a schema in a
-    /// NestJS app — never calls `mongoose.model(` anywhere in application
-    /// code (that call happens inside the framework's own
-    /// `MongooseModule.forFeature`), so a file using ONLY this style was
-    /// completely invisible: the extractor's internal regexes never even
-    /// ran, because the CALL-SITE GATE itself only checked for
-    /// `mongoose.model(`.
+    /// The NestJS `@nestjs/mongoose` decorator style — the officially
+    /// documented way to define a schema in a NestJS app — never calls
+    /// `mongoose.model(` anywhere in application code, so it needs its own
+    /// call-site gate, not just its own internal regex.
     #[test]
     fn nestjs_schema_decorator_style_is_extracted() {
         let src = "@Schema()\nexport class Tenant {\n  @Prop()\n  name: string;\n}\nexport const TenantSchema = SchemaFactory.createForClass(Tenant);\n";
@@ -1976,11 +1929,9 @@ mod jpa_tests {
         assert_eq!(decls[0].table.as_deref(), Some("owners"));
     }
 
-    /// The real gap this closes: `name` doesn't have to be @Table's first
-    /// attribute — `@Table(schema = "public", name = "owners")` is a real,
-    /// common pattern (schema-per-tenant, the same motivation as TypeORM's
-    /// object-literal fix) that the old regex missed entirely, silently
-    /// falling back to table: None instead of the real explicit name.
+    /// `name` doesn't have to be @Table's first attribute —
+    /// `@Table(schema = "public", name = "owners")` is a real, common
+    /// pattern (schema-per-tenant).
     #[test]
     fn table_name_after_other_attributes_is_extracted() {
         let src = "@Entity\n@Table(schema = \"public\", name = \"owners\")\npublic class Owner {}\n";
@@ -2007,12 +1958,9 @@ mod jpa_tests {
 mod gorm_tests {
     use super::*;
 
-    /// The real gap this closes: embedding `gorm.Model` — the textbook
-    /// standard way to declare a GORM model, providing ID/CreatedAt/
-    /// UpdatedAt/DeletedAt via convention alone, with ZERO explicit struct
-    /// tags anywhere — never matched. The old gate only checked for the
-    /// TAG syntax `gorm:"..."` (a colon); `gorm.Model` (a period, an
-    /// embedded field, not a tag) doesn't contain that substring at all.
+    /// Embedding `gorm.Model` — the standard way to declare a GORM model,
+    /// with zero explicit struct tags — must count as a model on its own,
+    /// not just the `gorm:"..."` tag syntax.
     #[test]
     fn struct_embedding_gorm_model_with_no_tags_is_extracted() {
         let src = "type User struct {\n\tgorm.Model\n\tName  string\n\tEmail string\n}\n";
@@ -2048,13 +1996,8 @@ mod gorm_tests {
 mod eloquent_tests {
     use super::*;
 
-    /// The real gap this closes: Laravel's default User model — present in
-    /// EVERY Laravel app, auth being close to universal — extends
-    /// `Authenticatable` (itself a subclass of Model), never `Model`
-    /// directly. In a pre-Laravel-8 app with no `app/Models/` directory
-    /// convention, that single most universal Eloquent model was invisible
-    /// to the call-site gate: neither the directory check nor the
-    /// `extends Model` text check matched it.
+    /// Laravel's default User model extends `Authenticatable`, never
+    /// `Model` directly — must still be scanned outside `app/Models/`.
     #[test]
     fn user_model_extending_authenticatable_outside_models_dir_is_scanned() {
         let root = std::env::temp_dir().join(format!("archietect-eloquent-e2e-{}", std::process::id()));
@@ -2070,6 +2013,83 @@ mod eloquent_tests {
         assert!(
             idx.concepts.contains_key("User"),
             "a User model extending Authenticatable, outside a Models/ directory, must still be scanned, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod python_venv_skip_tests {
+    use super::*;
+
+    /// A standard virtualenv, regardless of directory name, is detected by
+    /// its `pyvenv.cfg` marker rather than a fixed name list.
+    #[test]
+    fn standard_venv_is_skipped_regardless_of_directory_name() {
+        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let venv = root.join("my_custom_env");
+        std::fs::create_dir_all(&venv).unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        std::fs::write(
+            venv.join("vendored.prisma"),
+            "model VendoredDependency {\n  id Int @id\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("schema.prisma"), "model RealApp {\n  id Int @id\n}\n").unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(idx.concepts.contains_key("RealApp"), "got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            !idx.concepts.contains_key("VendoredDependency"),
+            "a differently-named venv must still be skipped, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A partial/hand-assembled environment missing `pyvenv.cfg` entirely
+    /// is still detected via its `lib/pythonX.Y/site-packages` structure.
+    #[test]
+    fn venv_missing_pyvenv_cfg_is_still_detected_via_site_packages() {
+        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-partial-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let site_packages = root.join("venvm/lib/python3.10/site-packages");
+        std::fs::create_dir_all(&site_packages).unwrap();
+        std::fs::write(
+            site_packages.join("vendored.prisma"),
+            "model VendoredDependency {\n  id Int @id\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("schema.prisma"), "model RealApp {\n  id Int @id\n}\n").unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(idx.concepts.contains_key("RealApp"), "got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            !idx.concepts.contains_key("VendoredDependency"),
+            "a venv missing pyvenv.cfg must still be detected via its site-packages structure, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory that merely happens to be named "lib" (no site-packages
+    /// inside) must never be mistaken for part of a virtualenv.
+    #[test]
+    fn unrelated_lib_directory_is_not_mistaken_for_a_venv() {
+        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-false-positive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(root.join("lib/helper.prisma"), "model RealHelper {\n  id Int @id\n}\n").unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(
+            idx.concepts.contains_key("RealHelper"),
+            "a real lib/ directory with no venv structure must be scanned normally, got: {:?}",
             idx.concepts.keys().collect::<Vec<_>>()
         );
 

@@ -502,9 +502,9 @@ pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
             // leading bytes). It cannot and does not check whether a
             // DIFFERENT word already names the same idea — e.g. a request
             // mentioning "moves" when `candidate_timeline` already records
-            // stage moves under different vocabulary. Confirmed live: this
-            // exact case. That's not a false ABSENT (nothing IS named
-            // "moves") — it's `create`'s caller-facing claim overreaching
+            // stage moves under different vocabulary. That's not a false
+            // ABSENT (nothing IS named "moves") — it's `create`'s
+            // caller-facing claim overreaching
             // what a name match can actually prove, so the caveat lives
             // here rather than trying to catch every synonym (a much larger,
             // separate feature — real semantic matching, not scoped here).
@@ -885,19 +885,14 @@ fn docker_status_section(idx: &Index) -> Value {
 /// cannot parse: a guard that blocks all work on a hiccup costs more than the
 /// duplication it prevents.
 ///
-/// Real bug, found by an external repo where every collision test came back
-/// `allowed: true`: this used to call `concept(idx, &StructuralGraph::default(), &head)`
-/// — a HARDCODED EMPTY graph — at every call site, even though CLI/REST/MCP
-/// all already have the repo's real `StructuralGraph` in scope right next to
-/// the call (main.rs was even discarding it into `_g`). That made guard()
-/// permanently blind to any concept whose only evidence is structural (a
-/// plain class/interface with no ORM/schema annotation) — concept() with an
-/// empty graph can only ever answer from `idx.concepts` (schema-declared
-/// models), so a real collision with a structural-only concept always came
-/// back ABSENT, and ABSENT is never blocked. Compounding it: even with the
-/// real graph, `is_known` below didn't count a `STRUCTURAL` verdict as
-/// "already exists" — unlike `intent()`'s equivalent check just above,
-/// which already treats `ACTIVE`/`DECLARED_ONLY`/`STRUCTURAL` uniformly.
+/// Takes the real `StructuralGraph`, not an empty one — without it, a
+/// concept whose only evidence is structural (a plain class/interface with
+/// no ORM/schema annotation) always comes back ABSENT from `concept()`,
+/// since an empty graph can only ever answer from `idx.concepts`
+/// (schema-declared models), and ABSENT is never blocked. `is_known` below
+/// counts a `STRUCTURAL` verdict as "already exists" for the same reason —
+/// matching `intent()`'s equivalent check, which already treats
+/// `ACTIVE`/`DECLARED_ONLY`/`STRUCTURAL` uniformly.
 pub fn guard(idx: &Index, graph: &StructuralGraph, sql: &str) -> Value {
     let re = regex::RegexBuilder::new(
         r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#,
@@ -1243,17 +1238,13 @@ pub fn duplicates(idx: &Index) -> Value {
 /// from an unintentional drift risk. That's why this is framed as
 /// something to review, not something to merge automatically.
 pub fn duplicate_logic(graph: &StructuralGraph) -> Value {
-    // Verified against a real 1492-file repo (universal_trader/backend), not
-    // guessed: a length-4 literal floor with min_shared=2 produced 3946
-    // suspected pairs — almost all noise from generic short JSON field names
-    // ("name", "note", "id") that recur across unrelated handlers. Raising
-    // the per-literal length floor to 10 (in `literals_in`), excluding CSS
-    // color values, tightening the boilerplate cap to 15 functions, and
-    // requiring 3+ shared literals cut that to ~100 pairs dominated by real
-    // duplicated business logic — e.g. two independently-written repair
-    // functions sharing a dozen identical error-message strings, and three
-    // separate functions each re-issuing the same `SELECT count(*) FROM
-    // belief_experiments WHERE status=...` query.
+    // A length-4 literal floor with min_shared=2 is too permissive on a
+    // real codebase: generic short JSON field names ("name", "note", "id")
+    // recur across unrelated handlers and flood the result with noise. The
+    // per-literal length floor (10, in `literals_in`), CSS color exclusion,
+    // boilerplate cap (15 functions), and 3+ shared-literal threshold below
+    // are tuned to keep the signal dominated by real duplicated logic
+    // rather than incidental vocabulary overlap.
     const MIN_SHARED_LITERALS: usize = 3;
     let pairs = crate::structural::suspected_duplicate_logic(graph, MIN_SHARED_LITERALS);
     json!({
@@ -2062,19 +2053,16 @@ mod intent_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// Same root cause as guard()'s real bug (see guard()'s own doc): this
-    /// used to pass a hardcoded EMPTY StructuralGraph, so a concept whose
-    /// only evidence is structural (a plain class with no schema/ORM
-    /// declaration) could never be recognized as already existing — a
-    /// feature request naming it always fell into `create`, recommending
-    /// building something that's already there.
+    /// A concept whose only evidence is structural (a plain class with no
+    /// schema/ORM declaration) must be recognized as already existing, not
+    /// routed to `create`.
     ///
     /// Deliberately synthetic name ("Glimmerpod"), not "Candidate" — this
-    /// repo's own real `src/seed.rs` genuinely declares a `Candidate`
-    /// concept, and its own pre-commit hook (`archietect ci`/`guard` against
-    /// THIS repo's own live index) would find a real, unrelated collision
-    /// and reject the commit. See `guard_reason_text_tests`'s own comment
-    /// on this exact class of self-referential false positive.
+    /// repo's own `src/seed.rs` genuinely declares a `Candidate` concept,
+    /// and its own pre-commit hook (`archietect ci`/`guard` against this
+    /// repo's own live index) would find a real, unrelated collision and
+    /// reject the commit. See `guard_reason_text_tests`'s own comment on
+    /// this class of self-referential false positive.
     #[test]
     fn structural_only_concept_with_no_schema_declaration_still_extends() {
         let (idx, graph, tmp) = scan_tmp(
@@ -2118,29 +2106,19 @@ mod guard_reason_text_tests {
         (idx, graph, tmp)
     }
 
-    // Deliberately synthetic, nonsense names below (Zibbet/Blorp/Fwomp) —
-    // NOT "candidates"/"Ghost"/"widgets" as in the manual repro this fix was
-    // built against. This repo's own pre-commit hook pipes every commit's
-    // diff through `archietect ci`/`guard`, scanning ALL changed lines —
-    // including string literals inside test code — for CREATE TABLE text
-    // against THIS repo's own long-lived index. Real fixture names like
-    // "Ghost" (tests/fixtures/law_002) and "candidates"/"widgets" (other
-    // laws' fixtures) are already indexed here, so a first draft of these
-    // tests using those names made every commit of this very file trip the
-    // hook on itself — a real, separate false-positive source (SQL-shaped
-    // test data vs. an actual proposed migration), out of scope for this
-    // change. Synthetic names sidestep it without weakening any assertion.
+    // Deliberately synthetic, nonsense names below (Zibbet/Blorp/Fwomp), not
+    // real fixture names like "Ghost"/"candidates"/"widgets": this repo's
+    // own pre-commit hook pipes every commit's diff through `archietect
+    // ci`/`guard` against this repo's own long-lived index, including
+    // string literals inside test code — reusing an already-indexed real
+    // name here would trip the hook on the test's own fixture text.
 
     #[test]
     fn exact_redeclaration_is_allowed_but_not_worded_as_new() {
         // law-002 requires allowed:true here — that part was always
         // correct. What was wrong: `reason` said "check out as new" for a
         // table that already exists, directly contradicting `findings`
-        // (which correctly showed verdict:ACTIVE, canonical:'candidates'
-        // for the very same item, in the real-world case this was found
-        // against). Confirmed live before this fix: reason == "1 proposed
-        // table(s) check out as new" for an exact re-declaration of an
-        // ACTIVE table.
+        // (which correctly shows verdict:ACTIVE for the same item).
         let (idx, g, tmp) = scan_tmp(
             "exact",
             &[
@@ -2213,17 +2191,9 @@ mod guard_reason_text_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// The real reported bug: an external repo's `guard()` collision tests
-    /// ALL came back `allowed: true`. Root cause was two-fold — `guard()`
-    /// used to call `concept(idx, &StructuralGraph::default(), &head)` with
-    /// a hardcoded EMPTY graph at every call site (this repo's own included,
-    /// via `_g` in main.rs), so it could only ever see SCHEMA-declared
-    /// concepts (`idx.concepts`), never a concept whose only evidence is
-    /// structural (a plain class/interface with no ORM annotation) — exactly
-    /// the shape a repo without Prisma/SQLModel/etc. schema files exercises.
-    /// And even with the real graph, `is_known` didn't count a `STRUCTURAL`
-    /// verdict as "already exists". A plain TS class with NO schema
-    /// declaration anywhere must still block a colliding `CREATE TABLE`.
+    /// A plain TS class with no schema declaration anywhere — a concept
+    /// whose only evidence is structural — must still block a colliding
+    /// `CREATE TABLE`, not just a schema-declared (`idx.concepts`) one.
     ///
     /// Deliberately synthetic name ("Glimmerpod"), not "Candidate" — see
     /// `structural_only_concept_with_no_schema_declaration_still_extends`'s

@@ -30,21 +30,15 @@ const WEAK_MARKERS: &[&str] = &[
 /// weak marker; otherwise `start` itself (a bare directory still scans — it
 /// just found nothing to anchor to).
 ///
-/// ALWAYS returns a canonicalized path — found as a real bug via
-/// `system_query`'s cross-project fan-out (`system_db::query_registered_projects`)
-/// returning `found: null` for a project that `concept()` found correctly
-/// when queried directly. The explicit-root branch already canonicalized
-/// (see its own comment below); the auto-discovery branch did not, so the
-/// SAME physical directory could resolve to two different path strings
-/// depending on whether it was reached via an explicit `root` argument or
-/// via upward-walk from a symlinked/non-canonical `$PWD` — e.g.
-/// `register_project` (called with an explicit root, canonicalized) storing
-/// a different string than a later auto-discovered `resolve(None, cwd)`
-/// (not canonicalized) for the identical repository. `query_registered_projects`
-/// then joins the STORED string with `archietect.db` and finds nothing
-/// there, silently reporting `found: null` instead of the real answer. This
-/// module's own doc above promises resolving the root ONCE so "everyone
-/// agrees" — that promise was broken exactly here.
+/// ALWAYS returns a canonicalized path. The explicit-root branch already
+/// canonicalized (see its own comment below); the auto-discovery branch
+/// must too, or the SAME physical directory can resolve to two different
+/// path strings depending on whether it's reached via an explicit `root`
+/// argument or via upward-walk from a symlinked/non-canonical `$PWD` —
+/// e.g. `register_project` storing a canonical path while a later
+/// auto-discovered lookup for the identical repository produces a
+/// different, non-canonical one, breaking any code that compares or
+/// joins against the stored path (see `system_db::query_registered_projects`).
 pub fn resolve(explicit: Option<PathBuf>, start: &Path) -> anyhow::Result<PathBuf> {
     if let Some(r) = explicit {
         anyhow::ensure!(r.exists(), "root does not exist: {}", r.display());
@@ -224,16 +218,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The real reported bug: `system_query`'s cross-project fan-out
-    /// returned `found: null` for a project that `concept()` found
-    /// correctly when queried directly — same repository, same term,
-    /// contradictory answers. Root cause: auto-discovered roots (this
-    /// function's no-`explicit` branch) were never canonicalized, so the
-    /// SAME physical directory reached via a symlink (auto-discovery,
-    /// walking up from a symlinked `$PWD`) resolved to a DIFFERENT string
-    /// than the same directory reached via an explicit, canonicalized
-    /// `root` argument (e.g. what `register_project` stores) — even though
-    /// both paths point at the identical inode.
+    /// The same directory reached via a symlink (auto-discovery, walking
+    /// up from a symlinked `$PWD`) must resolve to the same canonical path
+    /// as when reached via an explicit, canonicalized `root` argument —
+    /// even though both point at the identical inode.
     #[test]
     #[cfg(unix)]
     fn auto_discovered_root_is_canonicalized_same_as_explicit_root() {

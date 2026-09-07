@@ -328,19 +328,17 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
 }
 
 /// One top-level function's own literal-string "fingerprint" — the distinct
-/// string literals it contains, not its full body text or behavior. Found
-/// investigating a real reported case: `updateCandidateStage` (a Node/JS
-/// backend) and `moveCandidateToStage` (a TypeScript frontend) independently
-/// reimplement the same stage-derivation business rule — same decisions,
+/// string literals it contains, not its full body text or behavior. Example
+/// of the shape this catches: `updateCandidateStage` (a Node/JS backend) and
+/// `moveCandidateToStage` (a TypeScript frontend) independently
+/// reimplementing the same stage-derivation business rule — same decisions,
 /// same status strings, completely different function names and no shared
-/// import or call edge, so NOTHING this engine had before this could ever
-/// connect them: not the schema-usage matchers (no ORM/schema concept
-/// involved at all), not `structural_dependents` (no import edge — they're
-/// independent reimplementations, not one calling the other), not
-/// `duplicates()` (that compares CONCEPT names sharing a token, not
-/// arbitrary function names, and these two functions' names don't even
-/// share one: "update"/"stage" vs "move"/"to"/"stage" is the ONLY overlap,
-/// too thin and too generic to mean anything on its own).
+/// import or call edge. None of the engine's other matchers can connect
+/// them: not the schema-usage matchers (no ORM/schema concept involved at
+/// all), not `structural_dependents` (no import edge — independent
+/// reimplementations, not one calling the other), not `duplicates()` (that
+/// compares CONCEPT names sharing a token, and these two function names
+/// share nothing but a generic "stage" token — too thin to mean anything).
 ///
 /// The literal strings inside two such functions are real, checkable
 /// evidence a name comparison can never see: two functions that both
@@ -404,13 +402,11 @@ fn literals_in(body: &str, ext: &str) -> Vec<String> {
     let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for cap in re.captures_iter(body) {
         let s = cap.get(1).or_else(|| cap.get(2)).unwrap().as_str();
-        // Floor of 10, not 4: verified against a real 1492-file repo that a
-        // 4-char floor (matching JSON-shaped field names like "name"/"note"/
-        // "id") let near-unrelated functions pair up on shared vocabulary —
-        // 3946 suspected-duplicate pairs, almost all noise. Raising the floor
-        // to 10 cut that to ~100 pairs dominated by real shared business
+        // Floor of 10, not 4: a shorter floor matches JSON-shaped field
+        // names like "name"/"note"/"id", which let near-unrelated functions
+        // pair up on shared vocabulary rather than real shared business
         // strings (SQL fragments, distinctive error messages, event-status
-        // names) rather than generic short field names.
+        // names).
         if s.len() >= 10 && !looks_like_color_literal(s) {
             out.insert(s.to_string());
         }
@@ -593,12 +589,9 @@ pub fn suspected_duplicate_logic(graph: &StructuralGraph, min_shared: usize) -> 
             // A literal shared by more than 15 functions is common
             // boilerplate, not a meaningful fingerprint — including it
             // would connect nearly every function in a large repo to
-            // nearly every other one. Verified against a real 1492-file
-            // repo: at the original cap of 50, common-but-not-universal
-            // strings (schema field names occurring in 20-40 functions)
-            // alone produced thousands of spurious pairs; 15 was the point
-            // where the remaining pairs were dominated by real shared
-            // business strings, not schema-shaped boilerplate.
+            // nearly every other one. Common-but-not-universal strings
+            // (schema field names occurring in dozens of functions) are
+            // exactly the case a higher cap lets through as noise.
             continue;
         }
         for i in 0..indices.len() {
@@ -1468,14 +1461,13 @@ fn extract_ts_js(
     }
 
     // `type Foo = ...` — a completely separate declaration form from
-    // class/interface/enum above, and previously invisible regardless of
-    // export: found investigating a real Angular SPA's hand-rolled routing,
-    // `type View = 'dashboard' | 'candidates' | ...` (a discriminated-union
-    // "which screen" type driving the app's entire navigation) had no
-    // structural representation at all — not ABSENT, not STRUCTURAL, just
-    // never looked at. `export` is optional here (unlike class_re, which
-    // already permits either) since a type alias this central to an app's
-    // own control flow is routinely kept private to its declaring file.
+    // class/interface/enum above. A discriminated-union type like
+    // `type View = 'dashboard' | 'settings' | ...` can drive an app's
+    // entire navigation, so it deserves structural representation too, not
+    // just STRUCTURAL-verdict silence. `export` is optional here (unlike
+    // class_re, which already permits either) since a type alias this
+    // central to an app's own control flow is routinely kept private to
+    // its declaring file.
     // PascalCase-required for the same reason as the unexported-function
     // patterns above: this project's own concept-identity convention, not a
     // new rule invented for this case.
@@ -1512,14 +1504,12 @@ fn extract_ts_js(
     }
 
     // CommonJS: const { X, Y } = require('./module'), const X = require('./module'),
-    // or a bare require('./module') for side effects only. Previously entirely
-    // invisible — extract_ts_js only ever recognized ES `import ... from`, so
-    // any file using require() (still the default in a great many real Node
-    // backends, not just legacy ones) produced zero Import edges for its own
-    // local requires. Confirmed live: a real server/index.js doing
-    // `const { createApp } = require('./app')` reported empty imports, even
-    // though app.js itself is right there in the same directory.
-    // `Import::relationship`/`resolve_relative_import` and every caller that
+    // or a bare require('./module') for side effects only. `extract_ts_js`
+    // otherwise only recognizes ES `import ... from`, so any file using
+    // require() (still the default in a great many real Node backends, not
+    // just legacy ones) produces zero Import edges for its own local
+    // requires without this. `Import::relationship`/`resolve_relative_import`
+    // and every caller that
     // walks `graph.imports` (structural_dependents's importers_of, impact(),
     // etc.) operate purely on the resulting `Import{from_file, to_module,
     // names}` — they don't know or care which syntax produced it, so this
@@ -3884,9 +3874,9 @@ function build() {
     }
 
     /// Python's indentation-bounded body extraction, exercised end-to-end
-    /// against JS via the real cross-reference pipeline — the other half of
-    /// the real reported case (a Node/JS backend and a Python service, not
-    /// just two JS-family files).
+    /// against JS via the real cross-reference pipeline — cross-language
+    /// (a Node/JS backend and a Python service), not just two JS-family
+    /// files.
     #[test]
     fn python_function_body_bounds_are_indentation_based() {
         let py_src = "def approve(record):\n    if record.stage == 'Passed Screening':\n        return 'Candidate Hired'\n    return None\n\ndef unrelated():\n    return 1\n";
@@ -3903,10 +3893,10 @@ function build() {
 
     /// A Rust lifetime (`&'static`) or a lone apostrophe in a comment/SQL
     /// empty-string literal (`''`) must never be treated as opening a
-    /// string — the real bug this reproduces: `'` paired the lifetime's
-    /// quote with an unrelated LATER apostrophe, swallowing everything
-    /// between as a fake "string" and desyncing brace-depth counting so the
-    /// function body ran past its real closing `}` into the next function.
+    /// string: `'` pairing a lifetime's quote with an unrelated LATER
+    /// apostrophe swallows everything between as a fake "string" and
+    /// desyncs brace-depth counting, letting the function body run past its
+    /// real closing `}` into the next function.
     #[test]
     fn rust_lifetimes_and_apostrophes_do_not_desync_body_bounds() {
         let src = r#"
@@ -4024,15 +4014,13 @@ def get_order(order_id: str):
         assert_eq!(route_calls[0].path, "http://orders-svc:8001/orders/{order_id}/approve");
     }
 
-    /// End-to-end reproduction of the real reported bug: a route declared in
-    /// one file (Python/FastAPI) is called ONLY from a different file
-    /// (TypeScript, via axios) with NO import edge between them at all —
-    /// impossible in this pairing anyway, but that's the point: an import
-    /// graph has nothing to walk here regardless of language. Before
-    /// route_call_dependents existed, `impact()` on the concept behind this
-    /// route reported "NONE OBSERVED — declared but nothing seen touching
-    /// it" for a route that a real caller, elsewhere in the very same scan,
-    /// demonstrably calls.
+    /// End-to-end: a route declared in one file (Python/FastAPI) is called
+    /// ONLY from a different file (TypeScript, via axios) with NO import
+    /// edge between them — impossible in this pairing anyway, but that's
+    /// the point: an import graph has nothing to walk here regardless of
+    /// language. Without route_call_dependents, `impact()` on the concept
+    /// behind this route would report "NONE OBSERVED — declared but nothing
+    /// seen touching it" for a route a real caller demonstrably calls.
     #[test]
     fn route_declared_in_one_file_called_from_another_is_no_longer_invisible() {
         let tmp = std::env::temp_dir()
@@ -4090,12 +4078,11 @@ def get_order(order_id: str):
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// Rust had ZERO route/framework recognition before this — found while
-    /// chasing the real reported bug, which turned out to need this as a
-    /// PRECONDITION: `route_call_dependents` requires a declared Route to
-    /// exist at all, and a Rust service's endpoint could never become one,
-    /// regardless of how good call-site detection got. Axum's chained
-    /// builder syntax is the target here.
+    /// Rust had zero route/framework recognition before this — a
+    /// precondition `route_call_dependents` needs: it requires a declared
+    /// Route to exist at all, and a Rust service's endpoint could never
+    /// become one regardless of how good call-site detection got. Axum's
+    /// chained builder syntax is the target here.
     #[test]
     fn axum_route_declarations_are_extracted() {
         let src = r#"
