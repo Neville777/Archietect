@@ -141,7 +141,7 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 10; // +strip #[cfg(test)] modules from Rust source before declaration extraction — a CREATE TABLE string used only as test fixture data (inside a #[test] fn body) was being declared as a real concept
+pub const EXTRACTOR_VERSION: u32 = 11; // +TypeORM @Entity({ name: '...' }) object-literal form — the bare-string-only regex silently missed any entity declared this way, producing a "shallow" index (migration-file SQL concepts only, no real entity facts) on real codebases that prefer it
 
 // `.claude` added as a real bug fix, not a guess: Claude Code's
 // `isolation: "worktree"` agents leave a full checkout of (part of) the
@@ -1075,7 +1075,15 @@ fn extract_pydantic(text: &str, out: &mut Vec<DeclFragment>) {
 fn extract_sqlalchemy(text: &str, out: &mut Vec<DeclFragment>) {
     let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
     let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
-    let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*(?:db\.)?Column\(").unwrap();
+    // Matches both the classic `id = Column(...)`/`id = db.Column(...)` form
+    // AND SQLAlchemy 2.0's now-standard annotated form,
+    // `id: Mapped[int] = mapped_column(...)` — found investigating a report
+    // of a "shallow" index: the OLD regex only matched `Column(`, so a
+    // modern SQLAlchemy 2.0 model (the officially recommended style since
+    // 2.0, not a rare variant) still got detected as a concept via
+    // `__tablename__`, but with an empty `fields` list — indistinguishable
+    // from a genuinely empty model, another shape of "shallow."
+    let field_re = Regex::new(r"(?m)^    (\w+)\s*(?::[^=\n]+)?=\s*(?:db\.)?(?:Column|mapped_column)\(").unwrap();
     let top_re = Regex::new(r"(?m)^\S").unwrap();
     let starts: Vec<(usize, String, String)> = class_re
         .captures_iter(text)
@@ -1169,12 +1177,26 @@ fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
 }
 
 fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
-    // @Entity() / @Entity('table_name') followed by `export class X`.
-    // Explicit table names are read; the DEFAULT is a naming-strategy output
-    // (varies per project), so absent an explicit name, table stays None.
-    let ent_re =
-        Regex::new(r#"@Entity\(\s*(?:['"]([^'"]+)['"])?\s*\)[\s\S]{0,200}?export class (\w+)"#)
-            .unwrap();
+    // @Entity() / @Entity('table_name') / @Entity({ name: 'table_name', ... })
+    // followed by `export class X`. Real bug, found investigating a report
+    // of a "shallow" index on a real multi-tenant RBAC codebase (only
+    // migration-file SQL concepts showing up, no rich entity facts): the
+    // OBJECT-LITERAL form of @Entity — `@Entity({ name: 'tenants' })`,
+    // arguably the MORE common real-world style since it's the only form
+    // that also supports `schema`/`synchronize`/etc — didn't match at all.
+    // The old regex required a closing `)` immediately after an OPTIONAL
+    // bare quoted string; a `{` before any quote character made the whole
+    // anchor fail, so an entity declared this way was invisible even
+    // though `@Entity(...)` genuinely appears in the source — the entity
+    // just silently never became a concept. Captures whatever sits inside
+    // the parens as its own group first, then separately decides whether
+    // that's a bare string or an object literal with a `name:` property —
+    // explicit table names are read either way; the DEFAULT (no name given
+    // at all) is a naming-strategy output that varies per project, so table
+    // stays None rather than guessed.
+    let ent_re = Regex::new(r"@Entity\(([\s\S]{0,300}?)\)[\s\S]{0,200}?export class (\w+)").unwrap();
+    let bare_string_re = Regex::new(r#"^\s*['"]([^'"]+)['"]\s*$"#).unwrap();
+    let name_prop_re = Regex::new(r#"name\s*:\s*['"]([^'"]+)['"]"#).unwrap();
     let col_re =
         Regex::new(r"(?m)@(?:Primary\w*Column|Column)\([^)]*\)\s*\n\s*(\w+)[?!]?\s*[:;]").unwrap();
     let rel_re = Regex::new(
@@ -1186,12 +1208,17 @@ fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
     relations.sort();
     relations.dedup();
     for cap in ent_re.captures_iter(text) {
+        let args = cap[1].trim();
+        let table = bare_string_re
+            .captures(args)
+            .or_else(|| name_prop_re.captures(args))
+            .map(|m| m[1].to_string());
         out.push(DeclFragment {
             name: cap[2].to_string(),
             kind: "typeorm".into(),
             fields: fields.clone(),
             relations: relations.clone(),
-            table: cap.get(1).map(|m| m.as_str().to_string()),
+            table,
         });
     }
 }
@@ -1646,5 +1673,132 @@ mod claude_worktree_skip_tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod typeorm_tests {
+    use super::*;
+
+    /// The real reported bug: a TypeORM-based multi-tenant RBAC codebase's
+    /// index came out "shallow" — only migration-file SQL concepts, no real
+    /// entity facts — despite genuinely declaring entities with `@Entity`.
+    /// Root cause: `@Entity({ name: 'tenants', schema: 'public' })` — the
+    /// OBJECT-LITERAL form, arguably MORE common in real code than the bare
+    /// `@Entity('tenants')` form since it's the only one that also supports
+    /// `schema`/`synchronize`/etc — never matched at all. A `{` before any
+    /// quote character made the old regex's anchor fail outright, so the
+    /// entity was invisible even though `@Entity(...)` genuinely appears.
+    #[test]
+    fn entity_with_object_literal_name_is_extracted() {
+        let src = "@Entity({ name: 'tenants' })\nexport class Tenant {\n  @PrimaryGeneratedColumn()\n  id: number;\n}\n";
+        let mut decls = Vec::new();
+        extract_typeorm(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "Tenant");
+        assert_eq!(decls[0].table.as_deref(), Some("tenants"));
+    }
+
+    /// The `name:` property can appear anywhere in the object literal,
+    /// alongside other options in either order.
+    #[test]
+    fn entity_with_object_literal_name_and_other_options_in_either_order() {
+        let src = "@Entity({ name: 'departments', schema: 'public' })\nexport class Department {}\n\n@Entity({ schema: 'public', name: 'roles' })\nexport class Role {}\n";
+        let mut decls = Vec::new();
+        extract_typeorm(src, &mut decls);
+        let dept = decls.iter().find(|d| d.name == "Department").expect("got: {decls:?}");
+        assert_eq!(dept.table.as_deref(), Some("departments"));
+        let role = decls.iter().find(|d| d.name == "Role").expect("got: {decls:?}");
+        assert_eq!(role.table.as_deref(), Some("roles"));
+    }
+
+    /// An object literal with NO `name` property at all (e.g. only
+    /// `schema`) must still register the entity — just with no explicit
+    /// table name, same as a bare `@Entity()` — never silently dropped.
+    #[test]
+    fn entity_with_object_literal_and_no_name_property_still_registers() {
+        let src = "@Entity({ schema: 'public' })\nexport class Permission {}\n";
+        let mut decls = Vec::new();
+        extract_typeorm(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "Permission");
+        assert_eq!(decls[0].table, None);
+    }
+
+    /// Regression guard: the two forms this extractor already handled
+    /// correctly (bare call, bare quoted string) must keep working
+    /// unchanged after generalizing the parenthesized-args capture.
+    #[test]
+    fn bare_call_and_bare_string_forms_still_work() {
+        let src = "@Entity()\nexport class Widget {}\n\n@Entity('sprockets')\nexport class Sprocket {}\n";
+        let mut decls = Vec::new();
+        extract_typeorm(src, &mut decls);
+        let widget = decls.iter().find(|d| d.name == "Widget").expect("got: {decls:?}");
+        assert_eq!(widget.table, None);
+        let sprocket = decls.iter().find(|d| d.name == "Sprocket").expect("got: {decls:?}");
+        assert_eq!(sprocket.table.as_deref(), Some("sprockets"));
+    }
+
+    /// End-to-end through the real scan pipeline, not just the extractor
+    /// function in isolation.
+    #[test]
+    fn end_to_end_scan_declares_object_literal_entity_as_a_concept() {
+        let root = std::env::temp_dir().join(format!("archietect-typeorm-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("tenant.entity.ts"),
+            "@Entity({ name: 'tenants' })\nexport class Tenant {\n  @PrimaryGeneratedColumn()\n  id: number;\n}\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(
+            idx.concepts.contains_key("Tenant"),
+            "an entity declared with the object-literal @Entity form must become a declared concept, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod sqlalchemy_tests {
+    use super::*;
+
+    /// The real reported bug's second confirmed instance, found auditing
+    /// other extractors for the same class of gap after fixing TypeORM's:
+    /// SQLAlchemy 2.0's now-standard `Mapped[]`/`mapped_column()` style
+    /// (not a rare variant — the officially recommended style since 2.0)
+    /// still got the model detected as a concept via `__tablename__`, but
+    /// with zero fields extracted — another shape of "shallow."
+    #[test]
+    fn sqlalchemy_2_0_mapped_column_style_fields_are_extracted() {
+        let src = "class User(Base):\n    __tablename__ = \"users\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    name: Mapped[str] = mapped_column(String(50))\n";
+        let mut decls = Vec::new();
+        extract_sqlalchemy(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].fields, vec!["id".to_string(), "name".to_string()], "got: {decls:?}");
+    }
+
+    /// The 2.0 style without a type annotation (`id = mapped_column(...)`,
+    /// also valid) must be captured too.
+    #[test]
+    fn sqlalchemy_2_0_mapped_column_without_annotation_is_extracted() {
+        let src = "class User(Base):\n    __tablename__ = \"users\"\n    id = mapped_column(Integer, primary_key=True)\n";
+        let mut decls = Vec::new();
+        extract_sqlalchemy(src, &mut decls);
+        assert_eq!(decls[0].fields, vec!["id".to_string()], "got: {decls:?}");
+    }
+
+    /// Regression guard: the classic `Column(...)`/`db.Column(...)` style
+    /// this extractor already handled correctly must keep working.
+    #[test]
+    fn classic_column_style_still_works() {
+        let src = "class User(Base):\n    __tablename__ = \"users\"\n    id = Column(Integer, primary_key=True)\n    name = db.Column(db.String(50))\n";
+        let mut decls = Vec::new();
+        extract_sqlalchemy(src, &mut decls);
+        assert_eq!(decls[0].fields, vec!["id".to_string(), "name".to_string()], "got: {decls:?}");
     }
 }
