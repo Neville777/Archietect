@@ -141,7 +141,7 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 11; // +TypeORM @Entity({ name: '...' }) object-literal form — the bare-string-only regex silently missed any entity declared this way, producing a "shallow" index (migration-file SQL concepts only, no real entity facts) on real codebases that prefer it
+pub const EXTRACTOR_VERSION: u32 = 12; // systematic pass across schema extractors for the same "shallow index" gap: Mongoose's NestJS @Schema decorator style (+ destructured model() import), GORM's gorm.Model-embedding style (no explicit tags), JPA's @Table attribute-order flexibility, Eloquent's Authenticatable-extending User model outside app/Models/
 
 // `.claude` added as a real bug fix, not a guess: Claude Code's
 // `isolation: "worktree"` agents leave a full checkout of (part of) the
@@ -902,7 +902,20 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("sqlalchemy".into());
         }
     }
-    if matches!(ext, "js" | "ts") && text.contains("mongoose.model(") {
+    // Real bug, found auditing extractors for the same "shallow index" class
+    // of gap TypeORM/SQLAlchemy had: the NestJS `@Schema()`/`@Prop()`
+    // decorator style (the officially documented way `@nestjs/mongoose`
+    // recommends defining schemas) never calls `mongoose.model(` in
+    // application code at all — that call happens inside the framework's
+    // own `MongooseModule.forFeature(...)` plumbing — so a file using ONLY
+    // this style never even reached `extract_mongoose` in the first place,
+    // regardless of what its internal regexes could match.
+    if matches!(ext, "js" | "ts")
+        && (text.contains("mongoose.model(")
+            || text.contains("@Schema(")
+            || text.contains("from 'mongoose'")
+            || text.contains("from \"mongoose\""))
+    {
         let before = decls.len();
         extract_mongoose(text, &mut decls);
         if decls.len() > before {
@@ -930,7 +943,16 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("drizzle".into());
         }
     }
-    if ext == "php" && text.contains("class ") && (path_has_models_dir(path) || text.contains("extends Model")) {
+    // `extends Authenticatable` added as a real bug fix: Laravel's default
+    // User model — present in EVERY Laravel app, auth being close to
+    // universal — extends `Authenticatable` (itself a subclass of Model),
+    // never `Model` directly. In a pre-Laravel-8 app (no app/Models/
+    // directory convention), that single most universal Eloquent model was
+    // invisible: neither `path_has_models_dir` nor `extends Model` matched.
+    if ext == "php"
+        && text.contains("class ")
+        && (path_has_models_dir(path) || text.contains("extends Model") || text.contains("extends Authenticatable"))
+    {
         let before = decls.len();
         extract_eloquent(text, &mut decls);
         if decls.len() > before {
@@ -1145,10 +1167,13 @@ fn extract_sql(is_sql_file: bool, text: &str, out: &mut Vec<DeclFragment>) {
 }
 
 fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
-    // mongoose.model('User', userSchema) is the declaration. The default
-    // collection name is mongoose's own pluralizer — table stays None rather
-    // than guessing an inflection engine's output.
-    let model_re = Regex::new(r#"mongoose\.model\(\s*['"](\w+)['"]"#).unwrap();
+    // mongoose.model('User', userSchema) — classic style — is one
+    // declaration; `model('User', userSchema)` (mongoose destructured
+    // directly, `import { model } from 'mongoose'`) is the same
+    // declaration under a different import style. The default collection
+    // name is mongoose's own pluralizer — table stays None rather than
+    // guessing an inflection engine's output.
+    let model_re = Regex::new(r#"(?:mongoose\.)?\bmodel\(\s*['"](\w+)['"]"#).unwrap();
     let ref_re = Regex::new(r#"ref:\s*['"](\w+)['"]"#).unwrap();
     let fields: Vec<String> = text
         .find("Schema({")
@@ -1172,6 +1197,29 @@ fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
             fields: fields.clone(),
             relations: relations.clone(),
             table: None,
+        });
+    }
+
+    // NestJS's `@nestjs/mongoose` decorator style — the officially
+    // documented way to define a schema in a NestJS app, and the ONLY
+    // style that never calls `mongoose.model(`/`model(` anywhere in
+    // application code at all (that call is made internally by
+    // `MongooseModule.forFeature`). Structurally the same shape as
+    // TypeORM's @Entity: a class decorator, then `export class X`, with
+    // `@Prop()`-decorated properties instead of `@Column()`.
+    let schema_re = Regex::new(r"@Schema\([\s\S]{0,300}?\)[\s\S]{0,200}?export class (\w+)").unwrap();
+    let collection_prop_re = Regex::new(r#"collection\s*:\s*['"]([^'"]+)['"]"#).unwrap();
+    let prop_re = Regex::new(r"(?m)@Prop\([^)]*\)\s*\n\s*(\w+)[?!]?\s*[:;]").unwrap();
+    let decorator_fields: Vec<String> = prop_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    for cap in schema_re.captures_iter(text) {
+        let args = &cap[0];
+        let table = collection_prop_re.captures(args).map(|m| m[1].to_string());
+        out.push(DeclFragment {
+            name: cap[1].to_string(),
+            kind: "mongoose".into(),
+            fields: decorator_fields.clone(),
+            relations: Vec::new(),
+            table,
         });
     }
 }
@@ -1323,35 +1371,65 @@ fn extract_eloquent(text: &str, out: &mut Vec<DeclFragment>) {
 fn extract_jpa(text: &str, out: &mut Vec<DeclFragment>) {
     // @Entity [@Table(name="owners")] public class Owner — table explicit
     // when @Table names it; the default is a naming strategy, so None.
-    let ent_re = Regex::new(
-        r#"@Entity[\s\S]{0,300}?(?:@Table\s*\(\s*name\s*=\s*"(\w+)"[\s\S]{0,120}?)?(?:public\s+)?class\s+(\w+)"#,
-    )
-    .unwrap();
+    //
+    // `name` doesn't have to be @Table's FIRST attribute — real bug, found
+    // auditing extractors for the same "shallow" class of gap TypeORM's
+    // had: `@Table(schema = "public", name = "owners")` (schema-per-tenant
+    // is a common real pattern, same motivation as TypeORM's) never matched
+    // the old regex at all, since it required `name` to appear immediately
+    // after the opening paren.
+    //
+    // Deliberately NOT solved by embedding an optional `@Table(...)` group
+    // directly inside the entity-boundary regex between two lazy
+    // quantifiers — tried that first, and it never actually matched: a
+    // lazy quantifier always prefers the SHORTEST successful match, and
+    // skipping an optional group is always at least as short as matching
+    // it, so the engine never bothers trying to include @Table at all once
+    // skipping it already leads to success. Two-step instead, the same
+    // shape as `extract_typeorm`'s scoped-body approach: first find each
+    // entity's OWN text span (`@Entity ... class NAME`), then search ONLY
+    // within that span for `@Table(...)`'s args, then search those args for
+    // `name = "..."` regardless of position.
+    let ent_re = Regex::new(r"@Entity[\s\S]{0,300}?(?:public\s+)?class\s+(\w+)").unwrap();
+    let table_args_re = Regex::new(r"@Table\s*\(([\s\S]{0,200}?)\)").unwrap();
+    let table_name_re = Regex::new(r#"name\s*=\s*"(\w+)""#).unwrap();
     let rel_re = Regex::new(r"@(?:ManyToOne|OneToMany|OneToOne|ManyToMany)[\s\S]{0,200}?(?:private|protected)\s+(?:\w+<)?(\w+)>?\s+\w+").unwrap();
     let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string())
         .filter(|r| !matches!(r.as_str(), "Set" | "List" | "Collection")).collect();
     relations.sort();
     relations.dedup();
     for cap in ent_re.captures_iter(text) {
+        let span = cap.get(0).unwrap().as_str();
+        let table = table_args_re
+            .captures(span)
+            .and_then(|args| table_name_re.captures(&args[1]).map(|m| m[1].to_string()));
         out.push(DeclFragment {
-            name: cap[2].to_string(),
+            name: cap[1].to_string(),
             kind: "jpa".into(),
             fields: Vec::new(),
             relations: relations.clone(),
-            table: cap.get(1).map(|m| m.as_str().to_string()),
+            table,
         });
     }
 }
 
 fn extract_gorm(text: &str, out: &mut Vec<DeclFragment>) {
     // type ArticleModel struct { ... `gorm:"..."` ... } — a struct is a gorm
-    // model when its body carries gorm tags. Table name is gorm's pluralizer:
-    // None (the standing refusal to imitate inflection engines).
+    // model when its body carries gorm tags, OR embeds `gorm.Model` (the
+    // textbook standard way to declare one, providing ID/CreatedAt/
+    // UpdatedAt/DeletedAt via convention alone, with zero explicit struct
+    // tags anywhere). Real bug, found auditing extractors for the same
+    // "shallow index" gap TypeORM/SQLAlchemy had: the old gate only checked
+    // for the tag syntax `gorm:"..."` (a colon) — `gorm.Model` (a period,
+    // an embedded field, not a tag) never matched, so the single most
+    // common, canonical GORM model shape was invisible.
+    // Table name is gorm's pluralizer: None (the standing refusal to
+    // imitate inflection engines).
     let struct_re = Regex::new(r"(?ms)^type\s+(\w+)\s+struct\s*\{(.*?)^\}").unwrap();
     let field_re = Regex::new(r"(?m)^\s+(\w+)\s+\S+").unwrap();
     for cap in struct_re.captures_iter(text) {
         let (name, body) = (&cap[1], &cap[2]);
-        if !body.contains("gorm:") {
+        if !body.contains("gorm:") && !body.contains("gorm.Model") {
             continue;
         }
         let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).take(30).collect();
@@ -1800,5 +1878,201 @@ mod sqlalchemy_tests {
         let mut decls = Vec::new();
         extract_sqlalchemy(src, &mut decls);
         assert_eq!(decls[0].fields, vec!["id".to_string(), "name".to_string()], "got: {decls:?}");
+    }
+}
+
+#[cfg(test)]
+mod mongoose_tests {
+    use super::*;
+
+    /// The real gap this closes: the NestJS `@nestjs/mongoose` decorator
+    /// style — the officially documented way to define a schema in a
+    /// NestJS app — never calls `mongoose.model(` anywhere in application
+    /// code (that call happens inside the framework's own
+    /// `MongooseModule.forFeature`), so a file using ONLY this style was
+    /// completely invisible: the extractor's internal regexes never even
+    /// ran, because the CALL-SITE GATE itself only checked for
+    /// `mongoose.model(`.
+    #[test]
+    fn nestjs_schema_decorator_style_is_extracted() {
+        let src = "@Schema()\nexport class Tenant {\n  @Prop()\n  name: string;\n}\nexport const TenantSchema = SchemaFactory.createForClass(Tenant);\n";
+        let mut decls = Vec::new();
+        extract_mongoose(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "Tenant");
+        assert_eq!(decls[0].fields, vec!["name".to_string()], "got: {decls:?}");
+    }
+
+    /// An explicit `collection:` option in `@Schema({ collection: '...' })`
+    /// must be read as the table name, same as TypeORM's `name:` property.
+    #[test]
+    fn nestjs_schema_with_explicit_collection_name() {
+        let src = "@Schema({ collection: 'tenants' })\nexport class Tenant {}\n";
+        let mut decls = Vec::new();
+        extract_mongoose(src, &mut decls);
+        assert_eq!(decls[0].table.as_deref(), Some("tenants"), "got: {decls:?}");
+    }
+
+    /// `model('Tenant', schema)` — mongoose destructured directly
+    /// (`import { model } from 'mongoose'`) rather than called as
+    /// `mongoose.model(...)` — is the same declaration under a different
+    /// import style, not a different concept.
+    #[test]
+    fn destructured_model_call_is_extracted() {
+        let src = "import { Schema, model } from 'mongoose';\nconst tenantSchema = new Schema({ name: String });\nexport const Tenant = model('Tenant', tenantSchema);\n";
+        let mut decls = Vec::new();
+        extract_mongoose(src, &mut decls);
+        assert!(decls.iter().any(|d| d.name == "Tenant"), "got: {decls:?}");
+    }
+
+    /// Regression guard: the classic `mongoose.model('User', userSchema)`
+    /// form this extractor already handled correctly must keep working.
+    #[test]
+    fn classic_mongoose_model_call_still_works() {
+        let src = "const userSchema = new mongoose.Schema({\n  name: String,\n});\nmodule.exports = mongoose.model('User', userSchema);\n";
+        let mut decls = Vec::new();
+        extract_mongoose(src, &mut decls);
+        assert!(decls.iter().any(|d| d.name == "User"), "got: {decls:?}");
+    }
+
+    /// End-to-end through the real scan pipeline: a file containing ONLY
+    /// the NestJS decorator style, with no `mongoose.model(` text anywhere,
+    /// must still be scanned at all (the call-site gate, not just the
+    /// extractor's internal regexes, had to change).
+    #[test]
+    fn end_to_end_scan_declares_nestjs_schema_as_a_concept() {
+        let root = std::env::temp_dir().join(format!("archietect-mongoose-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("tenant.schema.ts"),
+            "@Schema()\nexport class Tenant {\n  @Prop()\n  name: string;\n}\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(
+            idx.concepts.contains_key("Tenant"),
+            "an entity declared with the NestJS @Schema decorator form must become a declared concept, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod jpa_tests {
+    use super::*;
+
+    /// Regression guard: the original, most common ordering (`name` first)
+    /// must keep working.
+    #[test]
+    fn table_name_as_first_attribute_is_extracted() {
+        let src = "@Entity\n@Table(name = \"owners\")\npublic class Owner {}\n";
+        let mut decls = Vec::new();
+        extract_jpa(src, &mut decls);
+        assert_eq!(decls[0].name, "Owner");
+        assert_eq!(decls[0].table.as_deref(), Some("owners"));
+    }
+
+    /// The real gap this closes: `name` doesn't have to be @Table's first
+    /// attribute — `@Table(schema = "public", name = "owners")` is a real,
+    /// common pattern (schema-per-tenant, the same motivation as TypeORM's
+    /// object-literal fix) that the old regex missed entirely, silently
+    /// falling back to table: None instead of the real explicit name.
+    #[test]
+    fn table_name_after_other_attributes_is_extracted() {
+        let src = "@Entity\n@Table(schema = \"public\", name = \"owners\")\npublic class Owner {}\n";
+        let mut decls = Vec::new();
+        extract_jpa(src, &mut decls);
+        assert_eq!(decls[0].table.as_deref(), Some("owners"), "got: {:?}", decls);
+    }
+
+    /// No @Table at all: the entity is still found (via @Entity alone),
+    /// with no explicit table name — the naming-strategy default, never
+    /// guessed.
+    #[test]
+    fn entity_with_no_table_annotation_still_registers_with_no_table_name() {
+        let src = "@Entity\npublic class Owner {}\n";
+        let mut decls = Vec::new();
+        extract_jpa(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "Owner");
+        assert_eq!(decls[0].table, None);
+    }
+}
+
+#[cfg(test)]
+mod gorm_tests {
+    use super::*;
+
+    /// The real gap this closes: embedding `gorm.Model` — the textbook
+    /// standard way to declare a GORM model, providing ID/CreatedAt/
+    /// UpdatedAt/DeletedAt via convention alone, with ZERO explicit struct
+    /// tags anywhere — never matched. The old gate only checked for the
+    /// TAG syntax `gorm:"..."` (a colon); `gorm.Model` (a period, an
+    /// embedded field, not a tag) doesn't contain that substring at all.
+    #[test]
+    fn struct_embedding_gorm_model_with_no_tags_is_extracted() {
+        let src = "type User struct {\n\tgorm.Model\n\tName  string\n\tEmail string\n}\n";
+        let mut decls = Vec::new();
+        extract_gorm(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "User");
+    }
+
+    /// Regression guard: the classic explicit-tag style this extractor
+    /// already handled correctly must keep working.
+    #[test]
+    fn struct_with_explicit_gorm_tags_still_works() {
+        let src = "type Article struct {\n\tID   uint `gorm:\"primaryKey\"`\n\tName string\n}\n";
+        let mut decls = Vec::new();
+        extract_gorm(src, &mut decls);
+        assert_eq!(decls.len(), 1, "got: {decls:?}");
+        assert_eq!(decls[0].name, "Article");
+    }
+
+    /// A plain struct with no gorm involvement at all (no tags, no embedded
+    /// gorm.Model) must never be mistaken for a model.
+    #[test]
+    fn unrelated_struct_is_not_extracted() {
+        let src = "type Config struct {\n\tPort int\n\tHost string\n}\n";
+        let mut decls = Vec::new();
+        extract_gorm(src, &mut decls);
+        assert!(decls.is_empty(), "got: {decls:?}");
+    }
+}
+
+#[cfg(test)]
+mod eloquent_tests {
+    use super::*;
+
+    /// The real gap this closes: Laravel's default User model — present in
+    /// EVERY Laravel app, auth being close to universal — extends
+    /// `Authenticatable` (itself a subclass of Model), never `Model`
+    /// directly. In a pre-Laravel-8 app with no `app/Models/` directory
+    /// convention, that single most universal Eloquent model was invisible
+    /// to the call-site gate: neither the directory check nor the
+    /// `extends Model` text check matched it.
+    #[test]
+    fn user_model_extending_authenticatable_outside_models_dir_is_scanned() {
+        let root = std::env::temp_dir().join(format!("archietect-eloquent-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("User.php"),
+            "<?php\nnamespace App;\nuse Illuminate\\Foundation\\Auth\\User as Authenticatable;\nclass User extends Authenticatable\n{\n}\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(
+            idx.concepts.contains_key("User"),
+            "a User model extending Authenticatable, outside a Models/ directory, must still be scanned, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
