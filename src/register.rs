@@ -55,7 +55,7 @@
 //! the actual concept names — a blanket "code has no Observed tier" line
 //! would fire identically on every repository forever and say nothing.
 
-use crate::model::{Index, Tier};
+use crate::model::{DomainDescriptor, Index, Tier};
 use crate::structural::StructuralGraph;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -65,65 +65,34 @@ use std::path::Path;
 /// that dumps all of them is the whole-bag problem `shape.rs` exists to fix.
 const LIST_CAP: usize = 20;
 
-/// Domains that have an extractor in this binary. `permissions::report`
-/// lists the full prospective vocabulary (systemd, browser, ...); the
-/// register only reasons about domains that could actually be looked at —
-/// "systemd is disabled" for a domain nothing can scan is not an unknown, it
-/// is an absence of capability, and belongs in `permissions`, not here.
-/// `browser` is deliberately NOT here despite being a known domain name:
-/// its own hardcoded permission denial ("never scannable regardless of
-/// domain or config") means no extractor exists or ever will for the
-/// well-known profile paths — the same absence-of-capability reasoning
-/// this doc's first sentence describes, just decided at design time
-/// instead of discovered by an empty result.
-const IMPLEMENTED_DOMAINS: &[&str] = &["code", "git", "docker", "documents", "photos", "messages"];
+/// `code` has no domain module of its own (it's the always-on core
+/// index/structural extraction, not a gated domain) — this is the one
+/// descriptor defined inline rather than colocated with an implementation.
+/// `not_producible` is empty: code's real gap is per-concept ("declared,
+/// never observed in use"), which `usage_unobserved` below states with the
+/// actual concept names — a blanket "code has no Observed tier" line would
+/// fire identically on every repository forever and say nothing.
+const CODE_DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "code",
+    structured: true,
+    producible_tiers: &[Tier::Declared, Tier::Used, Tier::Named],
+    not_producible: &[],
+    scan_invocation: None,
+};
 
-/// Per domain: the tier a consumer would plausibly want that the extractor
-/// cannot produce, with the honest reason and the honest way to establish it
-/// without archietect. See the module doc for how each row was derived.
-const NOT_PRODUCIBLE: &[(&str, Tier, &str, &str)] = &[
-    (
-        "git",
-        Tier::Observed,
-        "remotes are Declared from .git/config (git_domain.rs); only the current branch is Observed (.git/HEAD). Whether a remote is reachable, or whether the local branch is ahead of/behind it, is never observed — unknown here by construction, not 'in sync'",
-        "observe it yourself: `git fetch --dry-run` / `git status -sb`. Such a fact would be Observed-tier and is not established by archietect today",
-    ),
-    (
-        "documents",
-        Tier::Explicit,
-        "no mechanism exists for a user to tag or label a document; the extractor produces Derived-tier facts only (filename/extension/size/mtime, documents_domain.rs)",
-        "archietect cannot help today: there is no tagging surface. A user-asserted fact about a document would be Explicit-tier and has nowhere to be recorded yet",
-    ),
-    (
-        "documents",
-        Tier::Inferred,
-        "content is never read (documents_domain.rs: only read_dir + metadata), so nothing about what a document is ABOUT can be inferred — by design, not omission",
-        "archietect cannot help: read the document yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
-    ),
-    (
-        "photos",
-        Tier::Explicit,
-        "no mechanism exists for a user to tag or label a photo; the extractor produces Derived-tier facts only (filename/extension/size/mtime, photos_domain.rs)",
-        "archietect cannot help today: there is no tagging surface. A user-asserted fact about a photo would be Explicit-tier and has nowhere to be recorded yet",
-    ),
-    (
-        "photos",
-        Tier::Inferred,
-        "content (pixels) is never read (photos_domain.rs: only read_dir + metadata), so nothing about what a photo shows can be inferred — by design, not omission",
-        "archietect cannot help: look at the photo yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
-    ),
-    (
-        "messages",
-        Tier::Explicit,
-        "no mechanism exists for a user to tag or label a message store; the extractor produces Derived-tier facts only, and only existence/mtime at that (messages_domain.rs)",
-        "archietect cannot help today: there is no tagging surface. A user-asserted fact about a message store would be Explicit-tier and has nowhere to be recorded yet",
-    ),
-    (
-        "messages",
-        Tier::Inferred,
-        "message content is never opened or queried (messages_domain.rs: metadata only, and a directory-based store's contents are never even listed), so nothing about what was said can be inferred — by design, not omission",
-        "archietect cannot help: open the app yourself. Any conclusion about message content would be Inferred-tier and must never be recorded as Derived or Declared",
-    ),
+/// Every domain with a real extractor, assembled in one place — each
+/// descriptor is owned and colocated with its own domain module. Adding a
+/// domain here (or forgetting to) is exactly what
+/// `every_known_domain_has_a_descriptor_or_is_explicitly_unimplemented`
+/// below checks against `permissions::known_domains()`, so a domain that
+/// exists but was never wired in fails a test instead of shipping silently.
+const ALL_DOMAINS: &[DomainDescriptor] = &[
+    CODE_DESCRIPTOR,
+    crate::git_domain::DESCRIPTOR,
+    crate::docker_domain::DESCRIPTOR,
+    crate::documents_domain::DESCRIPTOR,
+    crate::photos_domain::DESCRIPTOR,
+    crate::messages_domain::DESCRIPTOR,
 ];
 
 fn tier_name(t: &Tier) -> String {
@@ -207,24 +176,22 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
     // ── per-domain: disabled / unconfirmed / tier_not_producible ────────────
     let mut domains_enabled: Vec<String> = Vec::new();
     for (domain, allowed, source, structured) in &resolved {
-        if !IMPLEMENTED_DOMAINS.contains(&domain.as_str()) {
+        let Some(descriptor) = ALL_DOMAINS.iter().find(|d| d.name == domain.as_str()) else {
             continue;
-        }
+        };
         let explicit = source.ends_with("-config");
         let confirmed = if *structured { None } else { confirmed_for(domain) };
 
         if effectively_enabled(domain, *allowed, source, *structured) {
             domains_enabled.push(domain.clone());
-            for (d, tier, why, how) in NOT_PRODUCIBLE {
-                if d == domain {
-                    not_known.push(json!({
-                        "kind": "tier_not_producible",
-                        "domain": domain,
-                        "tier": tier_name(tier),
-                        "why": why,
-                        "how_to_establish": how,
-                    }));
-                }
+            for (tier, why, how) in descriptor.not_producible {
+                not_known.push(json!({
+                    "kind": "tier_not_producible",
+                    "domain": domain,
+                    "tier": tier_name(tier),
+                    "why": why,
+                    "how_to_establish": how,
+                }));
             }
             continue;
         }
@@ -237,16 +204,10 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
                     "configured": source,
                     "confirmed": Value::Null,
                     "why": "unstructured domains require a one-time interactive confirmation before anything is looked at; none has been recorded, so nothing in this domain has been observed",
-                    // messages_domain has no caller-named directory (it
-                    // checks a fixed set of well-known paths under $HOME) —
-                    // unlike documents/photos, its scan subcommand takes no
-                    // `--dir` flag. Found generating this exact message for
-                    // "messages" and printing a flag that doesn't exist.
-                    "how_to_establish": if domain == "messages" {
-                        format!("run `archietect messages scan` in a terminal and answer the prompt, or set [domains.messages] state = \"enabled\" explicitly in archietect.toml")
-                    } else {
-                        format!("run `archietect {domain} scan --dir <path>` in a terminal and answer the prompt, or set [domains.{domain}] state = \"enabled\" explicitly in archietect.toml")
-                    },
+                    "how_to_establish": format!(
+                        "run `{}` in a terminal and answer the prompt, or set [domains.{domain}] state = \"enabled\" explicitly in archietect.toml",
+                        descriptor.scan_invocation.expect("unstructured domain must declare a scan_invocation"),
+                    ),
                 })),
                 Some(false) => not_known.push(json!({
                     "kind": "domain_disabled",
@@ -440,6 +401,58 @@ mod tests {
             .iter()
             .map(|e| (e["kind"].as_str().unwrap().to_string(), e["domain"].as_str().unwrap_or("").to_string()))
             .collect()
+    }
+
+    /// Known to `permissions::known_domains()` but with no extractor and
+    /// none planned: `systemd` is a structured-but-unimplemented placeholder
+    /// (no systemd_domain.rs exists); `browser` is purely a hardcoded-denial
+    /// name (browser profiles can hold session cookies/credentials) with no
+    /// scanner and never will have one. Checked below, not assumed.
+    const PERMANENTLY_UNIMPLEMENTED: &[&str] = &["systemd", "browser"];
+
+    /// Binds `ALL_DOMAINS` to `permissions::known_domains()` the same way
+    /// `tests/laws.rs`'s `conformance_registry_matches_suite` binds the law
+    /// registry to its test suite — a domain implemented but never wired
+    /// into `ALL_DOMAINS` (the exact bug that once happened to photos_domain,
+    /// per the regression comment below) now fails a test instead of
+    /// shipping as a silent gap.
+    #[test]
+    fn every_known_domain_has_a_descriptor_or_is_explicitly_unimplemented() {
+        for name in crate::permissions::known_domains() {
+            let descriptor = ALL_DOMAINS.iter().find(|d| d.name == name);
+            let unimplemented = PERMANENTLY_UNIMPLEMENTED.contains(&name);
+            assert!(
+                descriptor.is_some() || unimplemented,
+                "{name} is known to permissions.rs but has no DomainDescriptor and is not in PERMANENTLY_UNIMPLEMENTED — either a real extractor exists with no register() representation, or PERMANENTLY_UNIMPLEMENTED needs updating"
+            );
+            assert!(
+                !(descriptor.is_some() && unimplemented),
+                "{name} cannot be both implemented (has a descriptor) and permanently unimplemented"
+            );
+            if let Some(d) = descriptor {
+                assert_eq!(
+                    d.structured,
+                    crate::permissions::is_structured_domain(name),
+                    "{name}'s DomainDescriptor.structured disagrees with permissions::is_structured_domain"
+                );
+                if !d.structured {
+                    assert!(d.scan_invocation.is_some(), "{name} is unstructured but declares no scan_invocation");
+                }
+                // Deliberately NOT asserting not_producible's tiers are
+                // disjoint from producible_tiers: a `not_producible` row
+                // names a specific fact within a tier that's absent (e.g.
+                // git: Observed IS producible for the current branch, but
+                // NOT for a remote's reachability/sync status), not a
+                // blanket claim the whole tier is unreachable. The two
+                // lists can legitimately share a tier.
+            }
+        }
+        // and the reverse: every descriptor must be a name permissions.rs
+        // actually knows about — no descriptor for a domain nobody can enable.
+        let known: Vec<&str> = crate::permissions::known_domains().collect();
+        for d in ALL_DOMAINS {
+            assert!(known.contains(&d.name), "{} has a DomainDescriptor but is not in permissions::known_domains()", d.name);
+        }
     }
 
     /// Test isolation: every test points HOME at its own tempdir so the real

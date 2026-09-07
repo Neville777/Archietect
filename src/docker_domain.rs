@@ -36,12 +36,26 @@
 //! other advanced features yields fewer (or zero) resources rather than a
 //! wrong parse or a crash.
 
-use crate::model::{Evidence, Tier};
+use crate::model::{DomainDescriptor, Evidence, Tier};
 use crate::resource::{Identity, Location, Resource};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// This domain's own self-description — see `DomainDescriptor`'s doc.
+/// `not_producible` is empty: Observed tier IS producible, via the separate
+/// opt-in `scan_observed`/`docker observe`, just not automatically — there
+/// is no permanent gap to report. No dedicated CLI subcommand exists for
+/// the Declared-tier scan itself (it runs automatically, like git), so
+/// `scan_invocation` stays `None`.
+pub const DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "docker",
+    structured: true,
+    producible_tiers: &[Tier::Declared, Tier::Observed],
+    not_producible: &[],
+    scan_invocation: None,
+};
 
 /// The gated entry point — checks `permissions::domain_allowed(cfg, "docker")`
 /// before delegating to `scan` below. `docker` is a structured domain (see

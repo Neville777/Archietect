@@ -178,6 +178,14 @@ pub fn is_structured_domain(domain: &str) -> bool {
     STRUCTURED_DOMAINS.contains(&domain.to_lowercase().as_str())
 }
 
+/// Every domain name this tool has any concept of, structured then
+/// unstructured — the exact vocabulary `report()` iterates, exposed so
+/// other modules (register.rs's completeness test) check against this one
+/// source instead of hand-copying the list.
+pub fn known_domains() -> impl Iterator<Item = &'static str> {
+    STRUCTURED_DOMAINS.iter().chain(KNOWN_UNSTRUCTURED_DOMAINS.iter()).copied()
+}
+
 /// Plain config-precedence lookup — no interactive confirmation involved.
 /// This is what `resource_allowed` and every STRUCTURED domain's extractor
 /// should call. An unstructured domain with no config entry at all resolves

@@ -35,7 +35,7 @@
 //! directory anywhere on the machine, so there is no tree-walk-exclusion
 //! convention to lean on the way `scan.rs` has for code.
 
-use crate::model::{Evidence, Tier};
+use crate::model::{DomainDescriptor, Evidence, Tier};
 use crate::permissions::{ConfirmationAsker, PermissionConfig};
 use crate::resource::{Identity, Location, Resource};
 use anyhow::Result;
@@ -46,6 +46,26 @@ use std::path::Path;
 /// unambitious list, same framing as `documents_domain::DOCUMENT_EXTENSIONS`.
 /// Anything else in `dir` is simply not reported.
 const PHOTO_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "heic", "webp"];
+
+/// This domain's own self-description — see `DomainDescriptor`'s doc.
+pub const DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "photos",
+    structured: false,
+    producible_tiers: &[Tier::Derived],
+    not_producible: &[
+        (
+            Tier::Explicit,
+            "no mechanism exists for a user to tag or label a photo; the extractor produces Derived-tier facts only (filename/extension/size/mtime, photos_domain.rs)",
+            "archietect cannot help today: there is no tagging surface. A user-asserted fact about a photo would be Explicit-tier and has nowhere to be recorded yet",
+        ),
+        (
+            Tier::Inferred,
+            "content (pixels) is never read (photos_domain.rs: only read_dir + metadata), so nothing about what a photo shows can be inferred — by design, not omission",
+            "archietect cannot help: look at the photo yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
+        ),
+    ],
+    scan_invocation: Some("archietect photos scan --dir <path>"),
+};
 
 /// The gated entry point real callers should use — identical contract to
 /// `documents_domain::scan_if_allowed`: checks the interactive-confirmation

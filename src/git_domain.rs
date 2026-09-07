@@ -18,10 +18,25 @@
 //! codebase because it needs `git`'s actual behavior (rev-parse, apply,
 //! diff) — reading two plaintext files needs no such contract.
 
-use crate::model::{Evidence, Tier};
+use crate::model::{DomainDescriptor, Evidence, Tier};
 use crate::resource::{Identity, Location, Resource};
 use std::collections::BTreeMap;
 use std::path::Path;
+
+/// This domain's own self-description — see `DomainDescriptor`'s doc.
+/// No CLI subcommand exists (see this module's own doc above); `scan_invocation`
+/// stays `None`.
+pub const DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "git",
+    structured: true,
+    producible_tiers: &[Tier::Declared, Tier::Observed],
+    not_producible: &[(
+        Tier::Observed,
+        "remotes are Declared from .git/config (git_domain.rs); only the current branch is Observed (.git/HEAD). Whether a remote is reachable, or whether the local branch is ahead of/behind it, is never observed — unknown here by construction, not 'in sync'",
+        "observe it yourself: `git fetch --dry-run` / `git status -sb`. Such a fact would be Observed-tier and is not established by archietect today",
+    )],
+    scan_invocation: None,
+};
 
 /// The gated entry point: checks `permissions::domain_allowed(cfg, "git")`
 /// before delegating to `scan` below. This is the function any future

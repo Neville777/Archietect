@@ -46,7 +46,7 @@
 //! flat listing keeps the blast radius of one invocation exactly as large as
 //! the one directory a human explicitly named.
 
-use crate::model::{Evidence, Tier};
+use crate::model::{DomainDescriptor, Evidence, Tier};
 use crate::permissions::{ConfirmationAsker, PermissionConfig};
 use crate::resource::{Identity, Location, Resource};
 use anyhow::Result;
@@ -58,6 +58,26 @@ use std::path::Path;
 /// not a claim that other files aren't documents, only that this extractor
 /// doesn't assert an opinion about them.
 const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "docx", "txt", "md", "odt"];
+
+/// This domain's own self-description — see `DomainDescriptor`'s doc.
+pub const DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "documents",
+    structured: false,
+    producible_tiers: &[Tier::Derived],
+    not_producible: &[
+        (
+            Tier::Explicit,
+            "no mechanism exists for a user to tag or label a document; the extractor produces Derived-tier facts only (filename/extension/size/mtime, documents_domain.rs)",
+            "archietect cannot help today: there is no tagging surface. A user-asserted fact about a document would be Explicit-tier and has nowhere to be recorded yet",
+        ),
+        (
+            Tier::Inferred,
+            "content is never read (documents_domain.rs: only read_dir + metadata), so nothing about what a document is ABOUT can be inferred — by design, not omission",
+            "archietect cannot help: read the document yourself. Any conclusion about its contents would be Inferred-tier and must never be recorded as Derived or Declared",
+        ),
+    ],
+    scan_invocation: Some("archietect documents scan --dir <path>"),
+};
 
 /// The gated entry point real callers should use — checks the interactive-
 /// confirmation gate (`permissions::domain_allowed_with_confirmation`) and,

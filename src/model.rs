@@ -75,6 +75,30 @@ pub struct Evidence {
     pub what: String,
 }
 
+/// A domain's own description of what it can/cannot observe and how a
+/// human enables it. Each domain module with a real extractor owns and
+/// exports one `pub const DESCRIPTOR: DomainDescriptor`, colocated with
+/// its implementation — `register.rs` assembles these into one list
+/// instead of maintaining separate facts about domains it doesn't own.
+pub struct DomainDescriptor {
+    /// Permission-gate name — must equal permissions.rs's domain string
+    /// exactly (checked by register.rs's completeness test).
+    pub name: &'static str,
+    /// Config alone enables it (true) vs. needs interactive confirmation
+    /// (false) — must agree with permissions::is_structured_domain(name).
+    pub structured: bool,
+    /// Tiers this domain's extractor actually constructs Evidence for.
+    pub producible_tiers: &'static [Tier],
+    /// Tiers a consumer might plausibly expect but this domain can never
+    /// produce: (tier, why, how a human establishes it without archietect).
+    /// Empty when there's no permanent gap to report.
+    pub not_producible: &'static [(Tier, &'static str, &'static str)],
+    /// Exact CLI invocation a human runs to populate an unstructured domain
+    /// and get asked for confirmation. None for a structured domain, or one
+    /// with no dedicated CLI surface at all.
+    pub scan_invocation: Option<&'static str>,
+}
+
 /// One declared concept — a model/table the project itself asserts exists.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Concept {

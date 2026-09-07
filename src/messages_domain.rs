@@ -35,12 +35,35 @@
 //! config entry is honored without asking; with none, a real TTY is
 //! required and the answer is persisted so it's asked at most once.
 
-use crate::model::{Evidence, Tier};
+use crate::model::{DomainDescriptor, Evidence, Tier};
 use crate::permissions::{ConfirmationAsker, PermissionConfig};
 use crate::resource::{Identity, Location, Resource};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// This domain's own self-description — see `DomainDescriptor`'s doc.
+/// `scan_invocation` has no `--dir`: unlike documents/photos, this domain
+/// checks a fixed set of well-known paths under `$HOME`, not a caller-named
+/// directory.
+pub const DESCRIPTOR: DomainDescriptor = DomainDescriptor {
+    name: "messages",
+    structured: false,
+    producible_tiers: &[Tier::Derived],
+    not_producible: &[
+        (
+            Tier::Explicit,
+            "no mechanism exists for a user to tag or label a message store; the extractor produces Derived-tier facts only, and only existence/mtime at that (messages_domain.rs)",
+            "archietect cannot help today: there is no tagging surface. A user-asserted fact about a message store would be Explicit-tier and has nowhere to be recorded yet",
+        ),
+        (
+            Tier::Inferred,
+            "message content is never opened or queried (messages_domain.rs: metadata only, and a directory-based store's contents are never even listed), so nothing about what was said can be inferred — by design, not omission",
+            "archietect cannot help: open the app yourself. Any conclusion about message content would be Inferred-tier and must never be recorded as Derived or Declared",
+        ),
+    ],
+    scan_invocation: Some("archietect messages scan"),
+};
 
 #[derive(Clone, Copy)]
 enum StoreShape {
