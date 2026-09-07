@@ -23,6 +23,8 @@ anyhow = "1"
 toml = "0.8"
 notify = "6"
 tiny_http = "0.12"
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

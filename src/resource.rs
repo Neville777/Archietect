@@ -74,7 +74,7 @@ pub struct Relationship {
 #[cfg(test)]
 mod tests {
     use crate::model::{Concept, Tier};
-    use crate::structural::{Symbol, SymbolKind};
+    use crate::structural::{ObservationSource, Symbol, SymbolKind};
 
     #[test]
     fn concept_to_resource_is_domain_code() {
@@ -101,6 +101,7 @@ mod tests {
             file: "src/query.rs".into(),
             linked_concept: None,
             line: 677,
+            observation_source: ObservationSource::Lexical,
         };
         let r = s.to_resource();
         assert_eq!(r.domain, "code");

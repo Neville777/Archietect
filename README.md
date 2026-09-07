@@ -155,7 +155,7 @@ in that directory; limitations are stated there too.
 
 | Language | Symbols | Frameworks (routes) |
 |---|---|---|
-| Rust | structs, enums, traits, top-level functions | Axum, Actix-web, Rocket |
+| Rust | structs, enums, traits, top-level functions (AST-verified via `syn`; falls back to lexical extraction if the file doesn't parse) | Axum, Actix-web, Rocket |
 | Python | classes, top-level functions | FastAPI, Flask, Django |
 | TypeScript/JavaScript | classes, interfaces, type aliases, enums, exported and unexported-PascalCase functions, events | Express, NestJS, Next.js, Nuxt (server API), Angular (router) |
 | Vue | the SFC itself as a component, plus its `<script>` block | Nuxt (pages) |
@@ -186,8 +186,14 @@ so an `ABSENT` result is never a mystery. A language with no extractor at
 all isn't guessed at either — `INSUFFICIENT_COVERAGE` names the gap and
 lists the files worth reading.
 
-Not attempted: a real parser (everything here is regex — an MVP tradeoff)
-and route DSLs too combinator-heavy to track reliably (Servant's type-level
+Rust symbol extraction uses a real parser (`syn`) rather than regex — see
+"Observation mechanism rule" in `structural.rs`'s module doc for when a
+syntax-aware observer is worth it versus when lexical matching is the
+honest choice (route/framework conventions stay lexical everywhere, Rust
+included). Every other language here is still regex — a real-parser
+migration is real work per language, done where a regex false
+positive/negative was actually found, not assumed. Also not attempted:
+route DSLs too combinator-heavy to track reliably (Servant's type-level
 API, Akka HTTP's in-code routing, warp's filter-combinator routing) — a
 wrong route is worse than a missing one.
 

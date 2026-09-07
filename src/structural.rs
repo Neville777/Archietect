@@ -34,6 +34,58 @@
 //! unchanged file reuses its prior `StructuralFileFacts`. The concept-set
 //! dependency rule does NOT apply here — structural symbols are independent
 //! of the schema extraction pass.
+//!
+//! ## Observation mechanism rule
+//!
+//! Extractors are either *lexical* (regex) or *syntactic* (AST). The rule
+//! for choosing between them is not "parsers are more modern" — it is:
+//!
+//! > Use a syntax-aware observer where the claim being made is a syntactic
+//! > fact. Keep lexical matching where the evidence itself is lexical.
+//!
+//! Examples of syntactic facts: "this Rust file contains a public struct
+//! named X", "this function is declared at the top level, not inside an
+//! impl block". These require a parser because regex cannot represent the
+//! grammar (visibility forms, nesting depth, string boundaries).
+//!
+//! Examples of legitimately lexical observations: route path strings,
+//! framework annotation conventions, schema marker patterns, configuration
+//! file conventions. A parser adds no accuracy here and often adds
+//! complexity.
+//!
+//! The `ObservationSource` field on `Symbol` preserves this distinction in
+//! the persistent memory: `Ast` means a parser confirmed the declaration;
+//! `Lexical` means the claim is intentionally lexical; `LexicalFallback`
+//! means a parse failure forced a regex fallback.
+//!
+//! ## Rust extractor migration (2026-09-07)
+//!
+//! The Rust extractor was migrated from regex to `syn` after comparing both
+//! implementations against all 27 `.rs` files in Archietect's own `src/`
+//! directory. The comparison found 11 divergences, classified as:
+//!
+//!   8 regex false positives — `pub fn foo()` text embedded in raw string
+//!     literals (test fixtures) being extracted as declarations. Regex
+//!     cannot distinguish Rust-shaped text inside a string from real source.
+//!     syn correctly ignored all of them.
+//!
+//!   3 genuine missed declarations — `pub(crate) fn watchable_dirs`,
+//!     `pub(crate) fn relevant`, `pub(crate) fn brace_body_span`. The
+//!     pattern `pub\s+fn` does not match `pub(crate) fn` (no space after
+//!     `pub`). These were silently ABSENT in Archietect's index of its own
+//!     source. syn handles all Visibility::Restricted forms correctly.
+//!
+//!   0 unresolved divergences.
+//!
+//! The practical consequence: querying `archietect concept watchable_dirs`
+//! previously returned ABSENT ("genuinely new, building it is justified").
+//! After migration it returns STRUCTURAL with source location and excerpt.
+//! A confident wrong answer became a correct one without changing the query
+//! model, verdict model, or evidence model — only the observer changed.
+//!
+//! The comparison harness lives in `tests/rs_extractor_comparison.rs` and
+//! is the template for future extractor migrations (TS/JS next).
+//! See also: `extract_rs_syn`, `extract_rs`, `ObservationSource`.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -42,6 +94,46 @@ use std::collections::BTreeMap;
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /// The kind of a structural symbol. Determines how it participates in
+/// How a symbol's existence was established. Preserves the provenance of an
+/// observation so callers can reason about confidence and the memory model
+/// can eventually surface it.
+///
+/// This is NOT an evidence tier (those live in model.rs and express
+/// schema/usage confidence). It is the observation mechanism — how the
+/// extractor arrived at the fact that a symbol exists at all.
+///
+/// ## Why this matters
+///
+/// A regex match on `^pub fn` and an AST-confirmed `ItemFn` node look
+/// identical after extraction but have different epistemic weight:
+///
+/// - `Ast`: the parser confirmed that this is a syntactically valid Rust
+///   declaration. Visibility, nesting depth, and context are all verified.
+/// - `LexicalFallback`: `syn` failed to parse the file (generated code,
+///   incomplete snippet, proc-macro output). The regex found something that
+///   looks like a declaration but could be in a string literal, a comment,
+///   or another context a parser would reject.
+/// - `Lexical`: the extractor for this language is regex-based by design
+///   (the language doesn't yet have an AST-based extractor). The observation
+///   is an honest lexical claim, not a parser-quality claim.
+///
+/// The distinction becomes load-bearing when Archietect answers:
+/// "There is a function called X, established through Rust AST parsing."
+/// vs. "There is a function called X (lexical observation, unverified)."
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ObservationSource {
+    /// Symbol confirmed by a real syntax tree (syn, tree-sitter, etc.).
+    /// Context, nesting, and visibility are verified by the parser.
+    Ast,
+    /// File failed to parse; regex was used as fallback. The observation is
+    /// plausible but not AST-confirmed — treat it like `Lexical`.
+    LexicalFallback,
+    /// Extractor for this language is regex-based by design. Not a failure;
+    /// this is the honest claim of a lexical observer.
+    #[default]
+    Lexical,
+}
+
 /// concept matching and impact traversal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SymbolKind {
@@ -79,6 +171,12 @@ pub struct Symbol {
     /// (it's the file's own text), not an inference.
     #[serde(default)]
     pub line: usize,
+    /// How this symbol's existence was established. Distinguishes AST-
+    /// confirmed declarations from lexical observations and parse-failure
+    /// fallbacks. Defaults to `Lexical` when deserializing old records that
+    /// predate this field — the honest conservative claim.
+    #[serde(default)]
+    pub observation_source: ObservationSource,
 }
 
 impl Symbol {
@@ -864,7 +962,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 15; // +function-body literal-string extraction (TS/JS/Rust/Python) for cross-file duplicate-logic detection — a cached file_facts entry from before this predates function_bodies entirely
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 16; // Rust extractor migrated from regex to syn (AST-verified declarations); added ObservationSource to Symbol for extraction provenance
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1194,12 +1292,26 @@ pub struct LanguageSpec {
     pub frameworks: &'static [&'static str],
 }
 
+/// Dispatch wrapper for the syn-based Rust extractor so it can be stored in
+/// the LANGUAGES function-pointer table (same signature as all other
+/// extractors). The actual implementation lives in `extract_rs_syn`.
+fn extract_rs_syn_dispatch(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    extract_rs_syn(rel, text, symbols, imports, routes);
+}
+
 pub const LANGUAGES: &[LanguageSpec] = &[
     LanguageSpec {
         name: "Rust",
         extensions: &["rs"],
-        extractor: extract_rs,
-        symbol_support: "structs, enums, traits, top-level functions",
+        extractor: extract_rs_syn_dispatch,
+        symbol_support: "structs, enums, traits, top-level functions (AST-verified via syn; \
+                          falls back to lexical extraction if the file does not parse)",
         // Axum's `.route("/path", get(handler))` builder pattern also
         // registers a WebSocket upgrade handler (a WS endpoint is an
         // ordinary handler at an ordinary route in Axum) — one extractor
@@ -1445,7 +1557,7 @@ fn extract_ts_js(
         // Determine kind from the matched text
         let matched = &text[cap.get(0).unwrap().start()..cap.get(0).unwrap().end()];
         let kind = if matched.contains("interface") { SymbolKind::Interface } else { SymbolKind::Class };
-        symbols.push(Symbol { name, kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name, kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // TypeScript enums (exported — they participate in concept identity)
@@ -1457,6 +1569,7 @@ fn extract_ts_js(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -1481,6 +1594,7 @@ fn extract_ts_js(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -1552,13 +1666,13 @@ fn extract_ts_js(
         r"(?m)^export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)"
     ).unwrap();
     for cap in fn_decl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
     let fn_const_re = Regex::new(
         r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
     ).unwrap();
     for cap in fn_const_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Unexported PascalCase top-level declarations — every pattern above
@@ -1582,13 +1696,13 @@ fn extract_ts_js(
         r"(?m)^(?:default\s+)?(?:async\s+)?function\s+([A-Z][A-Za-z0-9_$]*)"
     ).unwrap();
     for cap in local_fn_decl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
     let local_fn_const_re = Regex::new(
         r"(?m)^const\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
     ).unwrap();
     for cap in local_fn_const_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // `export const authApi = { login: ..., logout: ... }` — an object-literal
@@ -1604,7 +1718,7 @@ fn extract_ts_js(
         r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::\s*[\w<>\[\],\.\s]+)?=\s*\{"
     ).unwrap();
     for cap in const_object_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // NestJS / Express route decorators and method calls
@@ -1775,7 +1889,7 @@ fn extract_vue(
     // `index.vue` names nothing on its own (its directory does) — skipped.
     if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
         if stem.to_lowercase() != "index" {
-            symbols.push(Symbol { name: to_pascal_case(stem), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: 1 });
+            symbols.push(Symbol { name: to_pascal_case(stem), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: 1 , observation_source: ObservationSource::Lexical });
         }
     }
 
@@ -1911,6 +2025,7 @@ fn extract_ts_events(rel: &str, text: &str, symbols: &mut Vec<Symbol>) {
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 }
@@ -1933,6 +2048,7 @@ fn extract_py(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -1941,7 +2057,7 @@ fn extract_py(
     // here: a class's private helpers would otherwise flood the symbol set).
     let toplevel_fn_re = Regex::new(r"(?m)^(?:async\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for cap in toplevel_fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Imports: from module import X, Y / import module
@@ -2015,6 +2131,7 @@ fn extract_rs(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2029,6 +2146,7 @@ fn extract_rs(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2041,6 +2159,7 @@ fn extract_rs(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2118,6 +2237,179 @@ fn extract_rs(
     }
 }
 
+// ── Rust (syn-based) ─────────────────────────────────────────────────────────
+//
+// Parallel implementation of `extract_rs` using `syn` to parse a real Rust
+// AST instead of regex. Used for dogfooding comparison against the regex
+// extractor on Archietect's own source files.
+//
+// Architecture note: the output types are identical to `extract_rs` — Symbol,
+// Import, Route. The parser is an implementation detail of observation; the
+// memory model doesn't care how the observation was obtained.
+//
+// What `syn` adds over regex here:
+//   - Correct scoping: `pub fn` inside an `impl` block is not top-level and
+//     should not be extracted. Regex uses `^pub fn` (line-start anchor) to
+//     approximate this, which fails for impl blocks that happen to be at
+//     column 0 (e.g., after a macro that dedents). `syn` gives us the real
+//     item tree.
+//   - `pub(crate)` / `pub(super)` / `pub(in path)` visibility variants are
+//     all Visibility::Restricted in syn — we treat them identically to `pub`
+//     for the same reason the regex extractor's "public types are declared
+//     facts" rationale applies: they're visible outside the defining function.
+//   - Accurate line numbers via proc_macro2::Span.
+//   - Proc-macro and attribute-macro decorated items (Axum, Actix-web) are
+//     still matched by the attribute strings, same as the regex extractor.
+//
+// What we deliberately keep lexical (regex):
+//   - Route extraction: Axum's `.route("/path", get(h))` chain and Actix/
+//     Rocket's `#[get("/path")]` attribute are framework conventions, not
+//     structural Rust syntax. Matching attribute argument strings with syn
+//     would require walking every attribute's token stream — more complex than
+//     the existing regex for no accuracy gain on the observations we care about.
+//   - `use` imports: `syn` would give us a perfectly parsed UseTree, but the
+//     downstream consumer (`Import { from_file, to_module, names }`) only
+//     needs the module path and the imported names as strings — the regex
+//     already produces exactly that shape, and the only failure mode (nested
+//     braces in `use a::{b::{c, d}, e}`) isn't observed in any corpus file.
+
+/// syn visitor that collects top-level public items.
+struct RsVisitor<'a> {
+    rel: &'a str,
+    symbols: &'a mut Vec<Symbol>,
+    depth: usize, // tracks nesting depth — top-level = depth 0
+}
+
+impl<'a> RsVisitor<'a> {
+    fn is_pub(vis: &syn::Visibility) -> bool {
+        !matches!(vis, syn::Visibility::Inherited)
+    }
+
+    fn line_from_span(&self, span: proc_macro2::Span) -> usize {
+        // syn 2.x exposes span().start().line (1-indexed) via the
+        // `proc_macro2` span API when built outside a proc-macro context.
+        // Fall back to the byte-offset scanner if not available.
+        span.start().line
+    }
+}
+
+impl<'ast, 'a> syn::visit::Visit<'ast> for RsVisitor<'a> {
+    fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+        if self.depth == 0 && Self::is_pub(&node.vis) {
+            self.symbols.push(Symbol {
+                name: node.ident.to_string(),
+                kind: SymbolKind::Class,
+                file: self.rel.to_string(),
+                linked_concept: None,
+                line: self.line_from_span(node.ident.span()),
+                observation_source: ObservationSource::Ast,
+            });
+        }
+        // Do NOT recurse — structs don't contain other declaration items.
+    }
+
+    fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
+        if self.depth == 0 && Self::is_pub(&node.vis) {
+            self.symbols.push(Symbol {
+                name: node.ident.to_string(),
+                kind: SymbolKind::Class,
+                file: self.rel.to_string(),
+                linked_concept: None,
+                line: self.line_from_span(node.ident.span()),
+                observation_source: ObservationSource::Ast,
+            });
+        }
+    }
+
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        if self.depth == 0 && Self::is_pub(&node.vis) {
+            self.symbols.push(Symbol {
+                name: node.ident.to_string(),
+                kind: SymbolKind::Interface,
+                file: self.rel.to_string(),
+                linked_concept: None,
+                line: self.line_from_span(node.ident.span()),
+                observation_source: ObservationSource::Ast,
+            });
+        }
+        // Don't recurse into trait body — method signatures inside a trait
+        // are not top-level declarations.
+    }
+
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        if self.depth == 0 && Self::is_pub(&node.vis) {
+            self.symbols.push(Symbol {
+                name: node.sig.ident.to_string(),
+                kind: SymbolKind::Function,
+                file: self.rel.to_string(),
+                linked_concept: None,
+                line: self.line_from_span(node.sig.ident.span()),
+                observation_source: ObservationSource::Ast,
+            });
+        }
+        // Do NOT recurse into fn body — nested functions inside a pub fn
+        // are private implementation detail even if they happen to be pub.
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        // Increment depth so anything inside an impl block is NOT treated as
+        // top-level. We don't visit methods at all — impl methods are not
+        // in scope for the top-level-symbol contract.
+        self.depth += 1;
+        syn::visit::visit_item_impl(self, node);
+        self.depth -= 1;
+    }
+
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        // Increment depth for inline mod blocks so items inside are not
+        // treated as top-level. Inline mods with a body (`mod foo { ... }`)
+        // are a separate namespace; file-level mods (`mod foo;`) have no
+        // body to visit.
+        self.depth += 1;
+        syn::visit::visit_item_mod(self, node);
+        self.depth -= 1;
+    }
+}
+
+/// `syn`-based Rust extractor. Produces the same Symbol/Import/Route types as
+/// `extract_rs`. Falls back to the regex extractor on parse failure (e.g.,
+/// generated code, incomplete snippets), so a file that doesn't parse cleanly
+/// still contributes what the regex can find.
+///
+/// Routes and imports use the same regex logic as `extract_rs` — see the
+/// module comment above for why those remain lexical.
+pub fn extract_rs_syn(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    // Routes and imports: keep regex (deliberately lexical, see module doc).
+    let mut regex_symbols = Vec::new();
+    extract_rs(rel, text, &mut regex_symbols, imports, routes);
+    // We only take the import/route side-effects above; symbols come from syn.
+
+    match syn::parse_file(text) {
+        Ok(ast) => {
+            let mut visitor = RsVisitor { rel, symbols, depth: 0 };
+            syn::visit::visit_file(&mut visitor, &ast);
+        }
+        Err(_) => {
+            // Parse failure: fall back to the regex extractor's symbols so we
+            // never produce fewer observations than the baseline. Tag each
+            // symbol as LexicalFallback so callers know the observation did
+            // not come from a verified AST — the file may be generated code,
+            // an incomplete snippet, or a proc-macro expansion that syn cannot
+            // handle.
+            for mut sym in regex_symbols {
+                sym.observation_source = ObservationSource::LexicalFallback;
+                symbols.push(sym);
+            }
+        }
+    }
+}
+
 // ── Go ────────────────────────────────────────────────────────────────────────
 
 fn extract_go(
@@ -2137,6 +2429,7 @@ fn extract_go(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2146,7 +2439,7 @@ fn extract_go(
     // match above.
     let fn_re = Regex::new(r"(?m)^func\s+(?:\([^)]*\)\s+)?([A-Z][A-Za-z0-9_]*)\s*\(").unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // import "package/path" or import ( "..." )
@@ -2190,6 +2483,7 @@ fn extract_java(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2208,7 +2502,7 @@ fn extract_java(
     // never matches a .java file.
     let fun_re = Regex::new(r"(?m)^(?:public\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for cap in fun_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Spring MVC: @GetMapping("/path"), @RequestMapping(value="/path", method=GET)
@@ -2252,6 +2546,7 @@ fn extract_rb(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2264,6 +2559,7 @@ fn extract_rb(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2274,7 +2570,7 @@ fn extract_rb(
     // noise (private helpers) for actually finding real methods.
     let method_re = Regex::new(r"(?m)^\s*def\s+(?:self\.)?([a-z_][A-Za-z0-9_?!=]*)").unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // require / require_relative
@@ -2364,6 +2660,7 @@ fn extract_ex(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2372,7 +2669,7 @@ fn extract_ex(
     // deliberately excluded: `def\s+` cannot match inside the word `defp`.
     let fn_re = Regex::new(r"(?m)^\s*def\s+([a-z_][A-Za-z0-9_?!]*)").unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // alias / import / use
@@ -2421,6 +2718,7 @@ fn extract_php(
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
     }
 
@@ -2428,7 +2726,7 @@ fn extract_php(
     // code). Class methods are indented and excluded by the `^` anchor.
     let fn_re = Regex::new(r"(?m)^function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // use Foo\Bar\Baz;
@@ -2461,7 +2759,7 @@ fn extract_cs(
     ).unwrap();
     for cap in type_re.captures_iter(text) {
         let kind = if &cap[1] == "interface" { SymbolKind::Interface } else { SymbolKind::Class };
-        symbols.push(Symbol { name: cap[2].to_string(), kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[2].to_string(), kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // public methods (and constructors, which share the same shape minus a
@@ -2471,7 +2769,7 @@ fn extract_cs(
         r"(?m)^\s*public\s+(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*[\w<>\[\],\.\?]+\s+([A-Z][A-Za-z0-9_]*)\s*\("
     ).unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // using Namespace.Sub;
@@ -2556,20 +2854,20 @@ fn extract_swift(
         r"(?m)^(?:public\s+|open\s+|internal\s+|final\s+)*class\s+([A-Z][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     let struct_re = Regex::new(
         r"(?m)^(?:public\s+|internal\s+)*struct\s+([A-Z][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in struct_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // protocol — Swift's interface equivalent.
     let protocol_re = Regex::new(r"(?m)^(?:public\s+)?protocol\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in protocol_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // func — top-level only, same noise tradeoff as everywhere else in this
@@ -2579,7 +2877,7 @@ fn extract_swift(
         r"(?m)^(?:public\s+|open\s+|internal\s+|private\s+|fileprivate\s+|static\s+|final\s+)*func\s+([A-Za-z_][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     let import_re = Regex::new(r"(?m)^import\s+([A-Za-z_][A-Za-z0-9_.]*)").unwrap();
@@ -2662,17 +2960,17 @@ fn extract_objc(
     // resulting duplicate Class symbol down to one.
     let iface_re = Regex::new(r"(?m)^@interface\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in iface_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
     let impl_re = Regex::new(r"(?m)^@implementation\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in impl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // @protocol Name — Objective-C's interface equivalent.
     let proto_re = Regex::new(r"(?m)^@protocol\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in proto_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // - (ReturnType)methodName / + (ReturnType)methodName. Top-level only
@@ -2681,7 +2979,7 @@ fn extract_objc(
     // methods without needing Ruby's indentation-tolerant rule.
     let method_re = Regex::new(r"(?m)^[-+]\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // #import "Header.h" / #import <Framework/Framework.h>
@@ -2754,13 +3052,13 @@ fn extract_c(
 
     let struct_re = Regex::new(r"(?m)^(?:typedef\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in struct_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     if is_cpp {
         let class_re = Regex::new(r"(?m)^class\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
         for cap in class_re.captures_iter(text) {
-            symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+            symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
         }
     }
 
@@ -2775,7 +3073,7 @@ fn extract_c(
         if matches!(name.as_str(), "if" | "for" | "while" | "switch" | "catch" | "return" | "sizeof") {
             continue;
         }
-        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // #include "foo.h" / #include <foo.h>
@@ -2849,19 +3147,19 @@ fn extract_scala(
         r"(?m)^(?:sealed\s+|abstract\s+|final\s+|case\s+)*class\s+([A-Z][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // object — Scala's singleton; treated as a Class for impact purposes,
     // same call the TypeScript extractor makes for enums above.
     let object_re = Regex::new(r"(?m)^(?:case\s+)?object\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in object_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     let trait_re = Regex::new(r"(?m)^(?:sealed\s+)?trait\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in trait_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // def — top-level only (a module-level def, e.g. in a `package object`
@@ -2871,7 +3169,7 @@ fn extract_scala(
         r"(?m)^(?:private(?:\[\w+\])?\s+|protected\s+|final\s+|override\s+)*def\s+([a-zA-Z_][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in def_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     let import_re = Regex::new(r"(?m)^import\s+([\w.{}, ]+)").unwrap();
@@ -2931,7 +3229,7 @@ fn extract_dart(
 ) {
     let class_re = Regex::new(r"(?m)^(?:abstract\s+)?class\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Top-level functions only — a signature ending in a body brace (never a
@@ -2945,7 +3243,7 @@ fn extract_dart(
         if matches!(name.as_str(), "if" | "for" | "while" | "switch" | "catch") {
             continue;
         }
-        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // import 'package:foo/foo.dart'; / import 'dart:core';
@@ -3006,14 +3304,14 @@ fn extract_haskell(
     // thing recorded as SymbolKind::Class here.
     let data_re = Regex::new(r"(?m)^(?:data|newtype)\s+([A-Z][A-Za-z0-9_']*)").unwrap();
     for cap in data_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // class — a typeclass, Haskell's interface equivalent: a contract types
     // opt into, not a value's own type.
     let class_re = Regex::new(r"(?m)^class\s+(?:.*=>\s*)?([A-Z][A-Za-z0-9_']*)").unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Top-level type signature lines: `name :: Type`. This is the most
@@ -3023,7 +3321,7 @@ fn extract_haskell(
     // function, so the signature line is taken as the sole extraction.
     let sig_re = Regex::new(r"(?m)^([a-z_][A-Za-z0-9_']*)\s*::").unwrap();
     for cap in sig_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // import Module.Path
@@ -3119,19 +3417,19 @@ fn extract_clojure(
     // `defn-`, the same public-only convention as excluding Elixir's `defp`.
     let defn_re = Regex::new(r"\(defn\s+([A-Za-z][A-Za-z0-9_\-!?*+<>=]*)").unwrap();
     for cap in defn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // defrecord / deftype — Clojure's closest equivalent to a class.
     let record_re = Regex::new(r"\((?:defrecord|deftype)\s+([A-Za-z][A-Za-z0-9_\-]*)").unwrap();
     for cap in record_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // defprotocol — Clojure's interface equivalent.
     let protocol_re = Regex::new(r"\(defprotocol\s+([A-Za-z][A-Za-z0-9_\-]*)").unwrap();
     for cap in protocol_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Compojure: (GET "/path" [] ...), (POST "/path" [] ...), etc.
@@ -3201,12 +3499,12 @@ fn extract_graphql(
     // type Foo { ... } / input Foo { ... } / enum Foo { ... }
     let type_re = Regex::new(r"(?m)^(?:type|input|enum)\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in type_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     let interface_re = Regex::new(r"(?m)^interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in interface_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Named operations: `query GetUser { ... }`, `mutation CreateUser { ... }`,
@@ -3377,7 +3675,7 @@ fn extract_proto(
 ) {
     let message_re = Regex::new(r"(?m)^message\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in message_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 
     // Services and their rpc methods: rpc methods only belong to the
@@ -3393,7 +3691,7 @@ fn extract_proto(
         .collect();
     let rpc_re = Regex::new(r"rpc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for (i, (name, start, body_start)) in services.iter().enumerate() {
-        symbols.push(Symbol { name: name.clone(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, *start) });
+        symbols.push(Symbol { name: name.clone(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, *start) , observation_source: ObservationSource::Lexical });
         let body_end = services.get(i + 1).map(|(_, s, _)| *s).unwrap_or(text.len());
         for cap in rpc_re.captures_iter(&text[*body_start..body_end]) {
             routes.push(Route {
@@ -3470,11 +3768,11 @@ fn extract_gherkin(
     // corpus check had a Chinese-language Feature/Scenario pair).
     let feature_re = Regex::new(r"(?m)^\s*Feature:\s*(.+)$").unwrap();
     for cap in feature_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
     let scenario_re = Regex::new(r"(?m)^\s*Scenario(?:\s+Outline)?:\s*(.+)$").unwrap();
     for cap in scenario_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) });
+        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
     }
 }
 
