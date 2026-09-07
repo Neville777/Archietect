@@ -535,11 +535,11 @@ fn main() -> anyhow::Result<()> {
                 }),
             }
         }
-        Cmd::Intent { text } => { let (idx, _g) = index_for(&root); query::intent(&idx, &text.join(" ")) }
+        Cmd::Intent { text } => { let (idx, g) = index_for(&root); query::intent(&idx, &g, &text.join(" ")) }
         Cmd::Plan { text } => { let (idx, g) = index_for(&root); query::plan(&idx, &g, &text.join(" ")) }
         Cmd::Impact { term } => { let (idx, g) = index_for(&root); query::impact(&idx, &g, &term) }
         Cmd::Imports { file } => { let (_idx, g) = index_for(&root); query::imports(&g, &file) }
-        Cmd::Guard { sql } => { let (idx, _g) = index_for(&root); query::guard(&idx, &sql) }
+        Cmd::Guard { sql } => { let (idx, g) = index_for(&root); query::guard(&idx, &g, &sql) }
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
@@ -596,8 +596,8 @@ fn main() -> anyhow::Result<()> {
         Cmd::Ci { strict } => {
             let mut diff = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
-            let (idx, _g) = index_for(&root);
-            let out = query::ci(&idx, &diff, strict);
+            let (idx, g) = index_for(&root);
+            let out = query::ci(&idx, &g, &diff, strict);
             println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
 
             // Record the outcome. query::ci() itself stays read-only — REST

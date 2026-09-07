@@ -405,11 +405,11 @@ fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path
     let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
     match ep {
         "/concept" => query::concept(idx, graph, q),
-        "/intent" => query::intent(idx, q),
+        "/intent" => query::intent(idx, graph, q),
         "/impact" => query::impact(idx, graph, q),
         "/imports" => query::imports(graph, p.get("file").map(|s| s.as_str()).unwrap_or("")),
         "/owner" => query::owner(idx, graph, q),
-        "/guard" => query::guard(idx, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
+        "/guard" => query::guard(idx, graph, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
         "/plan" => query::plan(idx, graph, q),
         "/status" => query::status(idx, graph),
         "/doctor" => query::doctor(idx, graph, root),
@@ -419,6 +419,7 @@ fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path
         "/verdicts" => query::verdicts(idx),
         "/ci" => query::ci(
             idx,
+            graph,
             p.get("diff").map(|s| s.as_str()).unwrap_or(""),
             p.get("strict").map(|s| s == "true").unwrap_or(false),
         ),

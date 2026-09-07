@@ -510,10 +510,10 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
                         let mut out = match name {
                             "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
-                            "intent" => query::intent(&idx, args["text"].as_str().unwrap_or("")),
+                            "intent" => query::intent(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "impact" => query::impact(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "imports" => query::imports(&graph, args["file"].as_str().unwrap_or("")),
-                            "guard" => query::guard(&idx, args["sql"].as_str().unwrap_or("")),
+                            "guard" => query::guard(&idx, &graph, args["sql"].as_str().unwrap_or("")),
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
@@ -533,7 +533,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 ),
                                 "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client (mcp_client_connected on first tool call, mcp_client_active as a roughly-60s heartbeat thereafter).",
                             }),
-                            "ci" => query::ci(&idx, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
+                            "ci" => query::ci(&idx, &graph, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
                             "proposal_submit" => {
                                 let kind_str = args["kind"].as_str().unwrap_or("");
                                 match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {

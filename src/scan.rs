@@ -141,11 +141,25 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 9; // +rust pub-struct extractor, +ontology-before-name-search (law-011)
+pub const EXTRACTOR_VERSION: u32 = 10; // +strip #[cfg(test)] modules from Rust source before declaration extraction — a CREATE TABLE string used only as test fixture data (inside a #[test] fn body) was being declared as a real concept
 
+// `.claude` added as a real bug fix, not a guess: Claude Code's
+// `isolation: "worktree"` agents leave a full checkout of (part of) the
+// repo under `.claude/worktrees/<agent>/...`. Since a worktree is a
+// duplicate of real content at a different path, scanning it doesn't just
+// waste time — it silently doubles up real declarations under a second
+// path, producing phantom "duplicate concept" pairs (found dogfooding
+// `duplicate-logic` against this very repo) and, worse, defeating a
+// project's own `archietect.toml` `exclude` list: THIS project excludes
+// `tests/fixtures` (deliberately fake schema, regression bait for the law
+// suite) by path prefix, but `.claude/worktrees/<agent>/tests/fixtures`
+// doesn't start with that prefix, so the worktree's copy stayed un-excluded
+// and its intentionally-fake "Ghost" concept kept showing up as genuinely
+// ACTIVE — which is what made this repo's own pre-commit hook reject an
+// otherwise-correct commit.
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
-    ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
+    ".venv", "venv", ".turbo", "coverage", ".cache", "vendor", ".claude",
 ];
 const MAX_FILE_BYTES: u64 = 2_000_000;
 /// Schema-declaration formats structural.rs has no reason to know about —
@@ -787,9 +801,67 @@ pub fn scan_with_prior(
 
 // ── per-file declaration extraction (pure) ───────────────────────────────────
 
+/// Removes every `#[cfg(test)] mod NAME { ... }` block from Rust source
+/// before declaration extraction sees it.
+///
+/// Real, reproducible bug this closes: `extract_sql` deliberately scans
+/// EVERY file (not just `.sql`) for embedded `CREATE TABLE` text — genuinely
+/// useful for catching a real migration string embedded in application
+/// code, not just dedicated schema files (see `extract_sql`'s own doc). But
+/// it can't tell that apart from a `CREATE TABLE` string used purely as
+/// TEST DATA inside a `#[test]` fn body (e.g. `guard(&idx, &g, "CREATE
+/// TABLE ghosts (id SERIAL);")` — a real line in this very project's own
+/// `tests/laws.rs`, checking that `guard()` blocks a near-name collision).
+/// Once such a string exists anywhere in a `.rs` file, this project's own
+/// live index treats it as a REAL declared concept forever — so a LATER,
+/// unrelated edit to that same test line (e.g. adding an unrelated function
+/// argument, which is exactly what happened threading a `StructuralGraph`
+/// through `guard()`/`intent()`/`ci()`) makes this repo's own pre-commit
+/// hook (`archietect ci`, which scans the diff's added lines) reject the
+/// commit — reporting a "collision" with a concept that only exists because
+/// of the test's own fixture text. Same problem, less visibly, for
+/// `extract_rust`'s struct/enum/trait matchers: a `#[cfg(test)]` module's
+/// own test-only types have no business counting as production schema
+/// either.
+///
+/// Reuses `structural::brace_body_span` (already handles a `{`/`}` INSIDE a
+/// string literal correctly) rather than re-guessing brace matching here —
+/// same reasoning as every other reuse of it in this codebase: a second,
+/// independent guess at "where does this block end" could quietly drift
+/// from the one already tested.
+fn strip_rust_test_modules(text: &str) -> String {
+    let gate_re = Regex::new(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+\w+").unwrap();
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    while let Some(m) = gate_re.find_at(text, pos) {
+        out.push_str(&text[pos..m.start()]);
+        match crate::structural::brace_body_span(text, m.end(), "rs") {
+            Some((_, close)) => pos = close + 1,
+            // Malformed/unbalanced braces — bail out safely rather than
+            // guess, keeping the rest of the file's real text intact.
+            None => {
+                out.push_str(&text[m.start()..]);
+                return out;
+            }
+        }
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
 fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
     let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+    // Strip `#[cfg(test)]` modules from Rust source BEFORE any declaration
+    // extraction runs on it — see `strip_rust_test_modules`'s own doc for
+    // the real, reproducible self-referential loop this closes.
+    let stripped;
+    let text: &str = if ext == "rs" {
+        stripped = strip_rust_test_modules(text);
+        &stripped
+    } else {
+        text
+    };
     let mut decls = Vec::new();
     let mut kinds = Vec::new();
 
@@ -1432,6 +1504,145 @@ mod merge_chain_tests {
         assert!(names.iter().any(|n| n.as_str() == "B"), "model B must survive, got: {names:?}");
         assert!(!names.iter().any(|n| n.as_str() == "b"), "raw sql 'b' must have merged into A, got: {names:?}");
         assert!(!names.iter().any(|n| n.as_str() == "c"), "raw sql 'c' must have merged into B, got: {names:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod strip_rust_test_modules_tests {
+    use super::*;
+
+    /// The real, reproducible self-referential loop this exists to close:
+    /// a `CREATE TABLE` string used purely as TEST DATA (a real line from
+    /// this very project's own tests/laws.rs) must never be treated as a
+    /// genuine schema declaration.
+    #[test]
+    fn create_table_text_inside_a_test_module_is_not_a_real_declaration() {
+        let src = r#"
+pub fn real_production_code() {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn some_test() {
+        let sql = "CREATE TABLE ghosts (id SERIAL);";
+        assert!(!sql.is_empty());
+    }
+}
+"#;
+        let stripped = strip_rust_test_modules(src);
+        assert!(!stripped.contains("CREATE TABLE"), "test-only SQL text must be stripped, got: {stripped:?}");
+        assert!(stripped.contains("real_production_code"), "real code outside the test module must survive: {stripped:?}");
+    }
+
+    /// Multiple `#[cfg(test)]` modules in one file (a real, common pattern
+    /// in this very codebase, e.g. src/store.rs's three) must each be
+    /// stripped independently, and code between/after them must survive.
+    #[test]
+    fn multiple_test_modules_are_each_stripped_independently() {
+        let src = r#"
+pub fn a() {}
+
+#[cfg(test)]
+mod first_tests {
+    fn helper() { let x = "CREATE TABLE one (id INT);"; }
+}
+
+pub fn b() {}
+
+#[cfg(test)]
+mod second_tests {
+    fn helper() { let x = "CREATE TABLE two (id INT);"; }
+}
+
+pub fn c() {}
+"#;
+        let stripped = strip_rust_test_modules(src);
+        assert!(!stripped.contains("CREATE TABLE"), "got: {stripped:?}");
+        assert!(stripped.contains("pub fn a()") && stripped.contains("pub fn b()") && stripped.contains("pub fn c()"), "got: {stripped:?}");
+    }
+
+    /// A brace-like character INSIDE a string literal inside the test
+    /// module (e.g. a JSON-shaped fixture string) must not desync the
+    /// brace-depth count and truncate the strip early — same class of bug
+    /// `brace_body_span` itself already guards against, exercised here
+    /// through this caller.
+    #[test]
+    fn braces_inside_test_module_string_literals_do_not_break_the_strip() {
+        let src = r#"
+pub fn real_code() {}
+
+#[cfg(test)]
+mod tests {
+    fn helper() {
+        let json_like = "{\"key\": \"value\"}";
+        let sql = "CREATE TABLE widgets (id INT);";
+    }
+}
+
+pub fn after() {}
+"#;
+        let stripped = strip_rust_test_modules(src);
+        assert!(!stripped.contains("CREATE TABLE"), "got: {stripped:?}");
+        assert!(stripped.contains("pub fn after()"), "content after the test module must survive intact: {stripped:?}");
+    }
+
+    /// End-to-end through the real scan pipeline, not just the string
+    /// helper in isolation: a `.rs` file containing only a test-fixture
+    /// `CREATE TABLE` string must produce NO declared concept at all.
+    #[test]
+    fn end_to_end_scan_does_not_declare_a_concept_from_test_fixture_sql() {
+        let root = std::env::temp_dir().join(format!("archietect-strip-test-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("lib.rs"),
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        let sql = \"CREATE TABLE widgets (id SERIAL);\";\n    }\n}\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(
+            !idx.concepts.contains_key("widgets"),
+            "a CREATE TABLE string used only as test fixture data must not become a declared concept, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod claude_worktree_skip_tests {
+    use super::*;
+
+    /// The real bug this closes: a Claude Code `isolation: "worktree"`
+    /// agent leaves a full duplicate checkout under `.claude/worktrees/`.
+    /// Scanning it doubled up real declarations under a second path AND
+    /// defeated a project's own `archietect.toml` `exclude` prefix match
+    /// (`.claude/worktrees/<agent>/tests/fixtures` doesn't start with
+    /// `tests/fixtures`) — see SKIP_DIRS's own comment for the full story.
+    #[test]
+    fn claude_worktree_directory_is_never_scanned() {
+        let root = std::env::temp_dir().join(format!("archietect-claude-skip-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let worktree = root.join(".claude/worktrees/agent-fake/schema.prisma");
+        std::fs::create_dir_all(worktree.parent().unwrap()).unwrap();
+        std::fs::write(&worktree, "model DuplicatedByWorktree {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model RealTopLevel {\n  id Int @id\n}\n",
+        )
+        .unwrap();
+
+        let (idx, _graph) = scan(&root);
+        assert!(idx.concepts.contains_key("RealTopLevel"), "real top-level content must still be scanned, got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            !idx.concepts.contains_key("DuplicatedByWorktree"),
+            "content under .claude/ must never be scanned, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

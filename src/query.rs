@@ -445,7 +445,7 @@ const STOP: &[&str] = &[
     "some", "every", "feature", "the", "and", "for", "add", "create", "user", "users",
 ];
 
-pub fn intent(idx: &Index, text: &str) -> Value {
+pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     let mut terms = Vec::new();
     for w in text
         .to_lowercase()
@@ -461,15 +461,17 @@ pub fn intent(idx: &Index, text: &str) -> Value {
     let mut extend = Vec::new();
     let mut create = Vec::new();
     let mut needs_confirmation = Vec::new();
-    // Pass an empty structural graph — intent only needs schema-layer facts.
-    // Structural enrichment is available on concept() directly when needed.
-    // NOTE: this means concept()'s STRUCTURAL verdict can never actually be
-    // returned here (it needs graph.symbols/graph.routes, both empty by
-    // construction) — the STRUCTURAL arm below is defensive, not dead-code
-    // removal bait, in case this ever gets called with a real graph.
-    let empty_graph = StructuralGraph::default();
+    // Real bug, same root cause as guard()'s (see guard()'s own doc for the
+    // full story): this used to pass a hardcoded EMPTY StructuralGraph even
+    // though every call site (CLI/REST/MCP) already had the repo's real one
+    // in scope — main.rs was discarding it into `_g`. The comment that used
+    // to sit here even said the quiet part out loud: "this means concept()'s
+    // STRUCTURAL verdict can never actually be returned here" — meaning a
+    // feature request naming a concept that exists ONLY as a plain
+    // class/interface with no schema/ORM declaration always fell through to
+    // "genuinely new", recommending building something that already exists.
     for t in &terms {
-        let r = concept(idx, &empty_graph, t);
+        let r = concept(idx, graph, t);
         match r["verdict"].as_str().unwrap_or("") {
             "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" => extend.push(json!({
                 "concept": t,
@@ -882,7 +884,21 @@ fn docker_status_section(idx: &Index) -> Value {
 /// where it gates autonomously generated patches. Fails OPEN on anything it
 /// cannot parse: a guard that blocks all work on a hiccup costs more than the
 /// duplication it prevents.
-pub fn guard(idx: &Index, sql: &str) -> Value {
+///
+/// Real bug, found by an external repo where every collision test came back
+/// `allowed: true`: this used to call `concept(idx, &StructuralGraph::default(), &head)`
+/// — a HARDCODED EMPTY graph — at every call site, even though CLI/REST/MCP
+/// all already have the repo's real `StructuralGraph` in scope right next to
+/// the call (main.rs was even discarding it into `_g`). That made guard()
+/// permanently blind to any concept whose only evidence is structural (a
+/// plain class/interface with no ORM/schema annotation) — concept() with an
+/// empty graph can only ever answer from `idx.concepts` (schema-declared
+/// models), so a real collision with a structural-only concept always came
+/// back ABSENT, and ABSENT is never blocked. Compounding it: even with the
+/// real graph, `is_known` below didn't count a `STRUCTURAL` verdict as
+/// "already exists" — unlike `intent()`'s equivalent check just above,
+/// which already treats `ACTIVE`/`DECLARED_ONLY`/`STRUCTURAL` uniformly.
+pub fn guard(idx: &Index, graph: &StructuralGraph, sql: &str) -> Value {
     let re = regex::RegexBuilder::new(
         r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#,
     )
@@ -921,7 +937,7 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             .next()
             .unwrap_or(t)
             .to_string();
-        let r = concept(idx, &StructuralGraph::default(), &head);
+        let r = concept(idx, graph, &head);
         let verdict = r["verdict"].as_str().unwrap_or("ABSENT");
         let canonical = r["canonical"].as_str().unwrap_or("").to_string();
         // The ONLY exemption is re-declaring the canonical's own storage table,
@@ -934,7 +950,7 @@ pub fn guard(idx: &Index, sql: &str) -> Value {
             .get(&canonical)
             .and_then(|c| c.table.as_deref())
             .unwrap_or(&canonical);
-        let is_known = matches!(verdict, "ACTIVE" | "DECLARED_ONLY") && !canonical.is_empty();
+        let is_known = matches!(verdict, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL") && !canonical.is_empty();
         let is_exact_redeclaration =
             is_known && (t.eq_ignore_ascii_case(canonical_table) || t.eq_ignore_ascii_case(&canonical));
         let status = if is_known && !is_exact_redeclaration {
@@ -1353,7 +1369,7 @@ pub fn owner(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
 ///   warnings   — a new ORM declaration whose name collides with an existing
 ///                canonical (name evidence only — fails only with --strict,
 ///                because related concepts legitimately share vocabulary)
-pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
+pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Value {
     // only lines the patch ADDS — removing architecture is not this gate's business
     let added: String = diff
         .lines()
@@ -1362,7 +1378,7 @@ pub fn ci(idx: &Index, diff: &str, strict: bool) -> Value {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let g = guard(idx, &added);
+    let g = guard(idx, graph, &added);
     let violations: Vec<Value> = if g["allowed"] == false {
         vec![json!({ "kind": "duplicate_storage", "reason": g["reason"], "findings": g["findings"] })]
     } else {
@@ -1519,7 +1535,7 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
 /// agent that needs five tool calls to assemble context will sometimes skip
 /// two of them, and the skipped ones are always the ones that mattered.
 pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
-    let it = intent(idx, text);
+    let it = intent(idx, graph, text);
     let mut planned = Vec::new();
     for e in it["extend"].as_array().cloned().unwrap_or_default().iter().take(3) {
         let Some(canon) = e["canonical"].as_str() else { continue };
@@ -1977,12 +1993,12 @@ mod intent_tests {
         // own INSUFFICIENT_COVERAGE verdict — whose recommendation text
         // says outright "this is not a confirmed absence" — was silently
         // downgraded to a confident `create` entry by intent()'s catch-all.
-        let (idx, _graph, tmp) = scan_tmp(
+        let (idx, graph, tmp) = scan_tmp(
             "coverage",
             &[("script.lua", "local widget = require('widget_lib')\n")],
         );
 
-        let out = intent(&idx, "add a widget dashboard");
+        let out = intent(&idx, &graph, "add a widget dashboard");
 
         let needs_confirmation = out["needs_confirmation"].as_array().unwrap();
         assert!(
@@ -2003,12 +2019,12 @@ mod intent_tests {
         // the queried term genuinely matches nothing by name. `create` is
         // still the right bucket — but the surrounding text must not
         // overclaim semantic certainty a name-only check can't back up.
-        let (idx, _graph, tmp) = scan_tmp(
+        let (idx, graph, tmp) = scan_tmp(
             "absent",
             &[("src/index.ts", "export class Invoice {}\n")],
         );
 
-        let out = intent(&idx, "add zephyr notifications");
+        let out = intent(&idx, &graph, "add zephyr notifications");
 
         assert!(
             out["create"].as_array().unwrap().iter().any(|c| c == "zephyr"),
@@ -2027,7 +2043,7 @@ mod intent_tests {
     fn active_concept_still_extends_normally() {
         // Regression guard: the routing changes above must not disturb the
         // existing, correct ACTIVE/DECLARED_ONLY -> extend path.
-        let (idx, _graph, tmp) = scan_tmp(
+        let (idx, graph, tmp) = scan_tmp(
             "extend",
             &[
                 ("schema.prisma", "model Invoice {\n  id Int @id\n}\n"),
@@ -2035,12 +2051,48 @@ mod intent_tests {
             ],
         );
 
-        let out = intent(&idx, "add invoice export");
+        let out = intent(&idx, &graph, "add invoice export");
 
         let extend = out["extend"].as_array().unwrap();
         assert!(
             extend.iter().any(|e| e["concept"] == "invoice" && e["canonical"] == "Invoice"),
             "expected 'invoice' to extend 'Invoice', got: {out}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Same root cause as guard()'s real bug (see guard()'s own doc): this
+    /// used to pass a hardcoded EMPTY StructuralGraph, so a concept whose
+    /// only evidence is structural (a plain class with no schema/ORM
+    /// declaration) could never be recognized as already existing — a
+    /// feature request naming it always fell into `create`, recommending
+    /// building something that's already there.
+    ///
+    /// Deliberately synthetic name ("Glimmerpod"), not "Candidate" — this
+    /// repo's own real `src/seed.rs` genuinely declares a `Candidate`
+    /// concept, and its own pre-commit hook (`archietect ci`/`guard` against
+    /// THIS repo's own live index) would find a real, unrelated collision
+    /// and reject the commit. See `guard_reason_text_tests`'s own comment
+    /// on this exact class of self-referential false positive.
+    #[test]
+    fn structural_only_concept_with_no_schema_declaration_still_extends() {
+        let (idx, graph, tmp) = scan_tmp(
+            "structural-only",
+            &[("src/models/glimmerpod.ts", "export class Glimmerpod {\n  id: string;\n}\n")],
+        );
+        assert!(idx.concepts.is_empty(), "this fixture must have NO schema-declared concept: {idx:?}");
+
+        let out = intent(&idx, &graph, "add glimmerpod scoring");
+
+        let extend = out["extend"].as_array().unwrap();
+        assert!(
+            extend.iter().any(|e| e["concept"] == "glimmerpod" && e["verdict"] == "STRUCTURAL"),
+            "a structural-only 'Glimmerpod' class must route to extend, not create, got: {out}"
+        );
+        assert!(
+            !out["create"].as_array().unwrap().iter().any(|c| c == "glimmerpod"),
+            "'glimmerpod' must not be claimed as genuinely new when it already exists structurally, got: {out}"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2051,7 +2103,7 @@ mod intent_tests {
 mod guard_reason_text_tests {
     use super::*;
 
-    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, std::path::PathBuf) {
+    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, StructuralGraph, std::path::PathBuf) {
         let tmp = std::env::temp_dir().join(format!("archietect-guard-reason-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -2062,8 +2114,8 @@ mod guard_reason_text_tests {
             }
             std::fs::write(path, content).unwrap();
         }
-        let (idx, _graph) = crate::scan::scan(&tmp);
-        (idx, tmp)
+        let (idx, graph) = crate::scan::scan(&tmp);
+        (idx, graph, tmp)
     }
 
     // Deliberately synthetic, nonsense names below (Zibbet/Blorp/Fwomp) —
@@ -2089,7 +2141,7 @@ mod guard_reason_text_tests {
         // against). Confirmed live before this fix: reason == "1 proposed
         // table(s) check out as new" for an exact re-declaration of an
         // ACTIVE table.
-        let (idx, tmp) = scan_tmp(
+        let (idx, g, tmp) = scan_tmp(
             "exact",
             &[
                 (
@@ -2100,7 +2152,7 @@ mod guard_reason_text_tests {
             ],
         );
 
-        let out = guard(&idx, "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, name TEXT)");
+        let out = guard(&idx, &g, "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, name TEXT)");
 
         assert_eq!(out["allowed"], json!(true), "law-002 exemption must still allow this: {out}");
         let reason = out["reason"].as_str().unwrap();
@@ -2116,9 +2168,9 @@ mod guard_reason_text_tests {
     fn genuinely_new_table_still_says_new() {
         // Regression guard: the common, unexciting case (nothing matches
         // at all) must keep its original, correct wording.
-        let (idx, tmp) = scan_tmp("new", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp("new", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
 
-        let out = guard(&idx, "CREATE TABLE fwomps (id INT)");
+        let out = guard(&idx, &g, "CREATE TABLE fwomps (id INT)");
 
         assert_eq!(out["allowed"], json!(true), "{out}");
         assert_eq!(out["reason"], json!("1 proposed table(s) check out as new"), "{out}");
@@ -2131,9 +2183,9 @@ mod guard_reason_text_tests {
     fn near_name_collision_still_blocks_with_original_wording() {
         // Regression guard: law-002's OTHER half — near-names must still
         // block, and this path's reason text is untouched by this fix.
-        let (idx, tmp) = scan_tmp("near", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp("near", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
 
-        let out = guard(&idx, "CREATE TABLE blorps (id INT)");
+        let out = guard(&idx, &g, "CREATE TABLE blorps (id INT)");
 
         assert_eq!(out["allowed"], json!(false), "{out}");
         let reason = out["reason"].as_str().unwrap();
@@ -2145,9 +2197,9 @@ mod guard_reason_text_tests {
 
     #[test]
     fn mixed_exempt_and_new_are_both_named_honestly() {
-        let (idx, tmp) = scan_tmp("mixed", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp("mixed", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
 
-        let out = guard(&idx, "CREATE TABLE \"Blorp\" (id INT); CREATE TABLE fwomps (id INT);");
+        let out = guard(&idx, &g, "CREATE TABLE \"Blorp\" (id INT); CREATE TABLE fwomps (id INT);");
 
         assert_eq!(out["allowed"], json!(true), "{out}");
         let reason = out["reason"].as_str().unwrap();
@@ -2157,6 +2209,41 @@ mod guard_reason_text_tests {
         assert_eq!(findings.len(), 2);
         assert!(findings.iter().any(|f| f["status"] == "exempt_exact_redeclaration"));
         assert!(findings.iter().any(|f| f["status"] == "new"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The real reported bug: an external repo's `guard()` collision tests
+    /// ALL came back `allowed: true`. Root cause was two-fold — `guard()`
+    /// used to call `concept(idx, &StructuralGraph::default(), &head)` with
+    /// a hardcoded EMPTY graph at every call site (this repo's own included,
+    /// via `_g` in main.rs), so it could only ever see SCHEMA-declared
+    /// concepts (`idx.concepts`), never a concept whose only evidence is
+    /// structural (a plain class/interface with no ORM annotation) — exactly
+    /// the shape a repo without Prisma/SQLModel/etc. schema files exercises.
+    /// And even with the real graph, `is_known` didn't count a `STRUCTURAL`
+    /// verdict as "already exists". A plain TS class with NO schema
+    /// declaration anywhere must still block a colliding `CREATE TABLE`.
+    ///
+    /// Deliberately synthetic name ("Glimmerpod"), not "Candidate" — see
+    /// `structural_only_concept_with_no_schema_declaration_still_extends`'s
+    /// own comment on why: this repo's real `src/seed.rs` already declares
+    /// a genuine `Candidate` concept, which would make this test's own
+    /// diff trip the pre-commit hook on a real, unrelated collision.
+    #[test]
+    fn structural_only_concept_with_no_schema_declaration_still_blocks() {
+        let (idx, g, tmp) = scan_tmp(
+            "structural-only",
+            &[("src/models/glimmerpod.ts", "export class Glimmerpod {\n  id: string;\n  name: string;\n}\n")],
+        );
+        assert!(idx.concepts.is_empty(), "this fixture must have NO schema-declared concept — the whole point is testing structural-only evidence: {idx:?}");
+
+        let out = guard(&idx, &g, "CREATE TABLE glimmerpods (id SERIAL PRIMARY KEY, name TEXT)");
+
+        assert_eq!(out["allowed"], json!(false), "a structural-only concept with the same name must still block, got: {out}");
+        let findings = out["findings"].as_array().unwrap();
+        assert_eq!(findings[0]["status"], json!("blocked"), "{out}");
+        assert_eq!(findings[0]["verdict"], json!("STRUCTURAL"), "{out}");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

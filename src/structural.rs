@@ -449,7 +449,7 @@ fn looks_like_color_literal(s: &str) -> bool {
 /// happened to appear — letting the scan run past the function's real
 /// closing `}` into unrelated code and pull unrelated functions' text into
 /// the extracted "body".
-fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(usize, usize)> {
+pub(crate) fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(usize, usize)> {
     let bytes = text.as_bytes();
     let open = start + text[start..].find('{')?;
     let mut depth = 0i32;

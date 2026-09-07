@@ -31,6 +31,18 @@ fn fixture(law: &str) -> archietect::model::Index {
     scan::scan_with_prior(&root, None, None).0
 }
 
+/// Same fixture, both halves — for `guard()`/`ci()` callers, which (since
+/// the real bug where `guard()` always synthesized an empty
+/// `StructuralGraph` and so could never see a structural-only collision)
+/// need the real graph alongside the index, not just the schema index alone.
+fn fixture_both(law: &str) -> (archietect::model::Index, archietect::structural::StructuralGraph) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(law);
+    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    scan::scan_with_prior(&root, None, None)
+}
+
 /// Same as `fixture`, for laws whose test needs a before/after PAIR (a diff),
 /// not a single snapshot — `tests/fixtures/law_NNN/<sub>/`.
 fn fixture_sub(law: &str, sub: &str) -> archietect::model::Index {
@@ -82,10 +94,10 @@ fn law_001_word_boundary() {
 
 #[test]
 fn law_002_exact_exemption() {
-    let idx = fixture("law_002");
-    let blocked = query::guard(&idx, "CREATE TABLE ghosts (id SERIAL);");
+    let (idx, g) = fixture_both("law_002");
+    let blocked = query::guard(&idx, &g, "CREATE TABLE ghosts (id SERIAL);");
     assert_eq!(blocked["allowed"], false, "near-name must block");
-    let allowed = query::guard(&idx, "CREATE TABLE \"Ghost\" (id TEXT);");
+    let allowed = query::guard(&idx, &g, "CREATE TABLE \"Ghost\" (id TEXT);");
     assert_eq!(allowed["allowed"], true, "exact re-declaration is exempt");
 }
 
@@ -152,11 +164,11 @@ fn law_008_follower_required() {
 
 #[test]
 fn law_009_alias_resolution() {
-    let idx = fixture("law_009");
-    let r = query::concept(&idx, &Default::default(), "episode");
+    let (idx, graph) = fixture_both("law_009");
+    let r = query::concept(&idx, &graph, "episode");
     assert_eq!(r["canonical"], "stories", "alias resolution failed");
     assert_eq!(r["resolved_via"], "alias");
-    let g = query::guard(&idx, "CREATE TABLE episodes (id BIGSERIAL);");
+    let g = query::guard(&idx, &graph, "CREATE TABLE episodes (id BIGSERIAL);");
     assert_eq!(g["allowed"], false, "guard must block through the ontology");
     assert!(
         g["reason"].as_str().unwrap().contains("stories-own-episodes"),

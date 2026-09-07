@@ -29,6 +29,22 @@ const WEAK_MARKERS: &[&str] = &[
 /// NEAREST strong marker walking upward from `start`; otherwise the nearest
 /// weak marker; otherwise `start` itself (a bare directory still scans — it
 /// just found nothing to anchor to).
+///
+/// ALWAYS returns a canonicalized path — found as a real bug via
+/// `system_query`'s cross-project fan-out (`system_db::query_registered_projects`)
+/// returning `found: null` for a project that `concept()` found correctly
+/// when queried directly. The explicit-root branch already canonicalized
+/// (see its own comment below); the auto-discovery branch did not, so the
+/// SAME physical directory could resolve to two different path strings
+/// depending on whether it was reached via an explicit `root` argument or
+/// via upward-walk from a symlinked/non-canonical `$PWD` — e.g.
+/// `register_project` (called with an explicit root, canonicalized) storing
+/// a different string than a later auto-discovered `resolve(None, cwd)`
+/// (not canonicalized) for the identical repository. `query_registered_projects`
+/// then joins the STORED string with `archietect.db` and finds nothing
+/// there, silently reporting `found: null` instead of the real answer. This
+/// module's own doc above promises resolving the root ONCE so "everyone
+/// agrees" — that promise was broken exactly here.
 pub fn resolve(explicit: Option<PathBuf>, start: &Path) -> anyhow::Result<PathBuf> {
     if let Some(r) = explicit {
         anyhow::ensure!(r.exists(), "root does not exist: {}", r.display());
@@ -42,18 +58,24 @@ pub fn resolve(explicit: Option<PathBuf>, start: &Path) -> anyhow::Result<PathBu
     }
     let mut weak_hit: Option<PathBuf> = None;
     let mut dir = start.to_path_buf();
-    loop {
+    let found = loop {
         if STRONG_MARKERS.iter().any(|m| dir.join(m).exists()) {
-            return Ok(dir);
+            break dir;
         }
         if weak_hit.is_none() && WEAK_MARKERS.iter().any(|m| dir.join(m).exists()) {
             weak_hit = Some(dir.clone());
         }
         match dir.parent() {
             Some(p) => dir = p.to_path_buf(),
-            None => return Ok(weak_hit.unwrap_or_else(|| start.to_path_buf())),
+            None => break weak_hit.unwrap_or_else(|| start.to_path_buf()),
         }
-    }
+    };
+    // Same canonicalization the explicit branch above already applies —
+    // falls back to the un-canonicalized path only if canonicalize()
+    // itself fails (the path was verified to exist by the loop above, via
+    // either a marker-file check or `start` itself, so this is not expected
+    // to fail in practice).
+    Ok(found.canonicalize().unwrap_or(found))
 }
 
 /// Convenience for entry points that mean "from the current directory".
@@ -200,5 +222,47 @@ mod tests {
         assert!(warning.contains("+3 more"), "{warning}");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The real reported bug: `system_query`'s cross-project fan-out
+    /// returned `found: null` for a project that `concept()` found
+    /// correctly when queried directly — same repository, same term,
+    /// contradictory answers. Root cause: auto-discovered roots (this
+    /// function's no-`explicit` branch) were never canonicalized, so the
+    /// SAME physical directory reached via a symlink (auto-discovery,
+    /// walking up from a symlinked `$PWD`) resolved to a DIFFERENT string
+    /// than the same directory reached via an explicit, canonicalized
+    /// `root` argument (e.g. what `register_project` stores) — even though
+    /// both paths point at the identical inode.
+    #[test]
+    #[cfg(unix)]
+    fn auto_discovered_root_is_canonicalized_same_as_explicit_root() {
+        let base = std::env::temp_dir().join(format!("archietect-root-test-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real_project");
+        let link = base.join("link_to_project");
+        std::fs::create_dir_all(&real).unwrap();
+        touch(&real, ".git");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Auto-discovery, starting FROM the symlink (mirrors an MCP/CLI
+        // call made with $PWD inside a symlinked path and no explicit root).
+        let via_symlink_walk = resolve(None, &link).unwrap();
+        // Explicit root, given the symlink path directly (mirrors
+        // `register_project` being called with that same symlink path).
+        let via_symlink_explicit = resolve(Some(link.clone()), &base).unwrap();
+        // Explicit root, given the REAL (non-symlink) path.
+        let via_real_explicit = resolve(Some(real.clone()), &base).unwrap();
+
+        assert_eq!(
+            via_symlink_walk, via_symlink_explicit,
+            "the same directory must resolve identically whether reached via auto-discovery or an explicit root argument"
+        );
+        assert_eq!(
+            via_symlink_walk, via_real_explicit,
+            "resolving via a symlink must land on the same canonical path as resolving via the real directory — this is exactly the mismatch that made a registered project's stored root disagree with a later live lookup for the identical repository"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
