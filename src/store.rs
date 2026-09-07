@@ -442,6 +442,24 @@ pub fn concept_at_version(root: &Path, concept: &str, version: i64) -> Option<se
 pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path) -> Result<std::path::PathBuf> {
     let db_path = root.join("archietect.db");
     let conn = Connection::open(&db_path)?;
+    // Real bug, found investigating a reported `system_query` cross-project
+    // fan-out returning `found: null` for a project that answered correctly
+    // when queried directly: with SQLite's default rollback-journal mode, a
+    // reader and a writer can never touch the file at the same instant — a
+    // reader opened mid-write gets SQLITE_BUSY immediately, no retry. This
+    // project's own MCP server rescans-and-saves on every tool call, so a
+    // live session actively querying a project is, by construction, also
+    // regularly WRITING to that same project's archietect.db — exactly the
+    // condition `query_registered_projects`'s fan-out (opening every
+    // registered project's db fresh, read-only, on every call) can race
+    // against. WAL mode lets any number of readers proceed concurrently
+    // with the one writer without blocking at all — the correct fix for
+    // this exact "occasional writer, many readers" shape, not just a
+    // longer timeout. Once set, WAL is a property of the database FILE
+    // itself, so every future connection (including `load_raw`'s readers)
+    // gets it automatically, not just this one.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
          CREATE TABLE IF NOT EXISTS idx (k TEXT PRIMARY KEY, doc TEXT);",
@@ -477,6 +495,12 @@ pub fn load_raw(root: &Path) -> (Option<Index>, Option<crate::structural::Struct
         Ok(c) => c,
         Err(_) => return (None, None),
     };
+    // Defense in depth alongside `save()`'s WAL switch (see its own doc):
+    // WAL means a reader never blocks on the writer, but this still guards
+    // any other transient lock (e.g. mid-checkpoint) instead of failing
+    // instantly and silently — indistinguishable, before this, from the
+    // project genuinely having no saved index at all.
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     let idx: Option<Index> = conn
         .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get::<_, String>(0))
         .ok()
@@ -751,6 +775,82 @@ mod episodic_replay_tests {
         snapshot_concepts_at_version(&root, 10, 1000, &idx).unwrap();
 
         assert!(concept_at_version(&root, "Widget", 5).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod concurrent_access_tests {
+    use super::*;
+
+    fn tmp_project(label: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("archietect-concurrency-test-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// The real reported bug: `system_query`'s cross-project fan-out
+    /// (`query_registered_projects` -> `load_raw`, opened fresh, read-only,
+    /// on every call) returned `found: null` for a project that answered
+    /// correctly when queried directly — for that ONE project, not the
+    /// others in the fan-out. Root cause: under SQLite's default
+    /// rollback-journal mode, a reader that lands on the brief EXCLUSIVE
+    /// lock a writer holds while flushing a commit gets SQLITE_BUSY
+    /// immediately (no retry), which `load_raw` silently turned into
+    /// `(None, None)` — indistinguishable from "this project has no saved
+    /// index." A live session actively querying one specific project is,
+    /// by construction (this project's own MCP server rescans-and-saves on
+    /// every tool call), also regularly WRITING to that same project's db —
+    /// exactly the race a fan-out over every OTHER registered project would
+    /// never hit, matching "isolated to one project, not a general fan-out
+    /// problem" exactly.
+    ///
+    /// Verifies the actual mechanism directly rather than trying to force
+    /// the underlying commit-instant lock race deterministically (a narrow
+    /// timing window, not a reliable thing to freeze in a fast unit test):
+    /// `save()` must switch the file to WAL, under which readers and a
+    /// writer never contend for the same lock AT ALL, not just "usually."
+    #[test]
+    fn save_switches_the_database_to_wal_journal_mode() {
+        let root = tmp_project("wal-mode");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        let (idx, graph) = crate::scan::scan(&root);
+        save(&idx, &graph, &root).unwrap();
+
+        let conn = Connection::open(root.join("archietect.db")).unwrap();
+        let mode: String = conn.query_row("PRAGMA journal_mode;", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode.to_lowercase(), "wal", "save() must leave the database in WAL mode, not the default rollback journal");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A basic sanity check for the ordinary case this fix targets: a
+    /// second connection with an open (uncommitted) write transaction must
+    /// never prevent `load_raw` from succeeding.
+    #[test]
+    fn load_raw_succeeds_while_another_connection_holds_an_open_write_transaction() {
+        let root = tmp_project("read-during-write");
+        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        let (idx, graph) = crate::scan::scan(&root);
+        save(&idx, &graph, &root).unwrap();
+
+        let db_path = root.join("archietect.db");
+        let writer = Connection::open(&db_path).unwrap();
+        writer
+            .execute_batch("BEGIN IMMEDIATE; INSERT OR REPLACE INTO meta (k, v) VALUES ('probe', 'held-open');")
+            .unwrap();
+
+        let (loaded_idx, loaded_graph) = load_raw(&root);
+
+        // Release the held transaction before any assertion can panic and
+        // skip it, so a failing assertion doesn't leave a locked temp file.
+        let commit_result = writer.execute_batch("COMMIT;");
+
+        assert!(loaded_idx.is_some(), "a read must succeed even while another connection holds an open write transaction");
+        assert!(loaded_graph.is_some());
+        commit_result.unwrap();
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }

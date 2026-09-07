@@ -198,6 +198,7 @@ const NON_CODE_EXTS: &[&str] = &[
     "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
     "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
     "db", "sqlite", "sqlite3", // archietect.db itself, and other embedded DBs
+    "db-wal", "db-shm", "db-journal", // archietect.db's own WAL-mode sidecar files — found as a real regression: enabling WAL mode (store::save's own fix for a concurrent-read bug) left archietect.db-wal/archietect.db-shm sitting in the project root, and since Path::extension() returns "db-wal"/"db-shm" (not "db"), they weren't covered by the entry above and dragged every query on that project down to INSUFFICIENT_COVERAGE
     "example", "local", "development", "template", // .env.example/.local/.development — not code
     "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
     "service", "plist", "unit", // systemd/launchd unit files — config, not code
