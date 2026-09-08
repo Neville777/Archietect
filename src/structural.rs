@@ -962,7 +962,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 16; // Rust extractor migrated from regex to syn (AST-verified declarations); added ObservationSource to Symbol for extraction provenance
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 17; // +GDScript (.gd) extractor — class_name/filename-fallback classes, top-level functions, signals; a cached file_facts entry from before this predates GDScript entirely, reporting it as unclassified
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1455,6 +1455,13 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extractor: extract_gherkin,
         symbol_support: "Feature and Scenario/Scenario Outline names",
         frameworks: &["Cucumber"],
+    },
+    LanguageSpec {
+        name: "GDScript",
+        extensions: &["gd"],
+        extractor: extract_gdscript,
+        symbol_support: "class_name declarations (falling back to the PascalCase filename for a script with none, the same convention extract_vue already uses — most GDScript files attach to a node with no explicit class_name), top-level functions, signals",
+        frameworks: &[],
     },
 ];
 
@@ -3776,6 +3783,79 @@ fn extract_gherkin(
     }
 }
 
+fn extract_gdscript(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    _imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    // `class_name X` is OPTIONAL in GDScript — a script attached to a node
+    // very often has none at all (checked against a real project: fewer
+    // than two-thirds of its .gd files declare one). A script with no
+    // class_name is still a real, addressable unit of code (Godot loads it
+    // by path, and every other script referencing that node's behavior
+    // means THIS file) — same reasoning `extract_vue` already uses for a
+    // Vue SFC with no explicit component name: fall back to the PascalCase
+    // filename rather than silently producing no symbol at all.
+    let class_name_re = Regex::new(r"(?m)^class_name\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    if let Some(cap) = class_name_re.captures(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    } else if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+        symbols.push(Symbol {
+            name: to_pascal_case(stem),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: 1,
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+
+    // Top-level only (the `^` anchor excludes a nested `func` inside an
+    // `if`/inner `class` block, which GDScript indents like Python).
+    // Leading underscore is Godot's naming CONVENTION for both engine
+    // lifecycle callbacks (_ready, _process) and private helpers — neither
+    // is a language-enforced access modifier the way Python's is treated
+    // elsewhere in this codebase, so both are extracted the same as any
+    // other top-level func.
+    let func_re = Regex::new(r"(?m)^func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
+    for cap in func_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+
+    // signal name(args) — Godot's own event-declaration syntax, the
+    // closest GDScript equivalent to what extract_ts_events captures for
+    // TS/JS. Folded into Function (this project's SymbolKind has no
+    // dedicated "event" variant), same as every other language here that
+    // has no distinct kind for it.
+    let signal_re = Regex::new(r"(?m)^signal\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    for cap in signal_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+}
+
 #[cfg(test)]
 mod gherkin_tests {
     use super::*;
@@ -3804,6 +3884,77 @@ Feature: OIDC Device Flow 原生表单提交
         assert!(symbols.iter().any(|s| s.name == "OIDC Device Flow 原生表单提交" && s.kind == SymbolKind::Class));
         assert!(symbols.iter().any(|s| s.name == "loading 状态不会阻断设备授权表单提交" && s.kind == SymbolKind::Function));
         assert!(symbols.iter().any(|s| s.name == "retry with <count> attempts" && s.kind == SymbolKind::Function));
+    }
+}
+
+#[cfg(test)]
+mod gdscript_tests {
+    use super::*;
+
+    fn extract(rel: &str, src: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_gdscript(rel, src, &mut symbols, &mut imports, &mut routes);
+        symbols
+    }
+
+    #[test]
+    fn finds_class_name_top_level_functions_and_signals() {
+        let src = "extends CharacterBody3D\n\nclass_name FirstPersonController\n\nsignal interacted(id: String)\n\nfunc _ready() -> void:\n    pass\n\nfunc _handle_jump() -> void:\n    pass\n";
+        let symbols = extract("player/FirstPersonController.gd", src);
+        assert!(symbols.iter().any(|s| s.name == "FirstPersonController" && s.kind == SymbolKind::Class), "got: {symbols:?}");
+        assert!(symbols.iter().any(|s| s.name == "_ready" && s.kind == SymbolKind::Function), "got: {symbols:?}");
+        assert!(symbols.iter().any(|s| s.name == "_handle_jump" && s.kind == SymbolKind::Function), "got: {symbols:?}");
+        assert!(symbols.iter().any(|s| s.name == "interacted" && s.kind == SymbolKind::Function), "got: {symbols:?}");
+    }
+
+    /// The common real-world case: most GDScript files attached to a node
+    /// have NO `class_name` at all — a script is still a real, addressable
+    /// unit of code, so it must not be silently invisible. Same fallback
+    /// `extract_vue` already uses for an unnamed Vue SFC.
+    #[test]
+    fn falls_back_to_pascal_case_filename_when_no_class_name() {
+        let src = "extends Node\n\nfunc _ready() -> void:\n    pass\n";
+        let symbols = extract("tests/unit/test_replay_engine.gd", src);
+        assert!(symbols.iter().any(|s| s.name == "TestReplayEngine" && s.kind == SymbolKind::Class), "got: {symbols:?}");
+    }
+
+    /// A `func` indented inside a nested `class` block (GDScript supports
+    /// inner classes, indentation-scoped like Python) is not top-level and
+    /// must not be extracted — same top-level-only convention every other
+    /// indentation-scoped language extractor here already applies.
+    #[test]
+    fn indented_func_inside_a_nested_class_is_not_extracted() {
+        let src = "extends Node\n\nclass Inner:\n    func helper() -> void:\n        pass\n\nfunc _ready() -> void:\n    pass\n";
+        let symbols = extract("world/Nested.gd", src);
+        assert!(!symbols.iter().any(|s| s.name == "helper"), "got: {symbols:?}");
+        assert!(symbols.iter().any(|s| s.name == "_ready"), "got: {symbols:?}");
+    }
+
+    /// End-to-end through the real scan pipeline: a .gd file must become a
+    /// declared concept, not show up as an unclassified/unsupported language.
+    #[test]
+    fn end_to_end_scan_declares_a_concept_for_a_gd_file() {
+        let root = std::env::temp_dir().join(format!("archietect-gdscript-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("Player.gd"),
+            "extends CharacterBody3D\n\nclass_name Player\n\nfunc take_damage(amount: int) -> void:\n    pass\n",
+        )
+        .unwrap();
+
+        let (idx, graph) = crate::scan::scan(&root);
+        assert!(
+            graph.symbols.values().any(|s| s.name == "Player" && s.kind == SymbolKind::Class),
+            "got symbols: {:?}",
+            graph.symbols.values().collect::<Vec<_>>()
+        );
+        let unclassified = crate::scan::unclassified_files(&root, &idx.excludes, 100);
+        assert!(!unclassified.iter().any(|(_, ext)| ext == "gd"), "got: {unclassified:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
