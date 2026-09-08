@@ -844,6 +844,15 @@ fn resolve_relative_import(
     to_module: &str,
     known_files: &std::collections::BTreeSet<String>,
 ) -> Option<String> {
+    // Godot's `res://` paths are already root-relative and always written
+    // with an explicit extension (`res://player/Foo.tscn`, never an
+    // extension-optional `res://player/Foo`) — an exact, unambiguous lookup,
+    // not the component-walking/extension-guessing the `./`/`../` case below
+    // needs.
+    if let Some(stripped) = to_module.strip_prefix("res://") {
+        return known_files.contains(stripped).then(|| stripped.to_string());
+    }
+
     if !(to_module.starts_with("./") || to_module.starts_with("../")) {
         return None;
     }
@@ -962,7 +971,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 17; // +GDScript (.gd) extractor — class_name/filename-fallback classes, top-level functions, signals; a cached file_facts entry from before this predates GDScript entirely, reporting it as unclassified
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 18; // +Godot Scene (.tscn) extractor — the scene as a component, ext_resource (Script/PackedScene) dependencies as imports; +res:// path resolution in resolve_relative_import
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1461,6 +1470,13 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extensions: &["gd"],
         extractor: extract_gdscript,
         symbol_support: "class_name declarations (falling back to the PascalCase filename for a script with none, the same convention extract_vue already uses — most GDScript files attach to a node with no explicit class_name), top-level functions, signals",
+        frameworks: &[],
+    },
+    LanguageSpec {
+        name: "Godot Scene",
+        extensions: &["tscn"],
+        extractor: extract_tscn,
+        symbol_support: "the scene itself as a component (PascalCase filename, same convention as GDScript's own class_name-less fallback), plus its ext_resource dependencies (attached script, composed child scenes) as import edges",
         frameworks: &[],
     },
 ];
@@ -3856,6 +3872,49 @@ fn extract_gdscript(
     }
 }
 
+fn extract_tscn(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    // The scene itself is the concept — identity by filename (PascalCase),
+    // not the root node's own `name=` attribute: a scene's root node can be
+    // renamed independently of the file, but every OTHER scene that
+    // instances or attaches this one always references it by its PATH
+    // (`res://.../ThisFile.tscn`), so the filename is what's actually
+    // reliable to key on — same reasoning extract_vue/extract_gdscript's
+    // own class_name-less fallback already use.
+    if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+        symbols.push(Symbol {
+            name: to_pascal_case(stem),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: 1,
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+
+    // [ext_resource type="Script" path="res://X.gd" id="1"] — the script
+    // attached to (some node in) this scene.
+    // [ext_resource type="PackedScene" path="res://Y.tscn" id="2"] — a
+    // child scene this one instances/composes (see the real
+    // `[node ... instance=ExtResource("2")]` line elsewhere in the file —
+    // the ext_resource declaration alone is enough to establish the
+    // dependency; walking to the specific instancing node isn't needed for
+    // an import EDGE to exist).
+    // Both captured uniformly as Import — this codebase has no "import
+    // purpose" distinction anywhere else either (a TS `import` and a
+    // Python `from X import Y` are both just "imports").
+    let ext_resource_re =
+        Regex::new(r#"(?m)^\[ext_resource\s+type="(?:Script|PackedScene)"[^\]]*\bpath="(res://[^"]+)""#).unwrap();
+    for cap in ext_resource_re.captures_iter(text) {
+        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+    }
+}
+
 #[cfg(test)]
 mod gherkin_tests {
     use super::*;
@@ -3953,6 +4012,86 @@ mod gdscript_tests {
         );
         let unclassified = crate::scan::unclassified_files(&root, &idx.excludes, 100);
         assert!(!unclassified.iter().any(|(_, ext)| ext == "gd"), "got: {unclassified:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod tscn_tests {
+    use super::*;
+
+    fn extract(rel: &str, src: &str) -> (Vec<Symbol>, Vec<Import>) {
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_tscn(rel, src, &mut symbols, &mut imports, &mut routes);
+        (symbols, imports)
+    }
+
+    #[test]
+    fn scene_becomes_a_symbol_and_its_script_becomes_an_import() {
+        let src = "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://ui/WorkbenchCanvas.gd\" id=\"1\"]\n\n[node name=\"WorkbenchCanvas\" type=\"Control\"]\nscript = ExtResource(\"1\")\n";
+        let (symbols, imports) = extract("ui/WorkbenchCanvas.tscn", src);
+        assert!(symbols.iter().any(|s| s.name == "WorkbenchCanvas" && s.kind == SymbolKind::Class), "got: {symbols:?}");
+        assert!(
+            imports.iter().any(|i| i.to_module == "res://ui/WorkbenchCanvas.gd"),
+            "got: {imports:?}"
+        );
+    }
+
+    /// A scene composing a child scene (`instance=ExtResource(...)` on a
+    /// node) is a real dependency edge — the ext_resource declaration alone
+    /// establishes it; walking to the specific instancing node isn't needed.
+    #[test]
+    fn composed_child_scene_becomes_an_import() {
+        let src = "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://player/FirstPersonController.tscn\" id=\"2\"]\n\n[node name=\"Zone\" type=\"Node3D\"]\n\n[node name=\"Player\" parent=\".\" instance=ExtResource(\"2\")]\n";
+        let (_, imports) = extract("world/zones/Zone.tscn", src);
+        assert!(
+            imports.iter().any(|i| i.to_module == "res://player/FirstPersonController.tscn"),
+            "got: {imports:?}"
+        );
+    }
+
+    /// A `[sub_resource ...]` block (materials, meshes, shapes — real
+    /// content in every scene checked) has no `path=` at all and must never
+    /// be mistaken for a dependency edge.
+    #[test]
+    fn sub_resource_blocks_are_not_extracted_as_imports() {
+        let src = "[gd_scene load_steps=3 format=3]\n\n[sub_resource type=\"BoxShape3D\" id=\"BoxShape3D_quay\"]\nsize = Vector3(16, 1, 16)\n\n[node name=\"Zone\" type=\"Node3D\"]\n";
+        let (_, imports) = extract("world/zones/Zone.tscn", src);
+        assert!(imports.is_empty(), "got: {imports:?}");
+    }
+
+    /// End-to-end: `res://` import resolution (a project-root-relative path
+    /// with an explicit extension, unlike the `./`/`../` case) must find the
+    /// real scanned file, giving a genuine cross-file relationship — a scene
+    /// depending on its script — not just an isolated Import record.
+    #[test]
+    fn end_to_end_scan_resolves_the_res_path_to_the_real_script_file() {
+        let root = std::env::temp_dir().join(format!("archietect-tscn-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("player")).unwrap();
+        std::fs::write(
+            root.join("player/Player.gd"),
+            "extends CharacterBody3D\n\nclass_name Player\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("player/Player.tscn"),
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://player/Player.gd\" id=\"1\"]\n\n[node name=\"Player\" type=\"CharacterBody3D\"]\nscript = ExtResource(\"1\")\n",
+        )
+        .unwrap();
+
+        let (_idx, graph) = crate::scan::scan(&root);
+        assert!(
+            graph.symbols.values().any(|s| s.name == "Player" && s.kind == SymbolKind::Class && s.file.ends_with(".tscn")),
+            "the scene itself must be a symbol, got: {:?}",
+            graph.symbols.values().collect::<Vec<_>>()
+        );
+        let scene_import = graph.imports.iter().find(|i| i.from_file == "player/Player.tscn");
+        assert!(scene_import.is_some(), "got imports: {:?}", graph.imports);
+        assert_eq!(scene_import.unwrap().to_module, "res://player/Player.gd");
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -4653,6 +4792,22 @@ mod import_relationship_tests {
         let files = known(&["src/a.ts", "src/widgets/index.ts"]);
         let resolved = resolve_relative_import("src/a.ts", "./widgets", &files);
         assert_eq!(resolved, Some("src/widgets/index.ts".to_string()));
+    }
+
+    /// Godot's `res://` paths are project-root-relative, not `./`/`../`-
+    /// relative, and already carry an explicit extension — a direct exact
+    /// lookup, no component-walking or extension-guessing.
+    #[test]
+    fn resolves_a_godot_res_path() {
+        let files = known(&["player/Player.gd", "player/Player.tscn"]);
+        let resolved = resolve_relative_import("player/Player.tscn", "res://player/Player.gd", &files);
+        assert_eq!(resolved, Some("player/Player.gd".to_string()));
+    }
+
+    #[test]
+    fn unresolved_res_path_resolves_to_nothing() {
+        let files = known(&["player/Player.gd"]);
+        assert_eq!(resolve_relative_import("player/Player.tscn", "res://nonexistent/Foo.gd", &files), None);
     }
 
     #[test]
