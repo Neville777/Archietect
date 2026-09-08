@@ -175,7 +175,8 @@ in that directory; limitations are stated there too.
 | GraphQL | types/interfaces/enums/inputs, named operations | — |
 | Protocol Buffers | messages, services, rpc methods (as routes) | gRPC |
 | GDScript | `class_name` declarations (falling back to the PascalCase filename for a script with none — most GDScript files attach to a node with no explicit `class_name`), top-level functions, signals | — |
-| Godot Scene (`.tscn`) | the scene itself as a component (filename-keyed, same convention as GDScript's own fallback), plus its `ext_resource` dependencies (attached script, composed child scenes) as import edges resolved via Godot's own `res://` project-relative paths | — |
+| Godot Scene (`.tscn`) | the scene itself as a component (filename-keyed, same convention as GDScript's own fallback), plus its `ext_resource` dependencies (attached script, composed child scenes) as import edges resolved via Godot's own `res://` project-relative paths — a composed child scene's import also records which specific `[node ... instance=ExtResource(...)]` node(s) instance it | — |
+| Godot Project Config (`project.godot`) | `[autoload]` global singleton registrations — the sole authoritative source of an autoload script's real name, since Godot 4 makes a `class_name` of the same name as an autoload a parse error, so those scripts deliberately have none | — |
 
 The **schema layer** additionally recognizes storage declarations directly —
 Prisma, Drizzle, TypeORM, Sequelize/Mongoose, Django, SQLAlchemy,

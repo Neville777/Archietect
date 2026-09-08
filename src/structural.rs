@@ -971,7 +971,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 18; // +Godot Scene (.tscn) extractor — the scene as a component, ext_resource (Script/PackedScene) dependencies as imports; +res:// path resolution in resolve_relative_import
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 19; // +project.godot [autoload] singleton registrations as symbols; +.tscn ext_resource id cross-referenced against [node ... instance=ExtResource(id)] to record the specific instancing node name(s)
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1476,7 +1476,14 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         name: "Godot Scene",
         extensions: &["tscn"],
         extractor: extract_tscn,
-        symbol_support: "the scene itself as a component (PascalCase filename, same convention as GDScript's own class_name-less fallback), plus its ext_resource dependencies (attached script, composed child scenes) as import edges",
+        symbol_support: "the scene itself as a component (PascalCase filename, same convention as GDScript's own class_name-less fallback), plus its ext_resource dependencies (attached script, composed child scenes) as import edges, with the specific instancing node name(s) recorded for a composed child scene",
+        frameworks: &[],
+    },
+    LanguageSpec {
+        name: "Godot Project Config",
+        extensions: &["godot"],
+        extractor: extract_project_godot,
+        symbol_support: "[autoload] global singleton registrations — the only authoritative source of an autoload script's global name, since a Godot 4 script that declares both class_name and an autoload registration of the same name is a hard parse error, so autoload scripts deliberately have no class_name for extract_gdscript to fall back on",
         frameworks: &[],
     },
 ];
@@ -3904,14 +3911,72 @@ fn extract_tscn(
     // `[node ... instance=ExtResource("2")]` line elsewhere in the file —
     // the ext_resource declaration alone is enough to establish the
     // dependency; walking to the specific instancing node isn't needed for
-    // an import EDGE to exist).
+    // an import EDGE to exist, but the id IS needed to find which node(s)
+    // do the instancing, below).
     // Both captured uniformly as Import — this codebase has no "import
     // purpose" distinction anywhere else either (a TS `import` and a
     // Python `from X import Y` are both just "imports").
-    let ext_resource_re =
-        Regex::new(r#"(?m)^\[ext_resource\s+type="(?:Script|PackedScene)"[^\]]*\bpath="(res://[^"]+)""#).unwrap();
+    let ext_resource_re = Regex::new(
+        r#"(?m)^\[ext_resource\s+type="(Script|PackedScene)"[^\]]*\bpath="(res://[^"]+)"[^\]]*\bid="([^"]+)""#,
+    )
+    .unwrap();
+    // `[node name="Player" parent="." instance=ExtResource("2")]` — a node
+    // that instances a composed child scene, referencing the ext_resource
+    // by its id (not its path — the path only appears once, up in the
+    // ext_resource declaration). A single PackedScene can be instanced by
+    // more than one node in the same scene, so ids map to a list of names.
+    let instance_re =
+        Regex::new(r#"(?m)^\[node\s+name="([^"]+)"[^\]]*\binstance=ExtResource\("([^"]+)"\)"#).unwrap();
+    let mut instances_by_id: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+    for cap in instance_re.captures_iter(text) {
+        instances_by_id.entry(cap.get(2).unwrap().as_str()).or_default().push(cap[1].to_string());
+    }
     for cap in ext_resource_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        let kind = &cap[1];
+        let id = &cap[3];
+        let names = if kind == "PackedScene" {
+            instances_by_id.get(id).cloned().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        imports.push(Import { from_file: rel.to_string(), to_module: cap[2].to_string(), names });
+    }
+}
+
+// Godot 4 treats a script that declares BOTH `class_name` and an
+// `[autoload]` registration of the same name as a hard parse error
+// ("Class 'X' hides an autoload singleton") — so an autoload script
+// deliberately has no `class_name` for extract_gdscript's PascalCase-
+// filename fallback to (coincidentally) match against. project.godot's
+// own `[autoload]` section is the only authoritative source of these
+// scripts' real global names.
+fn extract_project_godot(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    _imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    let Some(section_start) = text.find("[autoload]") else { return };
+    let body_start = section_start + "[autoload]".len();
+    let body_end = text[body_start..]
+        .find("\n[")
+        .map(|offset| body_start + offset)
+        .unwrap_or(text.len());
+    let body = &text[body_start..body_end];
+
+    // `Name="*res://path/To.gd"` — the leading `*` marks the autoload as
+    // enabled and is tolerated but not required.
+    let autoload_re = Regex::new(r#"(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"\*?res://[^"]+""#).unwrap();
+    for cap in autoload_re.captures_iter(body) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, body_start + cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 }
 
@@ -4053,6 +4118,22 @@ mod tscn_tests {
         );
     }
 
+    /// The ext_resource declaration establishes the edge; the `id=` it
+    /// carries is also enough to find exactly which node(s) instance it,
+    /// which is a strictly finer-grained fact than "this scene depends on
+    /// that one" — real scenes in the wild have multiple ext_resources with
+    /// distinct ids, so the cross-reference must key on id, not just be
+    /// "the only instance node in the file".
+    #[test]
+    fn composed_child_scene_records_which_node_instances_it() {
+        let src = "[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"Script\" path=\"res://world/ZoneTransition.gd\" id=\"1\"]\n[ext_resource type=\"PackedScene\" path=\"res://player/FirstPersonController.tscn\" id=\"2\"]\n\n[node name=\"Zone\" type=\"Node3D\"]\n\n[node name=\"Player\" parent=\".\" instance=ExtResource(\"2\")]\n";
+        let (_, imports) = extract("world/zones/Zone.tscn", src);
+        let script_import = imports.iter().find(|i| i.to_module == "res://world/ZoneTransition.gd").unwrap();
+        assert!(script_import.names.is_empty(), "a script attachment isn't instanced by a node: {script_import:?}");
+        let scene_import = imports.iter().find(|i| i.to_module == "res://player/FirstPersonController.tscn").unwrap();
+        assert_eq!(scene_import.names, vec!["Player".to_string()], "got: {scene_import:?}");
+    }
+
     /// A `[sub_resource ...]` block (materials, meshes, shapes — real
     /// content in every scene checked) has no `path=` at all and must never
     /// be mistaken for a dependency edge.
@@ -4094,6 +4175,85 @@ mod tscn_tests {
         assert_eq!(scene_import.unwrap().to_module, "res://player/Player.gd");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod project_godot_tests {
+    use super::*;
+
+    fn extract(rel: &str, src: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_project_godot(rel, src, &mut symbols, &mut imports, &mut routes);
+        symbols
+    }
+
+    #[test]
+    fn autoload_entries_become_symbols() {
+        let src = "config_version=5\n\n[application]\n\nconfig/name=\"Operator Ziwani\"\nconfig/icon=\"res://assets/icon.svg\"\n\n[autoload]\n\nEventBus=\"*res://core/EventBus.gd\"\nGameState=\"*res://core/GameState.gd\"\n\n[application]\n\nrun/main_scene=\"res://world/Main.tscn\"\n";
+        let symbols = extract("project.godot", src);
+        assert!(symbols.iter().any(|s| s.name == "EventBus" && s.kind == SymbolKind::Class), "got: {symbols:?}");
+        assert!(symbols.iter().any(|s| s.name == "GameState"), "got: {symbols:?}");
+        assert_eq!(symbols.len(), 2, "got: {symbols:?}");
+    }
+
+    /// The `*` enabled-marker is common but not guaranteed — an autoload a
+    /// developer has toggled off in the editor loses it while the entry
+    /// stays in the file, and it's still the real global name of that
+    /// script if/when it's re-enabled.
+    #[test]
+    fn tolerates_missing_enabled_marker() {
+        let src = "[autoload]\n\nTelemetryRecorder=\"res://core/TelemetryRecorder.gd\"\n";
+        let symbols = extract("project.godot", src);
+        assert!(symbols.iter().any(|s| s.name == "TelemetryRecorder"), "got: {symbols:?}");
+    }
+
+    /// A `key="res://..."` assignment outside `[autoload]` (e.g.
+    /// `config/icon=` in `[application]`, or `run/main_scene=`) must never
+    /// be mistaken for an autoload registration — scoping to the
+    /// `[autoload]` section's own body is what prevents that.
+    #[test]
+    fn ignores_res_paths_outside_the_autoload_section() {
+        let src = "[application]\n\nconfig/icon=\"res://assets/icon.svg\"\nrun/main_scene=\"res://world/Main.tscn\"\n";
+        let symbols = extract("project.godot", src);
+        assert!(symbols.is_empty(), "got: {symbols:?}");
+    }
+
+    #[test]
+    fn no_autoload_section_yields_no_symbols() {
+        let src = "config_version=5\n\n[application]\n\nconfig/name=\"Operator Ziwani\"\n";
+        let symbols = extract("project.godot", src);
+        assert!(symbols.is_empty(), "got: {symbols:?}");
+    }
+
+    /// End-to-end: an autoload script that (per real Godot 4 semantics)
+    /// deliberately has no `class_name` still resolves to a real, correctly-
+    /// named concept — because project.godot's own [autoload] section, not
+    /// the script file, is authoritative for that name.
+    #[test]
+    fn end_to_end_scan_declares_a_concept_for_an_autoload_singleton() {
+        let root = std::env::temp_dir().join(format!("archietect-godot-autoload-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("core")).unwrap();
+        std::fs::write(
+            root.join("core/EventBus.gd"),
+            "extends Node\n\n# No class_name here on purpose — this script is registered as\n# an autoload, and Godot 4 treats a class_name of the same name as an\n# autoload registration as a hard parse error.\n\nsignal telemetry_event(name: String)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("project.godot"),
+            "config_version=5\n\n[autoload]\n\nEventBus=\"*res://core/EventBus.gd\"\n",
+        )
+        .unwrap();
+
+        let (_idx, graph) = crate::scan::scan(&root);
+        assert!(
+            graph.symbols.values().any(|s| s.name == "EventBus" && s.kind == SymbolKind::Class && s.file == "project.godot"),
+            "got: {:?}",
+            graph.symbols.values().collect::<Vec<_>>()
+        );
     }
 }
 
