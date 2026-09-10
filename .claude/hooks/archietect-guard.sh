@@ -27,7 +27,11 @@ VERDICT="$(echo "$VERDICT_JSON" | jq -r '.verdict // empty' 2>/dev/null)"
 case "$VERDICT" in
     ""|ABSENT|INSUFFICIENT_COVERAGE) exit 0 ;;
     *)
-        echo "archietect: '$NAME' already resolves to a $VERDICT concept in this codebase — run \`archietect concept $NAME\` to see the evidence before creating $FILE_PATH. If this really is a new, unrelated thing, proceed." >&2
+        CANONICAL="$(echo "$VERDICT_JSON" | jq -r '.canonical // .concept // empty' 2>/dev/null)"
+        echo "archietect: '$NAME' already resolves to a $VERDICT concept in this codebase." >&2
+        echo "  run: archietect concept ${CANONICAL:-$NAME}" >&2
+        echo "  to see the evidence before creating $FILE_PATH." >&2
+        echo "  If this really is a new, unrelated thing, proceed." >&2
         exit 2
         ;;
 esac

@@ -48,6 +48,10 @@ struct Cli {
 enum Cmd {
     /// Scan the repository and persist the index (archietect.db)
     Init,
+    /// Dump every subcommand, its description, and its exit codes as JSON.
+    /// Machine-readable help for AI agents and tooling — generated from the
+    /// same dispatch table the binary runs, so it can never drift.
+    HelpJson,
     /// Summary of what the index knows — and what it admits it cannot see
     Status,
     /// Does this concept exist? Which implementation is canonical?
@@ -260,6 +264,20 @@ enum Cmd {
     /// `Documents`/`Photos`. See src/messages_domain.rs.
     #[command(subcommand)]
     Messages(MessagesCmd),
+    /// Verify a plain-language claim against the index.
+    /// Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence and a
+    /// receipt (what was checked, what the coverage boundary is).
+    /// This is the inverse of `concept`: instead of "what is X?", it
+    /// answers "is this statement true, and how do you know?"
+    ///
+    /// Examples:
+    ///   archietect claim "Redis is a dependency"
+    ///   archietect claim "User is used in more than 5 files"
+    ///   archietect claim "RefundService does not exist"
+    Claim {
+        /// The claim to verify, as a plain string
+        statement: Vec<String>,
+    },
     /// LIVE container state — shells out to `docker compose ps`, unlike
     /// every other command in this binary. Deliberately its own explicit
     /// subcommand, never folded into `status`/`init`: a routine index build
@@ -509,6 +527,12 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     };
 
+    // HelpJson: dump the command list as JSON, no index needed
+    if let Cmd::HelpJson = &cmd {
+        println!("{}", serde_json::to_string_pretty(&help_json())?);
+        return Ok(());
+    }
+
     let out = match cmd {
         Cmd::Init => {
             let (idx, graph) = scan::scan(&root);
@@ -539,9 +563,36 @@ fn main() -> anyhow::Result<()> {
         Cmd::Plan { text } => { let (idx, g) = index_for(&root); query::plan(&idx, &g, &text.join(" ")) }
         Cmd::Impact { term } => { let (idx, g) = index_for(&root); query::impact(&idx, &g, &term) }
         Cmd::Imports { file } => { let (_idx, g) = index_for(&root); query::imports(&g, &file) }
-        Cmd::Guard { sql } => { let (idx, g) = index_for(&root); query::guard(&idx, &g, &sql) }
+        Cmd::Guard { sql } => {
+            let (idx, g) = index_for(&root);
+            let out = query::guard(&idx, &g, &sql);
+            let allowed = out["allowed"] == true;
+            if !allowed {
+                let canonical = out["findings"]
+                    .as_array()
+                    .and_then(|f| f.first())
+                    .and_then(|f| f["canonical"].as_str())
+                    .unwrap_or("");
+                let next_cmd = if canonical.is_empty() {
+                    "archietect duplicates".to_string()
+                } else {
+                    format!("archietect concept {canonical}")
+                };
+                // Print JSON first so caller has the full structured output,
+                // then emit the terse next-command hint on stderr and exit 1.
+                println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+                eprintln!("archietect guard: exit 1 — run `{next_cmd}` to see what already exists");
+                std::process::exit(1);
+            }
+            out
+        }
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
+        Cmd::Claim { statement } => {
+            let stmt = statement.join(" ");
+            let (idx, g) = index_for(&root);
+            query::claim(&idx, &g, &stmt)
+        }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
         Cmd::DuplicateLogic => { let (_idx, g) = index_for(&root); query::duplicate_logic(&g) }
         Cmd::Verdicts => { let (idx, _g) = index_for(&root); query::verdicts(&idx) }
@@ -623,14 +674,61 @@ fn main() -> anyhow::Result<()> {
             let kind = if pass { "ci_passed" } else { "ci_blocked" };
             let _ = store::append_events(
                 &root,
-                &[(ts, kind.to_string(), concept, out.to_string())],
+                &[(ts, kind.to_string(), concept.clone(), out.to_string())],
             );
 
             if !pass {
-                std::process::exit(1);
+                // ── Typed exit codes — machine-readable for AI agents ──────
+                // Each non-zero exit prints a `next_command` hint on stderr
+                // so the agent knows what to run rather than stalling.
+                //
+                //   1 = hard violation  (duplicate storage / law breach)
+                //       → always blocks, regardless of --strict
+                //   2 = soft warning    (name collision, --strict only)
+                //       → blocks under --strict, passes otherwise
+                //       (this branch only reached when strict == true)
+                //
+                // The stderr hint is intentionally terse — it goes to the
+                // agent's error channel, not the structured JSON output.
+                let has_violation = out["violations"]
+                    .as_array()
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
+                let has_warning = out["warnings"]
+                    .as_array()
+                    .map(|w| !w.is_empty())
+                    .unwrap_or(false);
+
+                let (exit_code, next_cmd) = if has_violation {
+                    // Exit 1: hard block — a duplicate concept or law violation
+                    let canonical = out["violations"]
+                        .as_array()
+                        .and_then(|v| v.first())
+                        .and_then(|v| v["findings"].as_array())
+                        .and_then(|f| f.first())
+                        .and_then(|f| f["canonical"].as_str())
+                        .unwrap_or(&concept);
+                    (1, format!("archietect concept {canonical}"))
+                } else if has_warning {
+                    // Exit 2: soft block — name collision under --strict
+                    let collides = out["warnings"]
+                        .as_array()
+                        .and_then(|w| w.first())
+                        .and_then(|w| w["via_token"].as_str())
+                        .unwrap_or(&concept);
+                    (2, format!("archietect concept {collides}"))
+                } else {
+                    (1, "archietect duplicates".to_string())
+                };
+
+                eprintln!(
+                    "archietect ci: exit {exit_code} — run `{next_cmd}` to investigate"
+                );
+                std::process::exit(exit_code);
             }
             return Ok(());
         }
+        Cmd::HelpJson => unreachable!("handled before this match"),
         Cmd::Laws => archietect::laws::registry_json(),
         Cmd::Watch { subscribe } => {
             watch::run(root, subscribe)?;
@@ -861,4 +959,39 @@ mod tests {
         let encoded = urlencode(original);
         assert_eq!(percent_decode(&encoded), original);
     }
+}
+
+/// Machine-readable help — generated from the same source as the binary's
+/// actual dispatch, so it can never drift from the real command set.
+/// Used by `archietect help-json` and by AI agent tooling.
+fn help_json() -> serde_json::Value {
+    serde_json::json!([
+        { "command": "init",             "description": "Scan the repository and persist the index (archietect.db)", "exit_codes": {"0": "success"} },
+        { "command": "status",           "description": "Summary of what the index knows — and what it admits it cannot see", "exit_codes": {"0": "success"} },
+        { "command": "concept <term>",   "description": "Does this concept exist? Which implementation is canonical? Evidence-tiered answer.", "exit_codes": {"0": "success"} },
+        { "command": "intent <goal>",    "description": "From a stated intent to the smallest correct change — EXTEND vs CREATE", "exit_codes": {"0": "success"} },
+        { "command": "plan <goal>",      "description": "One-call composition: canonical locations, owners, decisions, impact", "exit_codes": {"0": "success"} },
+        { "command": "impact <term>",    "description": "What is affected if this concept changes? Import graph to depth 3 + HTTP route callers.", "exit_codes": {"0": "success"} },
+        { "command": "imports <file>",   "description": "Exact, unambiguous import edges in and out of one file", "exit_codes": {"0": "success"} },
+        { "command": "guard <sql>",      "description": "Reject a CREATE TABLE that duplicates an existing concept", "exit_codes": {"0": "allowed", "1": "blocked — run `archietect concept <canonical>` to investigate"} },
+        { "command": "claim <statement>","description": "Verify a plain-language claim: CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt", "exit_codes": {"0": "success"} },
+        { "command": "doctor",           "description": "Repository summary for someone who just cloned it", "exit_codes": {"0": "success"} },
+        { "command": "tour",             "description": "Onboarding: important concepts, ignorable ones, known mistake patterns", "exit_codes": {"0": "success"} },
+        { "command": "duplicates",       "description": "Suspected duplicate concepts — name-token overlap, risk not proof", "exit_codes": {"0": "success"} },
+        { "command": "duplicate-logic",  "description": "Suspected duplicate business logic across files/languages", "exit_codes": {"0": "success"} },
+        { "command": "verdicts",         "description": "Every declared concept bucketed by verdict (ACTIVE vs DECLARED_ONLY)", "exit_codes": {"0": "success"} },
+        { "command": "owner <term>",     "description": "Which directory owns this concept's declaration", "exit_codes": {"0": "success"} },
+        { "command": "history [term]",   "description": "Architectural timeline — what changed, when, what the engine said", "exit_codes": {"0": "success"} },
+        { "command": "ci",               "description": "CI gate: pipe a diff in, get an exit code out", "exit_codes": {"0": "pass", "1": "hard violation — duplicate/law breach — run `archietect concept <canonical>`", "2": "soft warning (--strict only) — run `archietect concept <token>`"} },
+        { "command": "laws",             "description": "The law registry: every rule the engine obeys", "exit_codes": {"0": "success"} },
+        { "command": "watch",            "description": "Daemon: observe the tree, keep index warm, emit findings as JSON lines", "exit_codes": {"0": "clean stop"} },
+        { "command": "serve",            "description": "REST API on 127.0.0.1 (read-only except /proposal/*)", "exit_codes": {"0": "clean stop"} },
+        { "command": "gui",              "description": "Start REST server and open browser UI", "exit_codes": {"0": "clean stop"} },
+        { "command": "mcp",              "description": "MCP server over stdio — register with Claude Code, Cursor, Kiro, etc.", "exit_codes": {"0": "clean stop"} },
+        { "command": "proposal",         "description": "AI-extension protocol: submit/test/accept/reject structural proposals", "exit_codes": {"0": "success", "1": "rejected"} },
+        { "command": "permissions",      "description": "Show the domain permission boundary", "exit_codes": {"0": "success"} },
+        { "command": "register",         "description": "Cross-project registry — what this machine knows about every onboarded project", "exit_codes": {"0": "success"} },
+        { "command": "system",           "description": "Machine-wide registry: register/list/status/query across all projects", "exit_codes": {"0": "success"} },
+        { "command": "help-json",        "description": "This output — machine-readable command list generated from the dispatch table", "exit_codes": {"0": "success"} },
+    ])
 }

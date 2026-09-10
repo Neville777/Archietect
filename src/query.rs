@@ -2513,3 +2513,131 @@ mod duplicates_performance_tests {
         assert_eq!(actual_count, expected_count, "below the cap, counts must match EXACTLY, not just both saturate");
     }
 }
+
+/// Verify a plain-language claim against the index.
+///
+/// Verdict vocabulary:
+///   CONFIRMED    — Archietect found evidence supporting the claim within
+///                  its observation boundary. Evidence is cited.
+///   REFUTED      — Archietect found evidence that contradicts the claim.
+///                  Evidence is cited.
+///   UNVERIFIABLE — The claim cannot be established or contradicted within
+///                  the current observation boundary. The boundary gap is
+///                  named explicitly — never silently treated as REFUTED.
+///
+/// This is the inverse of `concept`: instead of "what is X?" it answers
+/// "is this statement true, and how do you know?"
+///
+/// Coverage note: claim verification is only as strong as the underlying
+/// index. `impact` walks the import graph to depth 3; full reachability
+/// (transitive call chains) is not yet implemented. Claims about runtime
+/// behaviour, production deployments, or anything outside the scanned
+/// source tree are UNVERIFIABLE by construction.
+pub fn claim(idx: &Index, graph: &StructuralGraph, statement: &str) -> Value {
+    // ── Pattern matching ──────────────────────────────────────────────────
+    // Claims are matched against a small set of structural patterns.
+    // We do not use an LLM to interpret the statement — the output is only
+    // as trustworthy as the AST facts it's derived from.
+
+    let stmt = statement.trim().to_lowercase();
+
+    // Pattern: "X does not exist" / "no X" / "X is absent"
+    let negation = stmt.contains("does not exist")
+        || stmt.contains("doesn't exist")
+        || stmt.contains("is absent")
+        || stmt.starts_with("no ");
+
+    // Extract the primary subject — the first PascalCase or quoted word.
+    // Run on the ORIGINAL statement (not lowercased) so PascalCase is preserved.
+    let subject_re = regex::Regex::new(r#"["']([^"']+)["']|([A-Z][A-Za-z0-9_]+)"#).unwrap();
+    let subject = subject_re
+        .captures(statement)
+        .and_then(|c| c.get(1).or(c.get(2)))
+        .map(|m| m.as_str().trim_matches(|c: char| c == '"' || c == '\'').to_string());
+
+    let Some(subject) = subject else {
+        return json!({
+            "statement": statement,
+            "verdict": "UNVERIFIABLE",
+            "reason": "No recognizable subject found in the claim — Archietect looks for a PascalCase name or a quoted string",
+            "coverage_boundary": "Claim parsing requires an identifiable concept name",
+        });
+    };
+
+    // Run concept() to get the ground truth
+    let concept_result = concept(idx, graph, &subject);
+    let verdict_str = concept_result["verdict"].as_str().unwrap_or("ABSENT");
+    let confidence = concept_result["confidence"].as_str().unwrap_or("");
+
+    // ── Usage count claims: "X is used in more than N files" ─────────────
+    let usage_count_re = regex::Regex::new(r"used in (?:more than |at least )?(\d+)").unwrap();
+    if let Some(cap) = usage_count_re.captures(&stmt) {
+        let threshold: usize = cap[1].parse().unwrap_or(0);
+        let actual = concept_result["used_by_files"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let confirmed = actual >= threshold;
+        return json!({
+            "statement": statement,
+            "verdict": if confirmed { "CONFIRMED" } else { "REFUTED" },
+            "subject": subject,
+            "checked": format!("usage count for '{subject}'"),
+            "found": actual,
+            "threshold": threshold,
+            "evidence": concept_result["evidence"],
+            "coverage_boundary": "Usage is detected via AST identifier walk — ORM accessors and import references. Runtime call counts are outside the observation boundary.",
+        });
+    }
+
+    // ── Existence / absence claims ────────────────────────────────────────
+    let exists = matches!(verdict_str, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL");
+    let insufficient = verdict_str == "INSUFFICIENT_COVERAGE";
+
+    if negation {
+        // "X does not exist"
+        if insufficient {
+            return json!({
+                "statement": statement,
+                "verdict": "UNVERIFIABLE",
+                "subject": subject,
+                "reason": format!("'{subject}' cannot be confirmed absent — the repository contains files Archietect cannot parse. A false ABSENT here would violate law-015."),
+                "coverage_boundary": confidence,
+                "next_action": concept_result["next_action"],
+            });
+        }
+        return json!({
+            "statement": statement,
+            "verdict": if exists { "REFUTED" } else { "CONFIRMED" },
+            "subject": subject,
+            "checked": format!("existence of '{subject}' in the index"),
+            "evidence": if exists { concept_result["evidence"].clone() } else { json!([]) },
+            "found_verdict": verdict_str,
+            "coverage_boundary": "AST declarations and usage across scanned files only",
+        });
+    }
+
+    // ── Default: positive existence claim ────────────────────────────────
+    if insufficient {
+        return json!({
+            "statement": statement,
+            "verdict": "UNVERIFIABLE",
+            "subject": subject,
+            "reason": format!("'{subject}' may exist in files Archietect cannot parse"),
+            "coverage_boundary": confidence,
+            "next_action": concept_result["next_action"],
+        });
+    }
+
+    json!({
+        "statement": statement,
+        "verdict": if exists { "CONFIRMED" } else { "REFUTED" },
+        "subject": subject,
+        "checked": format!("existence and usage of '{subject}'"),
+        "evidence": concept_result["evidence"],
+        "found_verdict": verdict_str,
+        "confidence": confidence,
+        "source": concept_result["source"],
+        "coverage_boundary": "AST declarations and usage across scanned files. Runtime behaviour, production deployments, and cross-service calls via HTTP (beyond route-call matching) are outside the observation boundary.",
+    })
+}
