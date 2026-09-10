@@ -1,5 +1,8 @@
 /target
 archietect.db
+archietect.db-wal
+archietect.db-shm
+archietect.db-journal
 validation/
 .archietect/
 __pycache__/
