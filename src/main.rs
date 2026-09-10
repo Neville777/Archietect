@@ -533,6 +533,15 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Track before the match consumes cmd — used for exit 7 check below
+    let needs_index = matches!(cmd,
+        Cmd::Concept { .. } | Cmd::Impact { .. } | Cmd::Status | Cmd::Doctor
+        | Cmd::Verdicts | Cmd::Duplicates | Cmd::Tour | Cmd::Owner { .. }
+        | Cmd::Claim { .. } | Cmd::ConceptAt { .. } | Cmd::Intent { .. }
+        | Cmd::Plan { .. } | Cmd::Imports { .. } | Cmd::Guard { .. }
+        | Cmd::Duplicates | Cmd::DuplicateLogic | Cmd::Register { .. }
+    );
+
     let out = match cmd {
         Cmd::Init => {
             let (idx, graph) = scan::scan(&root);
@@ -911,6 +920,41 @@ fn main() -> anyhow::Result<()> {
         }
     };
     println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+
+    // ── Typed exit codes — post-print, after JSON is on stdout ───────────
+    //
+    //   0  success / clean
+    //   1  hard violation (ci/guard — handled earlier in their own arms)
+    //   2  soft warning   (ci --strict — handled earlier)
+    //   3  INSUFFICIENT_COVERAGE — blind spot reached, manual check needed
+    //   4  stale binary — index out of sync, restart the process
+    //   6  illegal state — invalid query target
+    //   7  prerequisite missing — project not indexed, run archietect init
+    //
+    // These fire AFTER the JSON is printed so the caller always gets the
+    // structured output regardless of exit code.
+    let verdict = out["verdict"].as_str().unwrap_or("");
+    let exit_code: i32 = if out.get("_stale_binary_warning").is_some() {
+        eprintln!("archietect: exit 4 — binary rebuilt since process started; restart to pick up the new version");
+        4
+    } else if verdict == "INSUFFICIENT_COVERAGE" {
+        let next = out["next_action"]["question"]
+            .as_str()
+            .unwrap_or("check unclassified files manually");
+        eprintln!("archietect: exit 3 — INSUFFICIENT_COVERAGE: {next}");
+        3
+    } else if out.get("impact").and_then(|v| v.as_str()) == Some("unknown — concept not declared in this project") {
+        eprintln!("archietect: exit 6 — concept not found in this project");
+        6
+    } else if !root.join("archietect.db").exists() && needs_index {
+        eprintln!("archietect: exit 7 — project not indexed; run `archietect init` first");
+        7
+    } else {
+        0
+    };
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
     Ok(())
 }
 

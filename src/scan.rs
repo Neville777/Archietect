@@ -151,6 +151,9 @@ pub const EXTRACTOR_VERSION: u32 = 12; // systematic pass across schema extracto
 const SKIP_DIRS: &[&str] = &[
     "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
     ".venv", "venv", ".turbo", "coverage", ".cache", "vendor", ".claude",
+    // Test/CI caches that contain binary blobs — walking into these turns
+    // otherwise-ABSENT queries into INSUFFICIENT_COVERAGE because of .pak/.vsix
+    ".vscode-test", ".vscode-server", ".idea", ".metals",
 ];
 const MAX_FILE_BYTES: u64 = 2_000_000;
 /// Schema-declaration formats structural.rs has no reason to know about —
@@ -200,6 +203,23 @@ const NON_CODE_EXTS: &[&str] = &[
     "mdx", // overwhelmingly prose (docs/blog) in real-world use, like .md
     "erb", // Rails view templates — markup with embedded Ruby CALLS, never
            // declarations; checked real examples, nothing to extract
+    // Binary package/archive formats — these are distribution artifacts, not
+    // source. Walking into them would cause INSUFFICIENT_COVERAGE noise on
+    // repos that ship bundled extensions or packages alongside code.
+    "vsix",  // VS Code extension packages
+    "tgz",   // npm tarballs
+    "pak",   // Chromium/Electron locale/resource packs
+    "asar",  // Electron app archives
+    "nupkg", // NuGet packages
+    "crx",   // Chrome extension packages
+    "appimage", "deb", "rpm", "msi", "dmg", // installers
+    "bin", "dat", "raw", // generic binary blobs
+    "node",  // native Node.js addons
+    "whl",   // Python wheels
+    "egg",   // Python eggs
+    "jar", "aar", "war", // JVM archives
+    "apk",   // Android packages
+    "ipa",   // iOS packages
 ];
 
 /// Files that exist in this repo but are neither recognized as source

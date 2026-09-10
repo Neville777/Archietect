@@ -69,6 +69,7 @@ fn describe_call(name: &str, args: &Value) -> String {
         "intent" | "plan" => field(args, "text"),
         "imports" => field(args, "file"),
         "guard" => field(args, "sql").map(|s| truncate(&s, 60)),
+        "claim" => field(args, "statement").map(|s| truncate(&s, 80)),
         "ci" => field(args, "diff").map(|s| truncate(&s, 60)),
         "history" => field(args, "concept"),
         "proposal_submit" => field(args, "title"),
@@ -253,6 +254,14 @@ fn tool_defs_inner() -> Value {
             "name": "verdicts",
             "description": "Every declared concept bucketed by verdict — ACTIVE (declared and observably used) vs DECLARED_ONLY (declared, never observed in use) — with counts, instead of querying one concept name at a time. UNKNOWN and ABSENT are deliberately not listable here: those describe a search TERM's outcome, not a property a declared concept holds on its own.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
+        },
+        {
+            "name": "claim",
+            "description": "Verify a plain-language claim against the index. Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt. This is the inverse of concept(): instead of 'what is X?' it answers 'is this statement true, and how do you know?' Handles existence claims ('X exists'), negation ('X does not exist'), and usage-count claims ('X is used in more than N files'). UNVERIFIABLE is returned when coverage gaps prevent a confident answer — never silently treated as REFUTED.",
+            "inputSchema": { "type": "object", "properties": {
+                "statement": { "type": "string", "description": "The claim to verify, e.g. 'RefundService does not exist' or 'User is used in more than 5 files'." },
+                "root": root_prop
+            }, "required": ["statement"] }
         },
         {
             "name": "status",
@@ -516,6 +525,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "guard" => query::guard(&idx, &graph, args["sql"].as_str().unwrap_or("")),
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
+                            "claim" => query::claim(&idx, &graph, args["statement"].as_str().unwrap_or("")),
                             "duplicates" => query::duplicates(&idx),
                             "duplicate_logic" => query::duplicate_logic(&graph),
                             "verdicts" => query::verdicts(&idx),
