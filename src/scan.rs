@@ -616,81 +616,23 @@ pub fn scan_with_prior(
     let usage_cache_valid =
         prior.as_ref().map(|p| p.concepts_sig == idx.concepts_sig).unwrap_or(false);
 
-    // ── pass 2: USAGE — matchers built once from the assembled set ──────────
+    // ── pass 2: USAGE — tree-sitter parse once per file ─────────────────────
+    // One matcher per concept holds only what tree-sitter cannot cover:
+    // raw SQL table references inside string literals (FROM users, INSERT INTO
+    // orders). Everything else — ORM calls, type references, method chains,
+    // function calls — is covered by the tree-sitter identifier walk below,
+    // which parses each file once and checks all concepts in O(1).
     struct Matcher {
         concept: String,
-        needle_client: String,
-        client_re: Regex,
-        needle_django: String,
-        needle_construct: String,
-        construct_re: Regex,
-        static_re: Option<Regex>,
-        repo_re: Option<Regex>,
-        rails_re: Option<Regex>,
-        drizzle_re: Option<Regex>,
-        eloquent_re: Option<Regex>,
-        gorm_re: Option<Regex>,
-        table_re: Option<Regex>,
+        // Raw SQL inside string literals: tree-sitter skips strings, regex covers the gap.
         needle_table: Option<String>,
+        table_re: Option<Regex>,
     }
-    // Parallelized — this used to be a plain sequential .map() over every
-    // concept, each compiling up to ~9 regexes. On a repo with thousands of
-    // concepts that alone could take longer than both file passes combined,
-    // stalling ALL visible progress (the file-processed counter sits still
-    // the whole time this runs) and — worse, now that requests are
-    // concurrent — blocking every OTHER tab's request behind the same
-    // per-root lock for that entire stall. Same dedicated, load-throttled
-    // pool as the file passes.
     let concept_names: Vec<String> = idx.concepts.keys().cloned().collect();
-    let matchers: Vec<Matcher> = pool.install(|| {
-        concept_names
-        .par_iter()
+    let matchers: Vec<Matcher> = concept_names
+        .iter()
         .map(|name| {
-            let mut lname = name.clone();
-            if let Some(c) = lname.get_mut(0..1) {
-                c.make_ascii_lowercase();
-            }
-            let client_re =
-                Regex::new(&format!(r"\b(?:prisma|db|tx|client)\.{}\.", regex::escape(&lname)))
-                    .unwrap();
-            let c0 = &idx.concepts[name];
-            let has_kind = |k: &str| c0.declared_in.iter().any(|(_, dk)| dk == k);
-            // Dialect matchers are built ONLY for concepts DECLARED in that
-            // dialect — `Anything.find(` in unrelated code must not inflate
-            // unrelated concepts.
-            let static_re = if has_kind("mongoose") {
-                Some(Regex::new(&format!(
-                    r"\b{}\.(?:find|findOne|findById|create|updateOne|deleteOne|countDocuments|aggregate|exists)\(",
-                    regex::escape(name)
-                )).unwrap())
-            } else { None };
-            let rails_re = if has_kind("rails") {
-                Some(Regex::new(&format!(
-                    r"\b{}\.(?:find|find_by|where|create|new|all|first|joins|includes|count)\b",
-                    regex::escape(name)
-                )).unwrap())
-            } else { None };
-            let drizzle_re = if has_kind("drizzle") {
-                Some(Regex::new(&format!(
-                    r"(?:from|insert|update|delete)\(\s*{}\s*[,)]",
-                    regex::escape(name)
-                )).unwrap())
-            } else { None };
-            let eloquent_re = if has_kind("eloquent") {
-                // Book::query(), Book::where(...) — PHP static access
-                Some(Regex::new(&format!(r"\b{}::", regex::escape(name))).unwrap())
-            } else { None };
-            let gorm_re = if has_kind("gorm") {
-                // &ArticleModel{...} / ArticleModel{} — Go struct literals
-                Some(Regex::new(&format!(r"\b{}\{{", regex::escape(name))).unwrap())
-            } else { None };
-            let repo_re = if has_kind("typeorm") {
-                Some(Regex::new(&format!(
-                    r"(?:Repository<{0}>|getRepository\({0}\)|InjectRepository\({0}\))",
-                    regex::escape(name)
-                )).unwrap())
-            } else { None };
-            let table = c0.table.clone();
+            let table = idx.concepts[name].table.clone();
             let table_re = table.as_ref().map(|t| {
                 RegexBuilder::new(&format!(
                     r#"(?:insert\s+into|update|from|join)\s+["'`]?{}\b"#,
@@ -702,23 +644,11 @@ pub fn scan_with_prior(
             });
             Matcher {
                 concept: name.clone(),
-                needle_client: format!(".{lname}."),
-                client_re,
-                needle_django: format!("{name}.objects."),
-                needle_construct: format!("{name}("),
-                construct_re: Regex::new(&format!(r"\b{}\(", regex::escape(name))).unwrap(),
-                static_re,
-                repo_re,
-                rails_re,
-                drizzle_re,
-                eloquent_re,
-                gorm_re,
                 needle_table: table.map(|t| t.to_lowercase()),
                 table_re,
             }
         })
-        .collect()
-    });
+        .collect();
 
     let usage_results: Vec<(String, Vec<(String, String)>)> = pool.install(|| { files
         .par_iter()
@@ -736,53 +666,25 @@ pub fn scan_with_prior(
             };
             let lower = text.to_lowercase();
             let mut hits = Vec::new();
+            // Parse once per file, check all concepts in O(1).
+            // The parser is reused across all files on the same thread via
+            // thread_local! — avoids 2,000 C heap alloc/dealloc cycles on a
+            // large repo while keeping the parallel worker model intact.
+            thread_local! {
+                static TS: std::cell::RefCell<crate::tree_sitter_detector::TreeSitterUsageDetector> =
+                    std::cell::RefCell::new(crate::tree_sitter_detector::TreeSitterUsageDetector::new());
+            }
+            let ts_used = TS.with(|ts| ts.borrow_mut().extract_used_identifiers(&text, &f.rel));
             for m in &matchers {
-                if text.contains(&m.needle_client) && m.client_re.is_match(&text) {
-                    hits.push((m.concept.clone(), "orm-client".to_string()));
-                }
-                if text.contains(&m.needle_django) {
-                    hits.push((m.concept.clone(), "django-orm".to_string()));
-                }
-                if m.concept.len() >= 5
-                    && text.contains(&m.needle_construct)
-                    && m.construct_re.is_match(&text)
-                {
-                    hits.push((m.concept.clone(), "constructed".to_string()));
-                }
-                if let Some(re) = &m.static_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "mongoose-static".to_string()));
-                    }
-                }
-                if let Some(re) = &m.rails_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "rails-static".to_string()));
-                    }
-                }
-                if let Some(re) = &m.eloquent_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "eloquent-static".to_string()));
-                    }
-                }
-                if let Some(re) = &m.gorm_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "gorm-literal".to_string()));
-                    }
-                }
-                if let Some(re) = &m.drizzle_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "drizzle-query".to_string()));
-                    }
-                }
-                if let Some(re) = &m.repo_re {
-                    if text.contains(m.concept.as_str()) && re.is_match(&text) {
-                        hits.push((m.concept.clone(), "typeorm-repository".to_string()));
-                    }
-                }
+                // Raw SQL inside string literals — tree-sitter skips strings, so
+                // this is the one regex that still earns its place.
                 if let (Some(needle), Some(re)) = (&m.needle_table, &m.table_re) {
                     if lower.contains(needle.as_str()) && re.is_match(&lower) {
                         hits.push((m.concept.clone(), "raw-sql".to_string()));
                     }
+                }
+                if ts_used.contains(&m.concept) {
+                    hits.push((m.concept.clone(), "tree-sitter".to_string()));
                 }
             }
             (f.rel.clone(), hits)

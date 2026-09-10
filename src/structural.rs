@@ -205,6 +205,13 @@ fn line_of(text: &str, pos: usize) -> usize {
     text.as_bytes()[..pos.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1
 }
 
+/// Extract text from a tree-sitter node.
+fn ts_text(node: tree_sitter::Node, bytes: &[u8]) -> String {
+    std::str::from_utf8(&bytes[node.start_byte()..node.end_byte()])
+        .unwrap_or("")
+        .to_string()
+}
+
 /// An HTTP route extracted from source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
@@ -1578,222 +1585,445 @@ fn extract_ts_js(
     imports: &mut Vec<Import>,
     routes: &mut Vec<Route>,
 ) {
-    // Classes and interfaces
-    let class_re = Regex::new(
-        r"(?m)^(?:export\s+)?(?:abstract\s+)?(?:class|interface)\s+([A-Z][A-Za-z0-9_]*)"
-    ).unwrap();
-    for cap in class_re.captures_iter(text) {
-        let name = cap[1].to_string();
-        // Determine kind from the matched text
-        let matched = &text[cap.get(0).unwrap().start()..cap.get(0).unwrap().end()];
-        let kind = if matched.contains("interface") { SymbolKind::Interface } else { SymbolKind::Class };
-        symbols.push(Symbol { name, kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") || rel.ends_with(".mts") || rel.ends_with(".cts") {
+        tree_sitter_typescript::language_typescript()
+    } else {
+        tree_sitter_javascript::language()
+    };
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(lang).is_ok() {
+        if let Some(tree) = parser.parse(text, None) {
+            let bytes = text.as_bytes();
+            let root = tree.root_node();
+            walk_ts_js(&root, bytes, rel, symbols, imports, 0);
+        }
     }
 
-    // TypeScript enums (exported — they participate in concept identity)
-    let enum_re = Regex::new(r"(?m)^export\s+(?:const\s+)?enum\s+([A-Z][A-Za-z0-9_]*)").unwrap();
-    for cap in enum_re.captures_iter(text) {
-        symbols.push(Symbol {
-            name: cap[1].to_string(),
-            kind: SymbolKind::Class, // treat enums like types for impact purposes
-            file: rel.to_string(),
-            linked_concept: None,
-            line: line_of(text, cap.get(0).unwrap().start()),
-            observation_source: ObservationSource::Lexical,
-        });
-    }
-
-    // `type Foo = ...` — a completely separate declaration form from
-    // class/interface/enum above. A discriminated-union type like
-    // `type View = 'dashboard' | 'settings' | ...` can drive an app's
-    // entire navigation, so it deserves structural representation too, not
-    // just STRUCTURAL-verdict silence. `export` is optional here (unlike
-    // class_re, which already permits either) since a type alias this
-    // central to an app's own control flow is routinely kept private to
-    // its declaring file.
-    // PascalCase-required for the same reason as the unexported-function
-    // patterns above: this project's own concept-identity convention, not a
-    // new rule invented for this case.
-    let type_alias_re = Regex::new(
-        r"(?m)^(?:export\s+)?type\s+([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*="
-    ).unwrap();
-    for cap in type_alias_re.captures_iter(text) {
-        symbols.push(Symbol {
-            name: cap[1].to_string(),
-            kind: SymbolKind::Class, // same "named type" role interfaces/enums already play here
-            file: rel.to_string(),
-            linked_concept: None,
-            line: line_of(text, cap.get(0).unwrap().start()),
-            observation_source: ObservationSource::Lexical,
-        });
-    }
-
-    // Imports: import { X, Y } from './module'
-    let import_re = Regex::new(
-        r#"import\s+(?:\*\s+as\s+\w+|\{([^}]*)\}|(\w+))\s+from\s+['"]([^'"]+)['"]"#
-    ).unwrap();
-    for cap in import_re.captures_iter(text) {
-        let names: Vec<String> = cap
-            .get(1)
-            .map(|m| {
-                m.as_str()
-                    .split(',')
-                    .map(|s| s.trim().split_whitespace().next().unwrap_or("").to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let to_module = cap[3].to_string();
-        imports.push(Import { from_file: rel.to_string(), to_module, names });
-    }
-
-    // CommonJS: const { X, Y } = require('./module'), const X = require('./module'),
-    // or a bare require('./module') for side effects only. `extract_ts_js`
-    // otherwise only recognizes ES `import ... from`, so any file using
-    // require() (still the default in a great many real Node backends, not
-    // just legacy ones) produces zero Import edges for its own local
-    // requires without this. `Import::relationship`/`resolve_relative_import`
-    // and every caller that
-    // walks `graph.imports` (structural_dependents's importers_of, impact(),
-    // etc.) operate purely on the resulting `Import{from_file, to_module,
-    // names}` — they don't know or care which syntax produced it, so this
-    // needed no changes anywhere else.
-    let require_re = Regex::new(
-        r#"(?:(?:const|let|var)\s+(?:\{([^}]*)\}|(\w+))\s*=\s*)?require\(\s*['"]([^'"]+)['"]\s*\)"#
-    ).unwrap();
-    for cap in require_re.captures_iter(text) {
-        let names: Vec<String> = cap
-            .get(1)
-            .map(|m| {
-                m.as_str()
-                    .split(',')
-                    .map(|s| {
-                        // Handles both plain `{ a }` and CommonJS's
-                        // colon-rename form `{ a: b }` (there's no `as`
-                        // keyword in object destructuring) — take the key,
-                        // not the local binding name, matching what the ES
-                        // import branch above does for its own `as` form.
-                        s.trim()
-                            .split(':')
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string()
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let to_module = cap[3].to_string();
-        imports.push(Import { from_file: rel.to_string(), to_module, names });
-    }
-
-    // Top-level exported functions: `export function foo(` and the very
-    // common `export const foo = (...) => {...}` arrow-as-function style.
-    // Not anchored inside a class body — those are methods, already noisy
-    // enough via the class itself.
-    let fn_decl_re = Regex::new(
-        r"(?m)^export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)"
-    ).unwrap();
-    for cap in fn_decl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-    let fn_const_re = Regex::new(
-        r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
-    ).unwrap();
-    for cap in fn_const_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // Unexported PascalCase top-level declarations — every pattern above
-    // required `export`, so a React component (or any other PascalCase
-    // top-level unit) never exported from its own file — used only
-    // elsewhere in the same file, or via a barrel re-export one level up —
-    // was completely invisible: verdict ABSENT for something real, load-
-    // bearing, and sitting right there in the text. Found live: two real
-    // dashboard components in a Next.js app, `function BurrowDashboard()`
-    // and `const VantageDashboard = () => {...}`, neither `export`ed at
-    // their own declaration site, both missing from the concept index
-    // entirely. PascalCase specifically — not just "no export" — is what
-    // keeps this from flooding the index with local lowercase helpers:
-    // that casing convention is already how this project's OWN concept-
-    // naming assumption works (`class_re` above already requires
-    // `[A-Z]...`), applied here to functions/consts for exactly the same
-    // reason. A name that's ALREADY captured by the exported patterns above
-    // isn't duplicated — `symbols.dedup_by` in extract_file (name+kind)
-    // handles that the same way it already does for every other extractor.
-    let local_fn_decl_re = Regex::new(
-        r"(?m)^(?:default\s+)?(?:async\s+)?function\s+([A-Z][A-Za-z0-9_$]*)"
-    ).unwrap();
-    for cap in local_fn_decl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-    let local_fn_const_re = Regex::new(
-        r"(?m)^const\s+([A-Z][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
-    ).unwrap();
-    for cap in local_fn_const_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // `export const authApi = { login: ..., logout: ... }` — an object-literal
-    // namespace, the standard pattern for grouping related API/config methods
-    // in TS/JS. Distinct from `fn_const_re` above (which requires `= (`, an
-    // arrow function): this requires `= {`, an object. Found missing by
-    // dogfooding a real Next.js/axios frontend — `authApi`/`dashboardApi`/
-    // `swarmApi`-style exports were completely invisible (verdict ABSENT)
-    // despite being exactly the kind of thing "does this API client already
-    // exist" should answer. Classed as Class: architecturally it's the same
-    // "named, importable unit of behavior" role a class plays here.
-    let const_object_re = Regex::new(
-        r"(?m)^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::\s*[\w<>\[\],\.\s]+)?=\s*\{"
-    ).unwrap();
-    for cap in const_object_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // NestJS / Express route decorators and method calls
+    // Framework route extraction still uses regex — these are string-literal
+    // patterns inside decorator/call arguments, which tree-sitter sees as
+    // string nodes. TODO: migrate to tree-sitter argument-node extraction.
     extract_ts_routes(rel, text, routes);
-
-    // Event emissions: EventEmitter.emit('event-name'), @OnEvent('...')
     extract_ts_events(rel, text, symbols);
 }
 
+fn walk_ts_js(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    depth: usize,
+) {
+    match node.kind() {
+        "class_declaration" | "abstract_class_declaration" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                symbols.push(Symbol {
+                    name: ts_text(n, bytes),
+                    kind: SymbolKind::Class,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: n.start_position().row + 1,
+                    observation_source: ObservationSource::Ast,
+                });
+            }
+        }
+        "interface_declaration" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                symbols.push(Symbol {
+                    name: ts_text(n, bytes),
+                    kind: SymbolKind::Interface,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: n.start_position().row + 1,
+                    observation_source: ObservationSource::Ast,
+                });
+            }
+        }
+        "type_alias_declaration" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                let name = ts_text(n, bytes);
+                // PascalCase only — same convention as the old regex
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    symbols.push(Symbol {
+                        name,
+                        kind: SymbolKind::Class,
+                        file: rel.to_string(),
+                        linked_concept: None,
+                        line: n.start_position().row + 1,
+                        observation_source: ObservationSource::Ast,
+                    });
+                }
+            }
+        }
+        "enum_declaration" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                symbols.push(Symbol {
+                    name: ts_text(n, bytes),
+                    kind: SymbolKind::Class,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: n.start_position().row + 1,
+                    observation_source: ObservationSource::Ast,
+                });
+            }
+        }
+        "function_declaration" => {
+            if depth == 0 {
+                if let Some(n) = node.child_by_field_name("name") {
+                    let name = ts_text(n, bytes);
+                    // PascalCase only — lowercase functions are private helpers
+                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        symbols.push(Symbol {
+                            name,
+                            kind: SymbolKind::Function,
+                            file: rel.to_string(),
+                            linked_concept: None,
+                            line: n.start_position().row + 1,
+                            observation_source: ObservationSource::Ast,
+                        });
+                    }
+                }
+            }
+        }
+        "lexical_declaration" | "variable_declaration" if depth == 0 => {
+            // export const Foo = (...) => ... or export const Foo = { ... }
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "variable_declarator" {
+                        if let Some(name_node) = ch.child_by_field_name("name") {
+                            let name = ts_text(name_node, bytes);
+                            if let Some(val) = ch.child_by_field_name("value") {
+                                let val_kind = val.kind();
+                                if val_kind == "object" {
+                                    // PascalCase only for object namespaces
+                                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                        symbols.push(Symbol {
+                                            name,
+                                            kind: SymbolKind::Class,
+                                            file: rel.to_string(),
+                                            linked_concept: None,
+                                            line: name_node.start_position().row + 1,
+                                            observation_source: ObservationSource::Ast,
+                                        });
+                                    }
+                                } else if matches!(val_kind, "arrow_function" | "function") {
+                                    // PascalCase only — lowercase consts are helpers
+                                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                        symbols.push(Symbol {
+                                            name,
+                                            kind: SymbolKind::Function,
+                                            file: rel.to_string(),
+                                            linked_concept: None,
+                                            line: name_node.start_position().row + 1,
+                                            observation_source: ObservationSource::Ast,
+                                        });
+                                    }
+                                }
+                                // require() on the RHS is handled by the call_expression arm below
+                            }
+                        } else if let Some(pat_node) = ch.child_by_field_name("name") {
+                            // Destructured: const { createApp } = require('./app')
+                            // name field is an object_pattern here
+                            let _ = pat_node; // handled in call_expression arm
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+        }
+        // require() calls — handles const x = require(), const { x } = require(), require() bare
+        "call_expression" if depth == 0 => {
+            let func = node.child_by_field_name("function");
+            let is_require = func.map(|f| ts_text(f, bytes) == "require").unwrap_or(false);
+            if is_require {
+                if let Some(args) = node.child_by_field_name("arguments") {
+                    // Extract the module path from the first string argument
+                    let mut module = String::new();
+                    let mut ac = args.walk();
+                    if ac.goto_first_child() {
+                        loop {
+                            let a = ac.node();
+                            if a.kind() == "string" {
+                                module = ts_text(a, bytes)
+                                    .trim_matches(|c| c == '\'' || c == '"')
+                                    .to_string();
+                                break;
+                            }
+                            if !ac.goto_next_sibling() { break; }
+                        }
+                    }
+                    if !module.is_empty() {
+                        // Walk up to find the variable_declarator that contains this require()
+                        // to extract the binding names
+                        let names = extract_require_names(node, bytes);
+                        imports.push(Import { from_file: rel.to_string(), to_module: module, names });
+                    }
+                }
+            }
+        }
+        "import_statement" => {
+            // import { X, Y } from './module' or import X from './module'
+            let source = node.child_by_field_name("source")
+                .map(|n| ts_text(n, bytes).trim_matches(|c| c == '\'' || c == '"').to_string())
+                .unwrap_or_default();
+            let mut names = Vec::new();
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    match ch.kind() {
+                        "import_clause" => {
+                            let mut ic = ch.walk();
+                            if ic.goto_first_child() {
+                                loop {
+                                    let item = ic.node();
+                                    match item.kind() {
+                                        "identifier" => names.push(ts_text(item, bytes)),
+                                        "named_imports" => {
+                                            let mut ni = item.walk();
+                                            if ni.goto_first_child() {
+                                                loop {
+                                                    let spec = ni.node();
+                                                    if spec.kind() == "import_specifier" {
+                                                        if let Some(n) = spec.child_by_field_name("name") {
+                                                            names.push(ts_text(n, bytes));
+                                                        }
+                                                    }
+                                                    if !ni.goto_next_sibling() { break; }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    if !ic.goto_next_sibling() { break; }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+            if !source.is_empty() {
+                imports.push(Import { from_file: rel.to_string(), to_module: source, names });
+            }
+        }
+        _ => {}
+    }
+
+    let child_depth = if matches!(node.kind(), "class_declaration" | "function_declaration" | "arrow_function" | "function") {
+        depth + 1
+    } else {
+        depth
+    };
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_ts_js(&cursor.node(), bytes, rel, symbols, imports, child_depth);
+            if !cursor.goto_next_sibling() { break; }
+        }
+    }
+}
+
+/// Given a `call_expression` node that is `require(...)`, walk up to its
+/// containing `variable_declarator` and extract the binding name(s):
+///   - `const { createApp } = require(...)` → ["createApp"]
+///   - `const { Router: createRouter } = require(...)` → ["Router"] (key, not local)
+///   - `const app = require(...)` → [] (default import, no named bindings)
+///   - `require(...)` bare (no declarator) → []
+fn extract_require_names(require_call: &tree_sitter::Node, bytes: &[u8]) -> Vec<String> {
+    // Walk up: call_expression → variable_declarator → (name field)
+    let declarator = match require_call.parent().and_then(|p| {
+        if p.kind() == "variable_declarator" { Some(p) } else { None }
+    }) {
+        Some(d) => d,
+        None => return Vec::new(), // bare require()
+    };
+
+    let name_node = match declarator.child_by_field_name("name") {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+
+    match name_node.kind() {
+        "object_pattern" => {
+            // { createApp } or { Router: createRouter }
+            let mut names = Vec::new();
+            let mut c = name_node.walk();
+            if c.goto_first_child() {
+                loop {
+                    let ch = c.node();
+                    if ch.kind() == "shorthand_property_identifier_pattern" {
+                        // { createApp }
+                        names.push(ts_text(ch, bytes));
+                    } else if ch.kind() == "pair_pattern" {
+                        // { Router: createRouter } — take the KEY
+                        if let Some(key) = ch.child_by_field_name("key") {
+                            names.push(ts_text(key, bytes));
+                        }
+                    }
+                    if !c.goto_next_sibling() { break; }
+                }
+            }
+            names
+        }
+        "identifier" => {
+            // const app = require(...) — default-style, no named bindings
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
-    // NestJS decorators: @Get('/path'), @Post('/path'), etc.
-    // Matches both single and double quoted paths.
-    let decorator_re = Regex::new(
-        r#"@(Get|Post|Put|Delete|Patch|Options|Head|All)\s*\(\s*["']([^"']*)["']"#
-    ).unwrap();
-    for cap in decorator_re.captures_iter(text) {
-        let method = cap[1].to_string().to_uppercase();
-        let path = cap[2].to_string();
-        // Find the function name after the decorator
-        let after = &text[cap.get(0).unwrap().end()..];
-        let fn_re = Regex::new(r"(?m)^\s*(?:async\s+)?(\w+)\s*\(").unwrap();
-        let handler = fn_re
-            .captures(after)
-            .map(|c| c[1].to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        routes.push(Route { method, path, handler, file: rel.to_string() });
+    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") {
+        tree_sitter_typescript::language_typescript()
+    } else {
+        tree_sitter_javascript::language()
+    };
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(lang).is_ok() {
+        if let Some(tree) = parser.parse(text, None) {
+            let bytes = text.as_bytes();
+            walk_ts_routes(&tree.root_node(), bytes, rel, routes, None);
+        }
     }
 
-    // Express-style: router.get('/path', handler) or app.post('/path', ...)
-    let express_re = Regex::new(
-        r#"(?:router|app|Router)\.(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']"#
-    ).unwrap();
-    for cap in express_re.captures_iter(text) {
-        routes.push(Route {
-            method: cap[1].to_string().to_uppercase(),
-            path: cap[2].to_string(),
-            handler: "express-handler".to_string(),
-            file: rel.to_string(),
-        });
-    }
-
+    // File-based and tagged-template routes — not expressible as call_expression
+    // patterns, so these helpers stay (they look at filename and template tags).
     next_app_router_routes(rel, text, routes);
     nuxt_server_api_route(rel, routes);
     graphql_tagged_template_operations(rel, text, routes);
     angular_routes(rel, text, routes);
+}
+
+const TS_ROUTE_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "options", "head", "all"];
+const NESTJS_DECORATORS: &[(&str, &str)] = &[
+    ("Get", "GET"), ("Post", "POST"), ("Put", "PUT"), ("Delete", "DELETE"),
+    ("Patch", "PATCH"), ("Options", "OPTIONS"), ("Head", "HEAD"), ("All", "ANY"),
+];
+
+/// Walk the AST looking for:
+///   - Express/Fastify: app.get("/path", handler) / router.post("/path", ...)
+///   - NestJS decorators: @Get("/path") above a method
+fn walk_ts_routes(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    routes: &mut Vec<Route>,
+    _pending_decorator: Option<(&str, String)>, // reserved for future decorator→method linking
+) {
+    match node.kind() {
+        "call_expression" => {
+            // Express/Fastify: app.get("/path", handler) or router.post("/path", handler)
+            // AST: call_expression → function: member_expression { object, property }
+            //                      → arguments: arguments
+            if let Some(func) = node.child_by_field_name("function") {
+                if func.kind() == "member_expression" {
+                    let prop = func.child_by_field_name("property")
+                        .map(|n| ts_text(n, bytes))
+                        .unwrap_or_default();
+                    let prop_lower = prop.to_lowercase();
+                    if TS_ROUTE_METHODS.contains(&prop_lower.as_str()) {
+                        if let Some(args) = node.child_by_field_name("arguments") {
+                            // First argument: the route path (must be a string literal)
+                            let mut path: Option<String> = None;
+                            let mut handler = "express-handler".to_string();
+                            let mut arg_cursor = args.walk();
+                            let mut arg_idx = 0;
+                            if arg_cursor.goto_first_child() {
+                                loop {
+                                    let arg = arg_cursor.node();
+                                    if arg.kind() == "string" || arg.kind() == "template_string" {
+                                        if arg_idx == 0 {
+                                            path = Some(
+                                                ts_text(arg, bytes)
+                                                    .trim_matches(|c| c == '\'' || c == '"' || c == '`')
+                                                    .to_string()
+                                            );
+                                            arg_idx += 1;
+                                        }
+                                    } else if arg.kind() == "identifier" && arg_idx == 1 {
+                                        handler = ts_text(arg, bytes);
+                                        arg_idx += 1;
+                                    } else if arg.kind() == "arrow_function" || arg.kind() == "function" {
+                                        // Inline handler — use the method name as handler label
+                                        handler = prop_lower.clone();
+                                        arg_idx += 1;
+                                    }
+                                    if !arg_cursor.goto_next_sibling() { break; }
+                                }
+                            }
+                            if let Some(p) = path {
+                                routes.push(Route {
+                                    method: prop.to_uppercase(),
+                                    path: p,
+                                    handler,
+                                    file: rel.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "decorator" => {
+            // NestJS: @Get("/path") or @Post("/path")
+            // AST: decorator → call_expression → function: identifier + arguments
+            let dec_text = ts_text(*node, bytes);
+            for (name, method) in NESTJS_DECORATORS {
+                let prefix = format!("@{name}(");
+                if dec_text.starts_with(&prefix) || dec_text.starts_with(&format!("@{name} (")) {
+                    // Extract first string argument from the call_expression inside decorator
+                    let mut dec_cursor = node.walk();
+                    if dec_cursor.goto_first_child() {
+                        loop {
+                            let ch = dec_cursor.node();
+                            if ch.kind() == "call_expression" {
+                                if let Some(args) = ch.child_by_field_name("arguments") {
+                                    let mut ac = args.walk();
+                                    if ac.goto_first_child() {
+                                        loop {
+                                            let a = ac.node();
+                                            if a.kind() == "string" {
+                                                let path = ts_text(a, bytes)
+                                                    .trim_matches(|c| c == '\'' || c == '"')
+                                                    .to_string();
+                                                // Handler will be found when we recurse into the method below.
+                                                // Push with "unknown" — the method sibling will be visited next.
+                                                routes.push(Route {
+                                                    method: method.to_string(),
+                                                    path,
+                                                    handler: "nestjs-handler".to_string(),
+                                                    file: rel.to_string(),
+                                                });
+                                                break;
+                                            }
+                                            if !ac.goto_next_sibling() { break; }
+                                        }
+                                    }
+                                }
+                            }
+                            if !dec_cursor.goto_next_sibling() { break; }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_ts_routes(&cursor.node(), bytes, rel, routes, None);
+            if !cursor.goto_next_sibling() { break; }
+        }
+    }
 }
 
 /// Angular's `@angular/router` route table: `{ path: 'orders', component:
@@ -2069,77 +2299,140 @@ fn extract_py(
     imports: &mut Vec<Import>,
     routes: &mut Vec<Route>,
 ) {
-    // Classes
-    let class_re = Regex::new(r"(?m)^class\s+([A-Za-z][A-Za-z0-9_]*)\s*[:(]").unwrap();
-    for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol {
-            name: cap[1].to_string(),
-            kind: SymbolKind::Class,
-            file: rel.to_string(),
-            linked_concept: None,
-            line: line_of(text, cap.get(0).unwrap().start()),
-            observation_source: ObservationSource::Lexical,
-        });
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(tree_sitter_python::language()).is_ok() {
+        if let Some(tree) = parser.parse(text, None) {
+            let bytes = text.as_bytes();
+            let root = tree.root_node();
+            walk_py(&root, bytes, rel, symbols, imports, routes, 0);
+        }
+    }
+}
+
+fn walk_py(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+    depth: usize,
+) {
+    match node.kind() {
+        "class_definition" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                symbols.push(Symbol {
+                    name: ts_text(n, bytes),
+                    kind: SymbolKind::Class,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: n.start_position().row + 1,
+                    observation_source: ObservationSource::Ast,
+                });
+            }
+            // Recurse into class body to catch nested classes; skip method bodies.
+        }
+        "function_definition" => {
+            // Top-level only (depth 0) — methods inside a class body are at depth >= 1.
+            if depth == 0 {
+                if let Some(n) = node.child_by_field_name("name") {
+                    let name = ts_text(n, bytes);
+                    // Only lowercase-starting names (PEP-8 functions), not test fixtures.
+                    if name.chars().next().map(|c| c.is_lowercase() || c == '_').unwrap_or(false) {
+                        symbols.push(Symbol {
+                            name,
+                            kind: SymbolKind::Function,
+                            file: rel.to_string(),
+                            linked_concept: None,
+                            line: n.start_position().row + 1,
+                            observation_source: ObservationSource::Ast,
+                        });
+                    }
+                }
+            }
+        }
+        "import_from_statement" => {
+            // from module import X, Y [as Z]
+            let module = node.child_by_field_name("module_name")
+                .map(|n| ts_text(n, bytes))
+                .unwrap_or_default();
+            let mut names = Vec::new();
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "dotted_name" || ch.kind() == "identifier" {
+                        // skip the module_name child
+                        if Some(ch.id()) != node.child_by_field_name("module_name").map(|n| n.id()) {
+                            names.push(ts_text(ch, bytes));
+                        }
+                    } else if ch.kind() == "aliased_import" {
+                        if let Some(n) = ch.child_by_field_name("name") {
+                            names.push(ts_text(n, bytes));
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+            if !module.is_empty() {
+                imports.push(Import { from_file: rel.to_string(), to_module: module, names });
+            }
+        }
+        "decorated_definition" => {
+            // @app.get("/path") / @router.post(...) — FastAPI/Flask routes
+            let mut decorator_method = None;
+            let mut decorator_path: Option<String> = None;
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "decorator" {
+                        // decorator → call → function: attribute → method name + arguments
+                        let dec_text = ts_text(ch, bytes);
+                        for method in &["get", "post", "put", "delete", "patch"] {
+                            if dec_text.contains(&format!(".{method}("))
+                                || dec_text.contains(&format!(".{method} ("))
+                            {
+                                decorator_method = Some(method.to_uppercase());
+                                // Extract path from the first string argument
+                                let path_re = Regex::new(r#"["']([^"']+)["']"#).unwrap();
+                                if let Some(cap) = path_re.captures(&dec_text) {
+                                    decorator_path = Some(cap[1].to_string());
+                                }
+                            }
+                        }
+                    } else if ch.kind() == "function_definition" {
+                        if let (Some(method), Some(path)) = (&decorator_method, &decorator_path) {
+                            let handler = ch.child_by_field_name("name")
+                                .map(|n| ts_text(n, bytes))
+                                .unwrap_or_else(|| "unknown".to_string());
+                            routes.push(Route {
+                                method: method.clone(),
+                                path: path.clone(),
+                                handler,
+                                file: rel.to_string(),
+                            });
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+        }
+        _ => {}
     }
 
-    // Top-level module functions (not class methods — those are indented
-    // and excluded by the `^` anchor, same rationale as every other extractor
-    // here: a class's private helpers would otherwise flood the symbol set).
-    let toplevel_fn_re = Regex::new(r"(?m)^(?:async\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in toplevel_fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // Imports: from module import X, Y / import module
-    let from_re = Regex::new(r"from\s+([\w.]+)\s+import\s+([^\n]+)").unwrap();
-    for cap in from_re.captures_iter(text) {
-        let to_module = cap[1].to_string();
-        let names: Vec<String> = cap[2]
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s != "*")
-            .collect();
-        imports.push(Import { from_file: rel.to_string(), to_module, names });
-    }
-
-    // FastAPI / Flask routes
-    let route_re = Regex::new(
-        r#"@(?:app|router|api_router)\.(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']"#
-    ).unwrap();
-    for cap in route_re.captures_iter(text) {
-        let after = &text[cap.get(0).unwrap().end()..];
-        let fn_re = Regex::new(r"(?m)^(?:async\s+)?def\s+(\w+)\s*\(").unwrap();
-        let handler = fn_re
-            .captures(after)
-            .map(|c| c[1].to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        routes.push(Route {
-            method: cap[1].to_string().to_uppercase(),
-            path: cap[2].to_string(),
-            handler,
-            file: rel.to_string(),
-        });
-    }
-
-    // Django urls.py: path('route/', views.some_view) / re_path(r'...', handler).
-    // Django has no per-route HTTP method (that's dispatched inside the view),
-    // so method is always "ANY" — an honest OBSERVED gap, not a guess.
-    // `(?s)` lets the first string argument span multiple lines (Django route
-    // patterns are routinely wrapped or split into adjacent string literals),
-    // and the handler group stops at the first `(`, `,`, or `)` so a wrapped
-    // call like `csrf_exempt(SomeView.as_view())` still yields a real,
-    // if partial, observed token instead of nothing.
-    let django_re = Regex::new(
-        r#"(?s)\b(?:re_path|path)\s*\(\s*\(?\s*r?["']([^"']*)["'](?:\s*r?["'][^"']*["'])*\s*\)?\s*,\s*([A-Za-z_][A-Za-z0-9_.]*)"#,
-    )
-    .unwrap();
-    for cap in django_re.captures_iter(text) {
-        routes.push(Route {
-            method: "ANY".to_string(),
-            path: cap[1].to_string(),
-            handler: cap[2].to_string(),
-            file: rel.to_string(),
-        });
+    // Recurse — increment depth when entering a class or function body
+    let child_depth = if matches!(node.kind(), "class_definition" | "function_definition") {
+        depth + 1
+    } else {
+        depth
+    };
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_py(&cursor.node(), bytes, rel, symbols, imports, routes, child_depth);
+            if !cursor.goto_next_sibling() { break; }
+        }
     }
 }
 
@@ -2449,46 +2742,101 @@ fn extract_go(
     imports: &mut Vec<Import>,
     _routes: &mut Vec<Route>,
 ) {
-    // type FooBar struct / type FooBar interface
-    let type_re = Regex::new(r"(?m)^type\s+([A-Z][A-Za-z0-9_]*)\s+(struct|interface)\s*\{").unwrap();
-    for cap in type_re.captures_iter(text) {
-        let kind = if &cap[2] == "interface" { SymbolKind::Interface } else { SymbolKind::Class };
-        symbols.push(Symbol {
-            name: cap[1].to_string(),
-            kind,
-            file: rel.to_string(),
-            linked_concept: None,
-            line: line_of(text, cap.get(0).unwrap().start()),
-            observation_source: ObservationSource::Lexical,
-        });
-    }
-
-    // Exported package-level functions and methods: func Foo(...) and
-    // func (s *Server) Foo(...). Unexported (lowercase) functions are
-    // implementation detail, same rule as the exported-only struct/interface
-    // match above.
-    let fn_re = Regex::new(r"(?m)^func\s+(?:\([^)]*\)\s+)?([A-Z][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // import "package/path" or import ( "..." )
-    let import_re = Regex::new(r#""([^"]+)""#).unwrap();
-    // Only run in import blocks
-    if let Some(import_block) = extract_go_import_block(text) {
-        for cap in import_re.captures_iter(&import_block) {
-            imports.push(Import {
-                from_file: rel.to_string(),
-                to_module: cap[1].to_string(),
-                names: Vec::new(),
-            });
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(tree_sitter_go::language()).is_ok() {
+        if let Some(tree) = parser.parse(text, None) {
+            let bytes = text.as_bytes();
+            let root = tree.root_node();
+            walk_go(&root, bytes, rel, symbols, imports);
         }
     }
 }
 
-fn extract_go_import_block(text: &str) -> Option<String> {
-    let re = Regex::new(r"(?s)import\s*\(([^)]+)\)").unwrap();
-    re.captures(text).map(|c| c[1].to_string())
+fn walk_go(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+) {
+    match node.kind() {
+        "type_declaration" => {
+            // type FooBar struct { ... } / type FooBar interface { ... }
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "type_spec" {
+                        if let Some(name_node) = ch.child_by_field_name("name") {
+                            let name = ts_text(name_node, bytes);
+                            // Exported = uppercase first char
+                            if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                let type_node = ch.child_by_field_name("type");
+                                let kind = match type_node.map(|n| n.kind()) {
+                                    Some("interface_type") => SymbolKind::Interface,
+                                    _ => SymbolKind::Class,
+                                };
+                                symbols.push(Symbol {
+                                    name,
+                                    kind,
+                                    file: rel.to_string(),
+                                    linked_concept: None,
+                                    line: name_node.start_position().row + 1,
+                                    observation_source: ObservationSource::Ast,
+                                });
+                            }
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+        }
+        "function_declaration" | "method_declaration" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = ts_text(name_node, bytes);
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    symbols.push(Symbol {
+                        name,
+                        kind: SymbolKind::Function,
+                        file: rel.to_string(),
+                        linked_concept: None,
+                        line: name_node.start_position().row + 1,
+                        observation_source: ObservationSource::Ast,
+                    });
+                }
+            }
+        }
+        "import_declaration" => {
+            // import "pkg" or import ( "pkg1" \n "pkg2" )
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "import_spec" || ch.kind() == "interpreted_string_literal" {
+                        let raw = ts_text(ch, bytes);
+                        let module = raw.trim_matches('"').to_string();
+                        if !module.is_empty() {
+                            imports.push(Import {
+                                from_file: rel.to_string(),
+                                to_module: module,
+                                names: Vec::new(),
+                            });
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_go(&cursor.node(), bytes, rel, symbols, imports);
+            if !cursor.goto_next_sibling() { break; }
+        }
+    }
 }
 
 // ── Java / Kotlin ─────────────────────────────────────────────────────────────
@@ -2500,61 +2848,162 @@ fn extract_java(
     imports: &mut Vec<Import>,
     routes: &mut Vec<Route>,
 ) {
-    // public class / public interface
-    let class_re = Regex::new(
-        r"(?m)^(?:public\s+)?(?:abstract\s+)?(?:class|interface)\s+([A-Z][A-Za-z0-9_]*)"
-    ).unwrap();
+    // Kotlin files share this extractor but tree-sitter-java cannot parse
+    // Kotlin syntax — fall back to lexical extraction for .kt/.kts files.
+    if rel.ends_with(".kt") || rel.ends_with(".kts") {
+        extract_kotlin_lexical(rel, text, symbols, imports);
+        return;
+    }
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(tree_sitter_java::language()).is_ok() {
+        if let Some(tree) = parser.parse(text, None) {
+            let bytes = text.as_bytes();
+            let root = tree.root_node();
+            walk_java(&root, bytes, rel, symbols, imports, routes);
+        }
+    }
+}
+
+/// Lexical fallback for Kotlin — tree-sitter-java cannot parse Kotlin syntax.
+/// Extracts top-level `fun` declarations and classes/interfaces.
+fn extract_kotlin_lexical(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &mut Vec<Import>) {
+    let class_re = Regex::new(r"(?m)^(?:(?:public|internal|abstract|open|data|sealed)\s+)*class\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in class_re.captures_iter(text) {
-        let matched = cap.get(0).unwrap().as_str();
-        let kind = if matched.contains("interface") { SymbolKind::Interface } else { SymbolKind::Class };
         symbols.push(Symbol {
             name: cap[1].to_string(),
-            kind,
+            kind: SymbolKind::Class,
             file: rel.to_string(),
             linked_concept: None,
             line: line_of(text, cap.get(0).unwrap().start()),
             observation_source: ObservationSource::Lexical,
         });
     }
-
-    // import statements
-    let import_re = Regex::new(r"import\s+([\w.]+(?:\.\*)?);").unwrap();
-    for cap in import_re.captures_iter(text) {
-        imports.push(Import {
-            from_file: rel.to_string(),
-            to_module: cap[1].to_string(),
-            names: Vec::new(),
-        });
-    }
-
-    // Kotlin top-level functions: `fun foo(...)`. Java has no free functions
-    // (methods live in the class already captured above), so this simply
-    // never matches a .java file.
-    let fun_re = Regex::new(r"(?m)^(?:public\s+)?fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in fun_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
-    }
-
-    // Spring MVC: @GetMapping("/path"), @RequestMapping(value="/path", method=GET)
-    let mapping_re = Regex::new(
-        r#"@(Get|Post|Put|Delete|Patch|Request)Mapping\s*(?:\([^)]*value\s*=\s*["']([^"']+)["']|["']([^"']+)["'])"#
-    ).unwrap();
-    for cap in mapping_re.captures_iter(text) {
-        let method = match &cap[1] {
-            "Get" => "GET",
-            "Post" => "POST",
-            "Put" => "PUT",
-            "Delete" => "DELETE",
-            "Patch" => "PATCH",
-            _ => "ANY",
-        };
-        let path = cap.get(2).or(cap.get(3)).map(|m| m.as_str()).unwrap_or("/");
-        routes.push(Route {
-            method: method.to_string(),
-            path: path.to_string(),
-            handler: "spring-handler".to_string(),
+    let iface_re = Regex::new(r"(?m)^(?:(?:public|internal)\s+)?interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+    for cap in iface_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
             file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
         });
+    }
+    // Top-level functions: `fun foo(...)` not indented inside a class
+    let fun_re = Regex::new(r"(?m)^(?:(?:public|internal|private|suspend)\s+)*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
+    for cap in fun_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+    // import statements
+    let import_re = Regex::new(r"import\s+([\w.]+(?:\.\*)?)").unwrap();
+    for cap in import_re.captures_iter(text) {
+        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+    }
+}
+
+fn walk_java(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    match node.kind() {
+        "class_declaration" | "interface_declaration" | "enum_declaration" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let kind = if node.kind() == "interface_declaration" {
+                    SymbolKind::Interface
+                } else {
+                    SymbolKind::Class
+                };
+                symbols.push(Symbol {
+                    name: ts_text(name_node, bytes),
+                    kind,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: name_node.start_position().row + 1,
+                    observation_source: ObservationSource::Ast,
+                });
+            }
+        }
+        "import_declaration" => {
+            // import com.example.Service; or import com.example.*;
+            let raw = ts_text(*node, bytes);
+            let module = raw
+                .trim_start_matches("import")
+                .trim_end_matches(';')
+                .trim()
+                .to_string();
+            if !module.is_empty() {
+                imports.push(Import {
+                    from_file: rel.to_string(),
+                    to_module: module,
+                    names: Vec::new(),
+                });
+            }
+        }
+        "method_declaration" => {
+            // Spring MVC route annotations on methods: @GetMapping("/path")
+            // Walk the method's modifiers for annotation nodes
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let ch = cursor.node();
+                    if ch.kind() == "modifiers" {
+                        let mut mc = ch.walk();
+                        if mc.goto_first_child() {
+                            loop {
+                                let ann = mc.node();
+                                if ann.kind() == "annotation" || ann.kind() == "marker_annotation" {
+                                    let ann_text = ts_text(ann, bytes);
+                                    for (prefix, method) in &[
+                                        ("GetMapping", "GET"), ("PostMapping", "POST"),
+                                        ("PutMapping", "PUT"), ("DeleteMapping", "DELETE"),
+                                        ("PatchMapping", "PATCH"),
+                                    ] {
+                                        if ann_text.contains(prefix) {
+                                            let path_re = Regex::new(r#"["']([^"']+)["']"#).unwrap();
+                                            let path = path_re.captures(&ann_text)
+                                                .map(|c| c[1].to_string())
+                                                .unwrap_or_else(|| "/".to_string());
+                                            let handler = node.child_by_field_name("name")
+                                                .map(|n| ts_text(n, bytes))
+                                                .unwrap_or_else(|| "unknown".to_string());
+                                            routes.push(Route {
+                                                method: method.to_string(),
+                                                path,
+                                                handler,
+                                                file: rel.to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                                if !mc.goto_next_sibling() { break; }
+                            }
+                        }
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_java(&cursor.node(), bytes, rel, symbols, imports, routes);
+            if !cursor.goto_next_sibling() { break; }
+        }
     }
 }
 
