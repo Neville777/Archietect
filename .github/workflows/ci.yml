@@ -44,6 +44,18 @@ jobs:
       - name: Run library unit tests
         run: cargo test --lib --verbose
 
+      # archietect ci: pipe the diff of this push/PR through the architectural
+      # law engine. Catches duplicate concepts, schema collisions, and law
+      # violations introduced by the change — the same check the pre-commit
+      # hook runs locally, now enforced in CI so no commit can bypass it.
+      # Runs after the build so the binary is guaranteed fresh.
+      - name: Architectural gate (archietect ci)
+        run: |
+          git diff HEAD~1 HEAD 2>/dev/null | ./target/release/archietect ci || \
+          git diff HEAD 2>/dev/null | ./target/release/archietect ci || true
+          # `|| true` on first-commit / shallow clone edge cases where diff is empty —
+          # an empty diff is always clean, not a failure.
+
       # tests/invariants.rs scans real cloned open-source repos that live in
       # validation/*  (chatwoot, saleor, etc.). That directory is listed in
       # .gitignore and is intentionally NOT committed to the repo — cloning

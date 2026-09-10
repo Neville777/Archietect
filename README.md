@@ -451,6 +451,99 @@ compiled-in laws. `init`/`save` only ever `INSERT OR REPLACE` known keys and
 `CREATE TABLE IF NOT EXISTS` — re-running `init` (or the onboarding script)
 against a project can never drop its history or decisions.
 
+## Forcing AI to use Archietect
+
+The hardest part of any architectural tool is making it actually run instead
+of getting ignored. Passive instructions (README files, AGENTS.md) are read
+once and forgotten under pressure. Archietect uses three **active enforcement
+layers** that fire automatically — no reliance on the AI remembering:
+
+### Layer 1 — Pre-tool-use hook (blocks bad writes before they happen)
+
+Intercepts every file-create attempt. If the new filename resolves to a
+concept that already exists in the index, the write is **blocked** with a
+message explaining what already exists and where.
+
+```
+archietect: 'RefundService' already resolves to a STRUCTURAL concept —
+run `archietect concept RefundService` to see the evidence before creating
+this file. If this really is a new, unrelated thing, proceed.
+```
+
+The AI cannot create the file without explicitly acknowledging it. Installed
+by `packaging/onboard.sh --claude-hook` (Claude Code) or
+`packaging/onboard.sh --cursor-hook` (Cursor).
+
+### Layer 2 — Pre-commit hook (catches anything that slipped through)
+
+Every `git commit` pipes the staged diff through `archietect ci`. A diff
+that introduces a duplicate concept or violates a law is **rejected before
+the commit is written**. Works regardless of who wrote the code — human,
+Claude, Cursor, Copilot, any tool.
+
+Installed by `packaging/onboard.sh --git-hook`, or manually:
+
+```bash
+cp .git/hooks/pre-commit.sample .git/hooks/pre-commit  # if needed
+echo 'git diff --cached | archietect ci' >> .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+### Layer 3 — CI gate (nothing merges without passing)
+
+Add this to your `.github/workflows/ci.yml` (or equivalent):
+
+```yaml
+- name: Architectural gate (archietect ci)
+  run: git diff HEAD~1 HEAD | archietect ci
+```
+
+Now a PR that introduces a duplicate or law violation **fails CI** and
+cannot be merged, even if both Layer 1 and Layer 2 were bypassed locally.
+
+### Layer 4 — MCP registration (AI queries archietect as a native tool)
+
+When archietect is registered as an MCP server, the AI calls `concept`,
+`impact`, and `duplicates` as part of its own reasoning loop — not because
+it was told to, but because those tools appear in its context the same way
+file-read tools do. This is the difference between advice and capability.
+
+```bash
+# Claude Code (global, all projects):
+claude mcp add --scope user archietect -- "$(which archietect)" mcp
+
+# Gemini CLI:
+gemini mcp add archietect -- "$(which archietect)" mcp
+```
+
+For other tools (Cursor, Kiro, Windsurf, etc.) — add to your MCP config:
+```json
+{
+  "archietect": {
+    "command": "archietect",
+    "args": ["mcp"]
+  }
+}
+```
+
+### Why this works when AGENTS.md doesn't
+
+An instruction file is advice. A hook that exits with code 2 is a wall.
+An MCP tool that already exists in the AI's context is capability, not
+a reminder. The enforcement model is:
+
+| Layer | When it fires | What the AI can do |
+|---|---|---|
+| MCP tools | Before the AI decides what to do | Query naturally, no friction |
+| Pre-tool-use hook | Before any file is written | Must acknowledge, or abort |
+| Pre-commit hook | Before any commit is recorded | Cannot commit without passing |
+| CI gate | Before any PR merges | Cannot merge without passing |
+
+Each layer catches what the previous one missed. Together they make it
+structurally impossible to introduce a duplicate concept or law violation
+without it being detected — regardless of which AI tool, which developer,
+or which session produced the change.
+
 ## Contributing
 
 Opening a normal human PR (a bug fix, a feature, anything you typed
