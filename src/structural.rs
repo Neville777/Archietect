@@ -2211,7 +2211,11 @@ fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
     if parser.set_language(lang).is_ok() {
         if let Some(tree) = parser.parse(text, None) {
             let bytes = text.as_bytes();
-            walk_ts_routes(&tree.root_node(), bytes, rel, routes, None);
+            // Pass 1: collect string constants (const API_PREFIX = "/v1")
+            let mut string_consts: BTreeMap<String, String> = BTreeMap::new();
+            collect_string_consts(&tree.root_node(), bytes, &mut string_consts);
+            // Pass 2: walk for route declarations, resolving known constants
+            walk_ts_routes(&tree.root_node(), bytes, rel, routes, &string_consts, None);
         }
     }
 
@@ -2221,6 +2225,94 @@ fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
     nuxt_server_api_route(rel, routes);
     graphql_tagged_template_operations(rel, text, routes);
     angular_routes(rel, text, routes);
+}
+
+/// Collect top-level `const NAME = "/string"` declarations for route prefix resolution.
+fn collect_string_consts(node: &tree_sitter::Node, bytes: &[u8], out: &mut BTreeMap<String, String>) {
+    if node.kind() == "lexical_declaration" || node.kind() == "variable_declaration" {
+        let mut c = node.walk();
+        if c.goto_first_child() {
+            loop {
+                let ch = c.node();
+                if ch.kind() == "variable_declarator" {
+                    if let (Some(name_n), Some(val_n)) = (
+                        ch.child_by_field_name("name"),
+                        ch.child_by_field_name("value"),
+                    ) {
+                        if matches!(val_n.kind(), "string" | "template_string") {
+                            let name = ts_text(name_n, bytes);
+                            let val = ts_text(val_n, bytes)
+                                .trim_matches(|c| c == '\'' || c == '"' || c == '`')
+                                .to_string();
+                            if !name.is_empty() && !val.is_empty() {
+                                out.insert(name, val);
+                            }
+                        }
+                    }
+                }
+                if !c.goto_next_sibling() { break; }
+            }
+        }
+    }
+    let mut c = node.walk();
+    if c.goto_first_child() {
+        loop {
+            collect_string_consts(&c.node(), bytes, out);
+            if !c.goto_next_sibling() { break; }
+        }
+    }
+}
+
+/// Resolve a route path argument node to a string, substituting known constants.
+/// Handles: string literals, template literals with `${VAR}` substitution.
+fn resolve_route_path(node: &tree_sitter::Node, bytes: &[u8], consts: &BTreeMap<String, String>) -> Option<String> {
+    match node.kind() {
+        "string" => {
+            let raw = ts_text(*node, bytes);
+            Some(raw.trim_matches(|c| c == '\'' || c == '"').to_string())
+        }
+        "template_string" => {
+            // Walk template parts, substituting ${IDENTIFIER} with known const values
+            let raw = ts_text(*node, bytes);
+            // Simple substitution: replace ${VAR} with known const
+            let mut result = raw.trim_matches('`').to_string();
+            let sub_re = Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+            let mut any_unresolved = false;
+            let resolved = sub_re.replace_all(&result, |caps: &regex::Captures| {
+                let var_name = &caps[1];
+                if let Some(val) = consts.get(var_name) {
+                    val.clone()
+                } else {
+                    any_unresolved = true;
+                    format!("${{{var_name}}}") // keep unresolved as-is
+                }
+            });
+            result = resolved.to_string();
+            // Only return if meaningful (contains at least a slash)
+            if result.contains('/') { Some(result) } else { None }
+        }
+        "identifier" => {
+            // Plain const reference: path = API_PREFIX
+            consts.get(&ts_text(*node, bytes)).cloned()
+        }
+        "binary_expression" => {
+            // String concatenation: PREFIX + "/users"
+            let left = node.child_by_field_name("left");
+            let right = node.child_by_field_name("right");
+            let op = node.children(&mut node.walk())
+                .find(|n| n.kind() == "+")
+                .map(|_| "+");
+            if op.is_some() {
+                if let (Some(l), Some(r)) = (left, right) {
+                    let lv = resolve_route_path(&l, bytes, consts)?;
+                    let rv = resolve_route_path(&r, bytes, consts)?;
+                    return Some(format!("{lv}{rv}"));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 const TS_ROUTE_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "options", "head", "all"];
@@ -2237,6 +2329,7 @@ fn walk_ts_routes(
     bytes: &[u8],
     rel: &str,
     routes: &mut Vec<Route>,
+    consts: &BTreeMap<String, String>,
     _pending_decorator: Option<(&str, String)>, // reserved for future decorator→method linking
 ) {
     match node.kind() {
@@ -2252,7 +2345,7 @@ fn walk_ts_routes(
                     let prop_lower = prop.to_lowercase();
                     if TS_ROUTE_METHODS.contains(&prop_lower.as_str()) {
                         if let Some(args) = node.child_by_field_name("arguments") {
-                            // First argument: the route path (must be a string literal)
+                            // First argument: the route path — string, template, identifier, or concatenation
                             let mut path: Option<String> = None;
                             let mut handler = "express-handler".to_string();
                             let mut arg_cursor = args.walk();
@@ -2260,21 +2353,19 @@ fn walk_ts_routes(
                             if arg_cursor.goto_first_child() {
                                 loop {
                                     let arg = arg_cursor.node();
-                                    if arg.kind() == "string" || arg.kind() == "template_string" {
-                                        if arg_idx == 0 {
-                                            path = Some(
-                                                ts_text(arg, bytes)
-                                                    .trim_matches(|c| c == '\'' || c == '"' || c == '`')
-                                                    .to_string()
-                                            );
+                                    if arg_idx == 0 {
+                                        if let Some(p) = resolve_route_path(&arg, bytes, consts) {
+                                            path = Some(p);
                                             arg_idx += 1;
+                                        } else if !matches!(arg.kind(), "," | "(" | ")") {
+                                            arg_idx += 1; // skip non-string first arg
                                         }
-                                    } else if arg.kind() == "identifier" && arg_idx == 1 {
-                                        handler = ts_text(arg, bytes);
-                                        arg_idx += 1;
-                                    } else if arg.kind() == "arrow_function" || arg.kind() == "function" {
-                                        // Inline handler — use the method name as handler label
-                                        handler = prop_lower.clone();
+                                    } else if arg_idx == 1 {
+                                        if arg.kind() == "identifier" {
+                                            handler = ts_text(arg, bytes);
+                                        } else if matches!(arg.kind(), "arrow_function" | "function") {
+                                            handler = prop_lower.clone();
+                                        }
                                         arg_idx += 1;
                                     }
                                     if !arg_cursor.goto_next_sibling() { break; }
@@ -2300,7 +2391,6 @@ fn walk_ts_routes(
             for (name, method) in NESTJS_DECORATORS {
                 let prefix = format!("@{name}(");
                 if dec_text.starts_with(&prefix) || dec_text.starts_with(&format!("@{name} (")) {
-                    // Extract first string argument from the call_expression inside decorator
                     let mut dec_cursor = node.walk();
                     if dec_cursor.goto_first_child() {
                         loop {
@@ -2311,12 +2401,7 @@ fn walk_ts_routes(
                                     if ac.goto_first_child() {
                                         loop {
                                             let a = ac.node();
-                                            if a.kind() == "string" {
-                                                let path = ts_text(a, bytes)
-                                                    .trim_matches(|c| c == '\'' || c == '"')
-                                                    .to_string();
-                                                // Handler will be found when we recurse into the method below.
-                                                // Push with "unknown" — the method sibling will be visited next.
+                                            if let Some(path) = resolve_route_path(&a, bytes, consts) {
                                                 routes.push(Route {
                                                     method: method.to_string(),
                                                     path,
@@ -2342,7 +2427,7 @@ fn walk_ts_routes(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            walk_ts_routes(&cursor.node(), bytes, rel, routes, None);
+            walk_ts_routes(&cursor.node(), bytes, rel, routes, consts, None);
             if !cursor.goto_next_sibling() { break; }
         }
     }
@@ -2709,18 +2794,47 @@ fn walk_py(
                 loop {
                     let ch = cursor.node();
                     if ch.kind() == "decorator" {
-                        // decorator → call → function: attribute → method name + arguments
-                        let dec_text = ts_text(ch, bytes);
-                        for method in &["get", "post", "put", "delete", "patch"] {
-                            if dec_text.contains(&format!(".{method}("))
-                                || dec_text.contains(&format!(".{method} ("))
-                            {
-                                decorator_method = Some(method.to_uppercase());
-                                // Extract path from the first string argument
-                                let path_re = Regex::new(r#"["']([^"']+)["']"#).unwrap();
-                                if let Some(cap) = path_re.captures(&dec_text) {
-                                    decorator_path = Some(cap[1].to_string());
+                        // Walk the decorator AST: decorator → call → attribute (method) + arguments
+                        let mut dc = ch.walk();
+                        if dc.goto_first_child() {
+                            loop {
+                                let inner = dc.node();
+                                if inner.kind() == "call" {
+                                    // Extract method from function: attribute node
+                                    if let Some(func) = inner.child_by_field_name("function") {
+                                        if func.kind() == "attribute" {
+                                            let attr = func.child_by_field_name("attribute")
+                                                .map(|n| ts_text(n, bytes))
+                                                .unwrap_or_default();
+                                            let attr_lower = attr.to_lowercase();
+                                            if matches!(attr_lower.as_str(), "get" | "post" | "put" | "delete" | "patch") {
+                                                decorator_method = Some(attr_lower.to_uppercase());
+                                            }
+                                        }
+                                    }
+                                    // Extract first string argument as path
+                                    if let Some(args) = inner.child_by_field_name("arguments") {
+                                        let mut ac = args.walk();
+                                        if ac.goto_first_child() {
+                                            loop {
+                                                let a = ac.node();
+                                                if a.kind() == "string" {
+                                                    // Strip quotes from Python string
+                                                    let raw = ts_text(a, bytes);
+                                                    let path = raw.trim_matches(|c| c == '"' || c == '\'')
+                                                        .trim_matches(|c| c == '"' || c == '\'')
+                                                        .to_string();
+                                                    if !path.is_empty() {
+                                                        decorator_path = Some(path);
+                                                        break;
+                                                    }
+                                                }
+                                                if !ac.goto_next_sibling() { break; }
+                                            }
+                                        }
+                                    }
                                 }
+                                if !dc.goto_next_sibling() { break; }
                             }
                         }
                     } else if ch.kind() == "function_definition" {
