@@ -146,6 +146,22 @@ never silently guessed past). That's the entire trust model.
 **Tech stack:** Rust, SQLite (`rusqlite`, bundled — no external DB to run),
 regex-based structural/schema extraction, `tiny_http` for REST, stdio for MCP.
 
+**Query latency:** read-only commands (`concept`, `impact`, `claim`, `doctor`, etc.) load the persisted index directly from SQLite — **~55ms** on a 637MB / 30k-file repository. No filesystem scan on every call; `archietect init` or `--refresh` to force a fresh scan.
+
+**Context efficiency:** `archietect doctor` reports a `context_efficiency` block computed from your own index — the median source bytes an agent would read to explore a concept vs the JSON receipt Archietect returns. On real repositories this is consistently **98–99%** discovery payload reduction. Run it yourself to see your number, not ours:
+
+```bash
+archietect doctor | jq '.context_efficiency'
+# {
+#   "median_candidate_files_bytes": 65032,
+#   "median_candidate_files_tokens_est": 16258,
+#   "avg_query_payload_bytes": 782,
+#   "avg_query_tokens_est": 195,
+#   "discovery_payload_reduction": "98.8%",
+#   ...
+# }
+```
+
 **Real, reproducible benchmark:** [archietect vs. Agent Memory Engine](benchmarks/vs-agent-memory-engine/) —
 15/15 vs 5/15 on surfacing a concept's real declaring file, across 3 public
 repos already in `validation/`. Every number is reproducible from a script
@@ -177,11 +193,15 @@ in that directory; limitations are stated there too.
 | GDScript | `class_name` declarations (falling back to the PascalCase filename for a script with none — most GDScript files attach to a node with no explicit `class_name`), top-level functions, signals | — |
 | Godot Scene (`.tscn`) | the scene itself as a component (filename-keyed, same convention as GDScript's own fallback), plus its `ext_resource` dependencies (attached script, composed child scenes) as import edges resolved via Godot's own `res://` project-relative paths — a composed child scene's import also records which specific `[node ... instance=ExtResource(...)]` node(s) instance it | — |
 | Godot Project Config (`project.godot`) | `[autoload]` global singleton registrations — the sole authoritative source of an autoload script's real name, since Godot 4 makes a `class_name` of the same name as an autoload a parse error, so those scripts deliberately have none | — |
+| **Terraform** (`.tf`) | `resource`, `data`, and `module` blocks as named symbols (`aws_s3_bucket.uploads`, `module.vpc`); `${type.name.attr}` interpolation references as import edges | — |
+| **Kubernetes** (`.yaml`/`.yml`) | resources as `Kind.metadata-name` symbols (`Deployment.api-server`, `Secret.db-password`); gated on `apiVersion:` + `kind:` presence so generic YAML is skipped | — |
 
 The **schema layer** additionally recognizes storage declarations directly —
 Prisma, Drizzle, TypeORM, Sequelize/Mongoose, Django, SQLAlchemy,
 pydantic/SQLModel, Rails/ActiveRecord, Eloquent, JPA, GORM, Ecto, and raw
 `CREATE TABLE` from any source.
+
+**Data lineage (dbt):** if a dbt project's compiled `target/manifest.json` (or `dbt/manifest.json`) exists, Archietect ingests it — every model and source becomes a symbol, every `depends_on.nodes` edge becomes an import edge. `archietect impact stg_orders` then surfaces every downstream mart and dashboard that depends on it. No dbt CLI required; reads the already-compiled manifest only. Fails silently when absent (`INSUFFICIENT_COVERAGE`, the honest answer for an uncompiled project). Cross-silo linkage: dbt model symbols carry the table name as their concept link, so `archietect impact User` (a backend ORM model) traces forward into dbt models materializing the same table.
 
 Coverage is reported **per repository**: `archietect status`/`doctor`/`tour`
 list exactly which languages and frameworks were found in *this* codebase,
@@ -369,7 +389,8 @@ Full command reference:
 | `archietect impact --root DIR TERM` | what is affected if `TERM` changes |
 | `archietect owner --root DIR TERM` | which directory owns `TERM`'s declaration |
 | `archietect guard --root DIR "SQL"` | rejects `CREATE TABLE` duplicating a concept |
-| `archietect doctor --root DIR` | repository summary for someone who just cloned it |
+| `archietect claim --root DIR [--type absence\|usage-threshold\|isolation] [--target TERM] [--min N] [--within DIR]` | structured architectural assertion — returns `CONFIRMED`, `REFUTED`, or `UNVERIFIABLE` with evidence |
+| `archietect doctor --root DIR` | repository summary: counts, coverage, top concepts, and a `context_efficiency` block showing measured discovery payload reduction vs raw file reading |
 | `archietect tour --root DIR` | onboarding: what matters, what's ignorable, past mistakes |
 | `archietect duplicates --root DIR` | suspected redundant concepts — risk, not proof |
 | `archietect duplicate-logic --root DIR` | suspected duplicate business logic across files/languages — risk, not proof |
