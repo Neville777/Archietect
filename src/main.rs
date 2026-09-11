@@ -274,9 +274,28 @@ enum Cmd {
     ///   archietect claim "Redis is a dependency"
     ///   archietect claim "User is used in more than 5 files"
     ///   archietect claim "RefundService does not exist"
+    /// Verify a plain-language OR structured claim against the index.
+    /// Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt.
+    ///
+    /// Free-form: archietect claim "RefundService does not exist"
+    /// Structured: archietect claim --type absence --target RefundService
+    ///             archietect claim --type usage-threshold --target Index --min 5
+    ///             archietect claim --type isolation --target Ghost --within ghost-engine
     Claim {
-        /// The claim to verify, as a plain string
+        /// Free-form statement (joined if multiple words)
         statement: Vec<String>,
+        /// Structured claim type: absence | usage-threshold | isolation
+        #[arg(long, value_name = "TYPE")]
+        r#type: Option<String>,
+        /// Target concept name (for structured claims)
+        #[arg(long)]
+        target: Option<String>,
+        /// Minimum observed usage count (for usage-threshold)
+        #[arg(long)]
+        min: Option<usize>,
+        /// Scope restriction: concept must only appear within this directory/domain (for isolation)
+        #[arg(long)]
+        within: Option<String>,
     },
     /// LIVE container state — shells out to `docker compose ps`, unlike
     /// every other command in this binary. Deliberately its own explicit
@@ -597,10 +616,15 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Doctor => { let (idx, g) = index_for(&root); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for(&root); query::tour(&idx, &g) }
-        Cmd::Claim { statement } => {
-            let stmt = statement.join(" ");
+        Cmd::Claim { statement, r#type, target, min, within } => {
             let (idx, g) = index_for(&root);
-            query::claim(&idx, &g, &stmt)
+            // Structured claim takes precedence over free-form statement
+            if let Some(claim_type) = r#type {
+                query::claim_structured(&idx, &g, &claim_type, target.as_deref(), min, within.as_deref())
+            } else {
+                let stmt = statement.join(" ");
+                query::claim(&idx, &g, &stmt)
+            }
         }
         Cmd::Duplicates => { let (idx, _g) = index_for(&root); query::duplicates(&idx) }
         Cmd::DuplicateLogic => { let (_idx, g) = index_for(&root); query::duplicate_logic(&g) }

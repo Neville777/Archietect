@@ -257,11 +257,15 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "claim",
-            "description": "Verify a plain-language claim against the index. Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt. This is the inverse of concept(): instead of 'what is X?' it answers 'is this statement true, and how do you know?' Handles existence claims ('X exists'), negation ('X does not exist'), and usage-count claims ('X is used in more than N files'). UNVERIFIABLE is returned when coverage gaps prevent a confident answer — never silently treated as REFUTED.",
+            "description": "Verify a plain-language OR structured claim against the index. Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt. Free-form: pass 'statement'. Structured: pass 'type' (absence|usage-threshold|isolation) + 'target' + optional 'min'/'within'. UNVERIFIABLE is returned when coverage gaps prevent a confident answer — never silently treated as REFUTED.",
             "inputSchema": { "type": "object", "properties": {
-                "statement": { "type": "string", "description": "The claim to verify, e.g. 'RefundService does not exist' or 'User is used in more than 5 files'." },
+                "statement": { "type": "string", "description": "Free-form claim, e.g. 'RefundService does not exist' or 'User is used in more than 5 files'." },
+                "type": { "type": "string", "enum": ["absence", "usage-threshold", "isolation"], "description": "Structured claim type. Takes precedence over statement." },
+                "target": { "type": "string", "description": "Concept name for structured claims." },
+                "min": { "type": "number", "description": "Minimum usage count for usage-threshold claims." },
+                "within": { "type": "string", "description": "Directory prefix for isolation claims, e.g. 'ghost-engine'." },
                 "root": root_prop
-            }, "required": ["statement"] }
+            } }
         },
         {
             "name": "status",
@@ -525,7 +529,19 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "guard" => query::guard(&idx, &graph, args["sql"].as_str().unwrap_or("")),
                             "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
                             "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
-                            "claim" => query::claim(&idx, &graph, args["statement"].as_str().unwrap_or("")),
+                            "claim" => {
+                                let claim_type = args.get("type").and_then(|v| v.as_str());
+                                if let Some(ct) = claim_type {
+                                    query::claim_structured(
+                                        &idx, &graph, ct,
+                                        args.get("target").and_then(|v| v.as_str()),
+                                        args.get("min").and_then(|v| v.as_u64()).map(|n| n as usize),
+                                        args.get("within").and_then(|v| v.as_str()),
+                                    )
+                                } else {
+                                    query::claim(&idx, &graph, args["statement"].as_str().unwrap_or(""))
+                                }
+                            },
                             "duplicates" => query::duplicates(&idx),
                             "duplicate_logic" => query::duplicate_logic(&graph),
                             "verdicts" => query::verdicts(&idx),

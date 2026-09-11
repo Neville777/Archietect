@@ -2663,3 +2663,146 @@ pub fn claim(idx: &Index, graph: &StructuralGraph, statement: &str) -> Value {
         "coverage_boundary": "AST declarations and usage across scanned files. Runtime behaviour, production deployments, and cross-service calls via HTTP (beyond route-call matching) are outside the observation boundary.",
     })
 }
+
+/// Structured claim verification — machine-readable alternative to free-form `claim`.
+/// Designed for AI agent tool calls where the assertion type is known ahead of time.
+///
+/// Supported types:
+///   absence          — "target does not exist in the codebase"
+///   usage-threshold  — "target is used in at least --min files"
+///   isolation        — "target is only used within --within directory"
+pub fn claim_structured(
+    idx: &Index,
+    graph: &StructuralGraph,
+    claim_type: &str,
+    target: Option<&str>,
+    min: Option<usize>,
+    within: Option<&str>,
+) -> Value {
+    let target = match target {
+        Some(t) => t,
+        None => return json!({
+            "verdict": "UNVERIFIABLE",
+            "reason": "--target is required for structured claims",
+            "claim_type": claim_type,
+        }),
+    };
+
+    let concept_result = concept(idx, graph, target);
+    let verdict_str = concept_result["verdict"].as_str().unwrap_or("ABSENT");
+    let exists = matches!(verdict_str, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" | "SYMBOL");
+    let insufficient = verdict_str == "INSUFFICIENT_COVERAGE";
+
+    match claim_type {
+        "absence" => {
+            // Claim: target does not exist
+            if insufficient {
+                return json!({
+                    "claim_type": "absence",
+                    "target": target,
+                    "verdict": "UNVERIFIABLE",
+                    "reason": format!("Cannot confirm absence of '{target}' — coverage gaps exist"),
+                    "coverage_boundary": concept_result["confidence"],
+                    "next_action": concept_result["next_action"],
+                });
+            }
+            json!({
+                "claim_type": "absence",
+                "target": target,
+                "verdict": if exists { "REFUTED" } else { "CONFIRMED" },
+                "evidence": if exists { concept_result["evidence"].clone() } else { json!([]) },
+                "found_verdict": verdict_str,
+                "receipt": {
+                    "checked": "AST declarations and usage across all scanned files",
+                    "engine": "tree-sitter-ast",
+                },
+            })
+        }
+
+        "usage-threshold" => {
+            // Claim: target is used in at least N files
+            let threshold = min.unwrap_or(1);
+            let actual = concept_result["used_by_files"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let confirmed = actual >= threshold;
+            json!({
+                "claim_type": "usage-threshold",
+                "target": target,
+                "verdict": if confirmed { "CONFIRMED" } else { "REFUTED" },
+                "threshold": threshold,
+                "found": actual,
+                "used_by_files": concept_result["used_by_files"],
+                "receipt": {
+                    "checked": format!("observed usage count for '{target}'"),
+                    "engine": "tree-sitter-ast",
+                },
+            })
+        }
+
+        "isolation" => {
+            // Claim: target is ONLY used within the --within directory
+            let scope = match within {
+                Some(s) => s,
+                None => return json!({
+                    "verdict": "UNVERIFIABLE",
+                    "reason": "--within is required for isolation claims",
+                    "claim_type": "isolation",
+                }),
+            };
+
+            if insufficient {
+                return json!({
+                    "claim_type": "isolation",
+                    "target": target,
+                    "verdict": "UNVERIFIABLE",
+                    "reason": format!("Cannot verify isolation of '{target}' — coverage gaps exist"),
+                    "coverage_boundary": concept_result["confidence"],
+                });
+            }
+
+            // Check schema usage (ORM calls etc.)
+            let outside_files: Vec<String> = concept_result["used_by_files"]
+                .as_array()
+                .map(|files| {
+                    files.iter()
+                        .filter_map(|f| f.as_str())
+                        .filter(|f| !f.starts_with(scope))
+                        .map(|f| f.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Check structural dependents
+            let structural_outside: Vec<String> = crate::structural::structural_dependents(graph, target, 3)
+                .into_iter()
+                .filter(|d| !d.file.starts_with(scope))
+                .map(|d| d.file)
+                .collect();
+
+            let all_outside: std::collections::BTreeSet<String> = outside_files
+                .into_iter()
+                .chain(structural_outside)
+                .collect();
+
+            json!({
+                "claim_type": "isolation",
+                "target": target,
+                "within": scope,
+                "verdict": if all_outside.is_empty() { "CONFIRMED" } else { "REFUTED" },
+                "violations": all_outside.iter().take(20).collect::<Vec<_>>(),
+                "receipt": {
+                    "checked": format!("all usages of '{target}' outside '{scope}'"),
+                    "engine": "tree-sitter-ast + import-graph",
+                },
+            })
+        }
+
+        other => json!({
+            "verdict": "UNVERIFIABLE",
+            "reason": format!("Unknown claim type '{other}'. Supported: absence, usage-threshold, isolation"),
+            "supported_types": ["absence", "usage-threshold", "isolation"],
+        }),
+    }
+}
