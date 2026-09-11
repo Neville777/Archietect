@@ -1259,10 +1259,166 @@ pub fn extract(
         graph.call_edges.extend(call_edges);
     }
 
+    // ── dbt manifest.json — data lineage as structural symbols + edges ────
+    // Injected here, after the per-file pass, for two reasons:
+    // 1. dbt's manifest.json is a single compiled artifact (target/manifest.json
+    //    or dbt/manifest.json), not a per-file source — there's nothing to
+    //    cache per-file or invalidate per-mtime in the normal sense.
+    // 2. The resulting symbols and imports flow through graph.symbols /
+    //    graph.imports, which means `impact`, `claim --type isolation`, and
+    //    `structural_dependents` all work for dbt models for free — no new
+    //    query logic needed.
+    //
+    // `#[serde(default)]` on StructuralGraph's fields means an old
+    // archietect.db that predates this has no dbt entries — correct, since
+    // that DB was written before dbt support existed. A fresh `archietect init`
+    // (or `--refresh`) on a dbt project will pick them up.
+    ingest_dbt_manifest(root, &mut graph);
+
     graph
 }
 
-/// Read workspace package name → local directory path mappings from root manifests.
+/// Scan dbt's compiled `manifest.json` (written by `dbt compile` or `dbt run`
+/// to `target/manifest.json`, or at `dbt/manifest.json` in some monorepo
+/// layouts) and inject dbt models as `Symbol` nodes and `Import` edges into
+/// the structural graph.
+///
+/// Why `SymbolKind::Class` for a dbt model? It's the closest semantic fit in
+/// the existing vocabulary: a dbt model is a named, declared thing with
+/// dependents — like a class. `SymbolKind::Function` would imply it's called;
+/// `SymbolKind::Route` would imply it's an HTTP endpoint. `Class` is the
+/// correct "named declaration with dependents" kind, same choice `extract_py`
+/// makes for Django models and `extract_graphql` makes for GraphQL types.
+///
+/// Edge direction: a dbt model's `depends_on.nodes` lists its UPSTREAM
+/// dependencies — `stg_orders` depends on `raw_orders`. In archietect's import
+/// model, `from_file` → `to_module` means "from_file uses to_module" (the
+/// importer points to the imported). So `stg_orders` → `raw_orders` is an
+/// Import where from_file = stg_orders's SQL file, to_module = raw_orders's
+/// SQL file. This means `archietect impact raw_orders` correctly surfaces
+/// every downstream model that depends on it — the blast radius flows in the
+/// right direction.
+///
+/// Fails silently: if no manifest exists, or parsing fails, or the manifest
+/// format doesn't match expectations — the graph is simply unchanged. A dbt
+/// project that hasn't been compiled yet (no `target/manifest.json`) will
+/// return INSUFFICIENT_COVERAGE for dbt concepts, which is the honest answer,
+/// not a crash.
+fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
+    // Try the two most common manifest locations.
+    let candidates = [
+        root.join("target").join("manifest.json"),
+        root.join("dbt").join("manifest.json"),
+    ];
+    let manifest_path = candidates.iter().find(|p| p.exists());
+    let manifest_path = match manifest_path {
+        Some(p) => p,
+        None => return,
+    };
+
+    let text = match std::fs::read_to_string(manifest_path) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let manifest: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let nodes = match manifest.get("nodes").and_then(|n| n.as_object()) {
+        Some(n) => n,
+        None => return,
+    };
+
+    // Relative path to the manifest itself — used as the "file" for symbols
+    // that have no original_file_path in the manifest.
+    let manifest_rel = manifest_path
+        .strip_prefix(root)
+        .unwrap_or(manifest_path)
+        .to_string_lossy()
+        .to_string();
+
+    for (node_id, node) in nodes {
+        // Only model and source nodes become symbols — seeds, tests,
+        // snapshots, and analyses are real dbt node types but not the
+        // load-bearing ones blast-radius queries care about.
+        let resource_type = node.get("resource_type").and_then(|r| r.as_str()).unwrap_or("");
+        if !matches!(resource_type, "model" | "source") {
+            continue;
+        }
+
+        // The human-readable model name, not the full node ID
+        // ("model.my_project.stg_users" → "stg_users").
+        let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        // Real file path if the manifest knows it; fall back to the manifest
+        // itself so every symbol has a non-empty file field.
+        let file = node
+            .get("original_file_path")
+            .and_then(|p| p.as_str())
+            .filter(|p| !p.is_empty())
+            .unwrap_or(&manifest_rel)
+            .to_string();
+
+        let sym_key = format!("{}::{}", file, name);
+        graph.symbols.insert(
+            sym_key,
+            Symbol {
+                name: name.clone(),
+                kind: SymbolKind::Class,
+                file: file.clone(),
+                linked_concept: None,
+                line: 1,
+                // dbt's manifest.json is already a compiled, structured
+                // artifact — no regex or AST parse involved, just JSON
+                // deserialization. `Lexical` is the conservative default;
+                // there's no Ast/Lexical distinction that applies to JSON
+                // deserialization, so Lexical is the honest choice here
+                // (it means "not AST-parser-confirmed", which is accurate).
+                observation_source: ObservationSource::Lexical,
+            },
+        );
+
+        // Upstream dependencies → Import edges.
+        // depends_on.nodes is a list of full node IDs like
+        // ["model.my_project.raw_orders", "source.my_project.raw_data.events"]
+        if let Some(deps) = node
+            .get("depends_on")
+            .and_then(|d| d.get("nodes"))
+            .and_then(|n| n.as_array())
+        {
+            for dep in deps {
+                let dep_id = match dep.as_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+                // Resolve the dependency's file path from the manifest if
+                // available — gives `structural_dependents`'s file-based
+                // walk a real path to match against. Fall back to the
+                // node ID itself as a synthetic module path; the engine
+                // will treat it as an unresolvable external module (same as
+                // an npm package import), which is correct — it won't
+                // produce a false edge, just a conservative miss.
+                let to_module = manifest["nodes"]
+                    .get(dep_id)
+                    .and_then(|n| n.get("original_file_path"))
+                    .and_then(|p| p.as_str())
+                    .filter(|p| !p.is_empty())
+                    .unwrap_or(dep_id)
+                    .to_string();
+
+                graph.imports.push(Import {
+                    from_file: file.clone(),
+                    to_module,
+                    names: vec![],
+                });
+            }
+        }
+    }
+}
 /// Handles: npm/pnpm/yarn (package.json workspaces), Cargo (Cargo.toml [workspace]),
 /// and pnpm-workspace.yaml. Returns empty map if no workspace file found.
 ///
