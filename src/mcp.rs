@@ -516,11 +516,34 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             flush_if_due(&mut guard, &root, now);
                         }
                         let prior = cache.remove(&root);
-                        let (schema_prior, graph_prior) = match prior {
-                            Some((s, g)) => (Some(s), Some(g)),
-                            None => (None, None),
+                        // Fast path: if the in-process cache already has a
+                        // warm index for this root, use it directly without
+                        // scanning the filesystem at all. The cache is
+                        // populated on the first call (cold path below) and
+                        // stays valid until the process is restarted or
+                        // `archietect init` is run externally (at which point
+                        // the binary's stale-warning fires and the user is
+                        // told to restart the session anyway). This is the
+                        // MCP equivalent of the CLI's index_for_query fast
+                        // path — same principle: a read-only query has no
+                        // reason to re-walk 400+ files when the index is warm.
+                        let (idx, graph) = match prior {
+                            Some((s, g)) => (s, g),
+                            None => {
+                                // Cold path: try the persisted SQLite cache
+                                // first (avoids a full scan even on the very
+                                // first tool call of a session when the CLI
+                                // has already init'd the project), then fall
+                                // back to a full scan if neither exists.
+                                match crate::store::load_cached(&root) {
+                                    Some((s, g)) => (s, g),
+                                    None => {
+                                        let (s, g) = scan::scan_with_prior(&root, None, None);
+                                        (s, g)
+                                    }
+                                }
+                            }
                         };
-                        let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
                         let mut out = match name {
                             "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
                             "intent" => query::intent(&idx, &graph, args["text"].as_str().unwrap_or("")),
