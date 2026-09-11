@@ -1316,6 +1316,29 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
         None => return,
     };
 
+    // dbt_project_prefix: the directory containing the dbt project, relative
+    // to the git repo root. When dbt lives in a subdirectory (e.g. /data/,
+    // /dbt/), original_file_path values like "models/staging/stg_orders.sql"
+    // are relative to THAT directory, not the repo root. Prepending this
+    // prefix aligns dbt paths with the paths every other extractor uses.
+    //
+    // Example: manifest at repo/data/target/manifest.json
+    //   original_file_path = "models/stg_orders.sql"
+    //   dbt_project_prefix = "data/"
+    //   → corrected path   = "data/models/stg_orders.sql"
+    //
+    // When dbt is at the repo root (target/manifest.json), the dbt project
+    // dir IS root — prefix is "" — paths pass through unchanged.
+    let dbt_project_prefix: String = manifest_path
+        .parent()                               // .../target/ or .../dbt/
+        .and_then(|p| p.parent())              // the dbt project root
+        .and_then(|p| p.strip_prefix(root).ok())
+        .map(|p| {
+            let s = p.to_string_lossy().to_string();
+            if s.is_empty() { s } else { format!("{}/", s) }
+        })
+        .unwrap_or_default();
+
     let text = match std::fs::read_to_string(manifest_path) {
         Ok(t) => t,
         Err(_) => return,
@@ -1330,38 +1353,61 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
         None => return,
     };
 
-    // Relative path to the manifest itself — used as the "file" for symbols
-    // that have no original_file_path in the manifest.
     let manifest_rel = manifest_path
         .strip_prefix(root)
         .unwrap_or(manifest_path)
         .to_string_lossy()
         .to_string();
 
-    for (node_id, node) in nodes {
-        // Only model and source nodes become symbols — seeds, tests,
-        // snapshots, and analyses are real dbt node types but not the
-        // load-bearing ones blast-radius queries care about.
+    // Helper: prepend the dbt project prefix to a manifest-relative path.
+    let prefix_path = |p: &str| -> String {
+        if dbt_project_prefix.is_empty() || p.starts_with(&dbt_project_prefix) {
+            p.to_string()
+        } else {
+            format!("{}{}", dbt_project_prefix, p)
+        }
+    };
+
+    for (_node_id, node) in nodes {
         let resource_type = node.get("resource_type").and_then(|r| r.as_str()).unwrap_or("");
         if !matches!(resource_type, "model" | "source") {
             continue;
         }
 
-        // The human-readable model name, not the full node ID
-        // ("model.my_project.stg_users" → "stg_users").
         let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
         if name.is_empty() {
             continue;
         }
 
-        // Real file path if the manifest knows it; fall back to the manifest
-        // itself so every symbol has a non-empty file field.
+        // Apply project prefix to original_file_path so it is repo-root-
+        // relative, matching paths produced by every other extractor.
         let file = node
             .get("original_file_path")
             .and_then(|p| p.as_str())
             .filter(|p| !p.is_empty())
-            .unwrap_or(&manifest_rel)
-            .to_string();
+            .map(|p| prefix_path(p))
+            .unwrap_or(manifest_rel.clone());
+
+        // Cross-silo linkage: store the database table name as linked_concept
+        // so structural_dependents can bridge dbt symbols to schema-layer
+        // concepts (ORM models, CREATE TABLE) that declare the same table.
+        //
+        //   Backend:  User ORM model  → Concept { name: "User", table: "users" }
+        //   dbt:      stg_users model → Symbol  { name: "stg_users",
+        //                                         linked_concept: Some("users") }
+        //
+        // With this link: `archietect impact User` walks from the ORM model
+        // to the dbt symbol (via table name match in structural_dependents)
+        // and then to every downstream dbt mart that depends on stg_users —
+        // full cross-silo blast radius.
+        //
+        // relation_name in dbt manifests: "database"."schema"."table_name"
+        // → last segment, unquoted. Absent for sources; fall back to name.
+        let linked_concept: Option<String> = node
+            .get("relation_name")
+            .and_then(|r| r.as_str())
+            .and_then(|r| r.split('.').last().map(|s| s.trim_matches('"').to_lowercase()))
+            .or_else(|| Some(name.to_lowercase()));
 
         let sym_key = format!("{}::{}", file, name);
         graph.symbols.insert(
@@ -1370,21 +1416,13 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
                 name: name.clone(),
                 kind: SymbolKind::Class,
                 file: file.clone(),
-                linked_concept: None,
+                linked_concept,
                 line: 1,
-                // dbt's manifest.json is already a compiled, structured
-                // artifact — no regex or AST parse involved, just JSON
-                // deserialization. `Lexical` is the conservative default;
-                // there's no Ast/Lexical distinction that applies to JSON
-                // deserialization, so Lexical is the honest choice here
-                // (it means "not AST-parser-confirmed", which is accurate).
                 observation_source: ObservationSource::Lexical,
             },
         );
 
-        // Upstream dependencies → Import edges.
-        // depends_on.nodes is a list of full node IDs like
-        // ["model.my_project.raw_orders", "source.my_project.raw_data.events"]
+        // Upstream dependencies → Import edges, paths prefix-corrected.
         if let Some(deps) = node
             .get("depends_on")
             .and_then(|d| d.get("nodes"))
@@ -1395,20 +1433,13 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
                     Some(s) => s,
                     None => continue,
                 };
-                // Resolve the dependency's file path from the manifest if
-                // available — gives `structural_dependents`'s file-based
-                // walk a real path to match against. Fall back to the
-                // node ID itself as a synthetic module path; the engine
-                // will treat it as an unresolvable external module (same as
-                // an npm package import), which is correct — it won't
-                // produce a false edge, just a conservative miss.
                 let to_module = manifest["nodes"]
                     .get(dep_id)
                     .and_then(|n| n.get("original_file_path"))
                     .and_then(|p| p.as_str())
                     .filter(|p| !p.is_empty())
-                    .unwrap_or(dep_id)
-                    .to_string();
+                    .map(|p| prefix_path(p))
+                    .unwrap_or_else(|| dep_id.to_string());
 
                 graph.imports.push(Import {
                     from_file: file.clone(),
