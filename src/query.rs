@@ -168,9 +168,31 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             what: format!("{k} access in {f}"),
         }));
         let used = !c.usage.is_empty();
+        // Is this a persistent storage concept (Prisma model, Django model, SQL
+        // table, etc.) or a pure in-memory data structure (Rust struct, Go struct
+        // with no ORM annotation)?
+        // In-memory structs from `kind: "rust"` (or other non-persistence kinds
+        // with no table) are symbols, not domain entities — they shouldn't show
+        // up in doctor alongside Prisma models with the same "may be scaffolding"
+        // message. We keep them in the concept table (they're legitimately
+        // queryable) but label them honestly.
+        let is_in_memory_struct = c.table.is_none()
+            && c.declared_in.iter().all(|(_, k)| matches!(k.as_str(), "rust" | "go-struct"));
+        let verdict = if is_in_memory_struct {
+            if used { "ACTIVE" } else { "SYMBOL" }
+        } else {
+            if used { "ACTIVE" } else { "DECLARED_ONLY" }
+        };
+        let confidence = if used {
+            "high".to_string()
+        } else if is_in_memory_struct {
+            format!("medium — in-memory struct with no observed cross-file usage; not a storage concept")
+        } else {
+            "medium — declared but no observed access; may be scaffolding".to_string()
+        };
         return json!({
             "concept": term,
-            "verdict": if used { "ACTIVE" } else { "DECLARED_ONLY" },
+            "verdict": verdict,
             "canonical": canon,
             // memory, not cache: when this concept FIRST entered the index,
             // and when its evidence was last re-verified against the tree
@@ -184,11 +206,11 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
             "competing": declared.iter().skip(1).take(5).collect::<Vec<_>>(),
             "used_by_files": c.usage.iter().map(|(f, _)| f).take(10).collect::<Vec<_>>(),
             "evidence": evidence,
-            "confidence": if used { "high" } else {
-                "medium — declared but no observed access; may be scaffolding"
-            },
+            "confidence": confidence,
             "recommendation": if used {
                 format!("'{term}' already exists as '{canon}'. Extend it; do not create a second implementation.")
+            } else if is_in_memory_struct {
+                format!("'{term}' is an in-memory struct with no observed cross-file usage. If it's a domain entity, it needs a schema declaration. If it's an internal implementation detail, it may not need to appear in architectural queries.")
             } else {
                 format!("'{term}' is declared as '{canon}' but nothing observably uses it. Confirm whether it is scaffolding before extending OR replacing.")
             },
@@ -630,14 +652,14 @@ pub fn imports(graph: &StructuralGraph, file: &str) -> Value {
         .imports
         .iter()
         .filter(|imp| imp.from_file == file)
-        .filter_map(|imp| imp.relationship(&known_files))
+        .filter_map(|imp| imp.relationship(&known_files, &graph.workspace_packages))
         .map(|rel| json!({ "to": rel.to.0, "kind": rel.kind, "evidence": rel.evidence }))
         .collect();
 
     let incoming: Vec<Value> = graph
         .imports
         .iter()
-        .filter_map(|imp| imp.relationship(&known_files).map(|rel| (imp, rel)))
+        .filter_map(|imp| imp.relationship(&known_files, &graph.workspace_packages).map(|rel| (imp, rel)))
         .filter(|(_, rel)| rel.to.0 == file)
         .map(|(imp, rel)| json!({ "from": imp.from_file, "kind": rel.kind, "evidence": rel.evidence }))
         .collect();

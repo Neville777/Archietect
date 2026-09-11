@@ -463,6 +463,16 @@ pub struct FunctionBody {
     pub literals: Vec<String>,
 }
 
+/// A call edge: function `caller` in `from_file` calls function `callee`
+/// (possibly in a different file, resolved via the symbol table).
+/// Used to extend `structural_dependents` beyond import-graph depth.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CallEdge {
+    pub from_file: String,
+    pub caller: String,
+    pub callee: String,
+}
+
 /// String literals inside `body`, filtered to ones actually meaningful as
 /// duplicate-logic evidence (see the length floor and color exclusion
 /// inline below, both tuned against a real repo, not guessed). Deliberately
@@ -593,6 +603,137 @@ pub(crate) fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(us
 /// is deliberately not a second, independent guess at "what counts as a
 /// function" that could quietly drift from what `extract_ts_js`/`extract_py`/
 /// `extract_rs` already decided.
+/// Extract call edges from Rust source using tree-sitter.
+/// Returns (caller_name, callee_name) pairs for each call inside a pub fn body.
+/// Only collects simple identifier calls (foo()) and method calls (self.foo()),
+/// not full path calls (foo::bar()) — those are imports, not calls.
+fn extract_call_edges_rs(rel: &str, text: &str, out: &mut Vec<CallEdge>) {
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(tree_sitter_rust::language()).is_err() { return; }
+    let tree = match parser.parse(text, None) { Some(t) => t, None => return };
+    let bytes = text.as_bytes();
+
+    // Walk top-level pub fn items, then collect call_expression nodes inside
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    if !cursor.goto_first_child() { return; }
+    loop {
+        let node = cursor.node();
+        if node.kind() == "function_item" {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let caller = std::str::from_utf8(
+                    &bytes[name_node.start_byte()..name_node.end_byte()]
+                ).unwrap_or("").to_string();
+                if !caller.is_empty() {
+                    collect_calls_in_node(&node, bytes, rel, &caller, out);
+                }
+            }
+        }
+        if !cursor.goto_next_sibling() { break; }
+    }
+}
+
+fn collect_calls_in_node(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    caller: &str,
+    out: &mut Vec<CallEdge>,
+) {
+    if node.kind() == "call_expression" {
+        if let Some(func) = node.child_by_field_name("function") {
+            let callee = match func.kind() {
+                "identifier" => {
+                    std::str::from_utf8(&bytes[func.start_byte()..func.end_byte()])
+                        .unwrap_or("").to_string()
+                }
+                "field_expression" => {
+                    // self.foo() or obj.method() — take the field name
+                    func.child_by_field_name("field")
+                        .map(|f| std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()]).unwrap_or("").to_string())
+                        .unwrap_or_default()
+                }
+                _ => String::new(),
+            };
+            if !callee.is_empty() && callee != caller {
+                out.push(CallEdge {
+                    from_file: rel.to_string(),
+                    caller: caller.to_string(),
+                    callee,
+                });
+            }
+        }
+    }
+    let mut c = node.walk();
+    if c.goto_first_child() {
+        loop {
+            collect_calls_in_node(&c.node(), bytes, rel, caller, out);
+            if !c.goto_next_sibling() { break; }
+        }
+    }
+}
+
+/// Extract call edges from TypeScript/JavaScript using tree-sitter.
+fn extract_call_edges_ts(rel: &str, text: &str, out: &mut Vec<CallEdge>) {
+    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") {
+        tree_sitter_typescript::language_typescript()
+    } else {
+        tree_sitter_javascript::language()
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(lang).is_err() { return; }
+    let tree = match parser.parse(text, None) { Some(t) => t, None => return };
+    let bytes = text.as_bytes();
+    walk_ts_calls(&tree.root_node(), bytes, rel, "global", out, 0);
+}
+
+fn walk_ts_calls(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    rel: &str,
+    current_fn: &str,
+    out: &mut Vec<CallEdge>,
+    depth: usize,
+) {
+    if depth > 50 { return; } // guard against pathological nesting
+
+    let kind = node.kind();
+
+    // Track current function context
+    let new_fn = if matches!(kind, "function_declaration" | "method_definition" | "arrow_function" | "function") {
+        node.child_by_field_name("name")
+            .map(|n| std::str::from_utf8(&bytes[n.start_byte()..n.end_byte()]).unwrap_or("").to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+    let fn_ctx = new_fn.as_deref().unwrap_or(current_fn);
+
+    if kind == "call_expression" {
+        let callee = match node.child_by_field_name("function") {
+            Some(f) => match f.kind() {
+                "identifier" => std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()]).unwrap_or("").to_string(),
+                "member_expression" => f.child_by_field_name("property")
+                    .map(|p| std::str::from_utf8(&bytes[p.start_byte()..p.end_byte()]).unwrap_or("").to_string())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
+            None => String::new(),
+        };
+        if !callee.is_empty() && callee != fn_ctx && callee != "require" {
+            out.push(CallEdge { from_file: rel.to_string(), caller: fn_ctx.to_string(), callee });
+        }
+    }
+
+    let mut c = node.walk();
+    if c.goto_first_child() {
+        loop {
+            walk_ts_calls(&c.node(), bytes, rel, fn_ctx, out, depth + 1);
+            if !c.goto_next_sibling() { break; }
+        }
+    }
+}
+
 fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<FunctionBody>) {
     match ext {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" | "vue" => {
@@ -819,8 +960,8 @@ impl Import {
     /// strategy for an external package without a real, language-specific
     /// package resolver, and guessing one would reintroduce exactly the
     /// fuzzy-match risk this method exists to avoid.
-    pub fn relationship(&self, known_files: &std::collections::BTreeSet<String>) -> Option<crate::resource::Relationship> {
-        let resolved = resolve_relative_import(&self.from_file, &self.to_module, known_files)?;
+    pub fn relationship(&self, known_files: &std::collections::BTreeSet<String>, workspace_packages: &BTreeMap<String, String>) -> Option<crate::resource::Relationship> {
+        let resolved = resolve_relative_import(&self.from_file, &self.to_module, known_files, workspace_packages)?;
         Some(crate::resource::Relationship {
             from: crate::resource::Identity(self.from_file.clone()),
             kind: "imports".to_string(),
@@ -850,6 +991,7 @@ fn resolve_relative_import(
     from_file: &str,
     to_module: &str,
     known_files: &std::collections::BTreeSet<String>,
+    workspace_packages: &BTreeMap<String, String>,
 ) -> Option<String> {
     // Godot's `res://` paths are already root-relative and always written
     // with an explicit extension (`res://player/Foo.tscn`, never an
@@ -860,7 +1002,43 @@ fn resolve_relative_import(
         return known_files.contains(stripped).then(|| stripped.to_string());
     }
 
-    if !(to_module.starts_with("./") || to_module.starts_with("../")) {
+    // ── Workspace package resolution ──────────────────────────────────────
+    // `import { X } from "@myorg/core-models"` — not a relative path, but
+    // the package name maps to a local directory in this monorepo. Try exact
+    // match first, then prefix match (for scoped packages like @myorg/pkg
+    // the to_module might be "@myorg/pkg/subpath").
+    if !to_module.starts_with("./") && !to_module.starts_with("../") {
+        // Exact match: "@myorg/core-models" → "packages/core-models"
+        if let Some(local_dir) = workspace_packages.get(to_module) {
+            // Resolve to the package's index file
+            const INDEX_EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs"];
+            for ext in INDEX_EXTS {
+                let candidate = format!("{local_dir}/index.{ext}");
+                if known_files.contains(&candidate) {
+                    return Some(candidate);
+                }
+                let src_candidate = format!("{local_dir}/src/index.{ext}");
+                if known_files.contains(&src_candidate) {
+                    return Some(src_candidate);
+                }
+            }
+            // No index file found but the package is known — return the dir
+            return Some(local_dir.clone());
+        }
+        // Prefix match: "@myorg/core-models/utils" → "packages/core-models/utils"
+        for (pkg_name, local_dir) in workspace_packages {
+            if let Some(subpath) = to_module.strip_prefix(pkg_name.as_str()) {
+                let subpath = subpath.trim_start_matches('/');
+                let full = if subpath.is_empty() {
+                    local_dir.clone()
+                } else {
+                    format!("{local_dir}/{subpath}")
+                };
+                if known_files.contains(&full) {
+                    return Some(full);
+                }
+            }
+        }
         return None;
     }
 
@@ -952,6 +1130,16 @@ pub struct StructuralGraph {
     /// Version of the structural extractor. Bump to invalidate all caches.
     #[serde(default)]
     pub extractor_version: u32,
+    /// Workspace package mapping: package-name → local directory path.
+    /// Built once at extract time from package.json/Cargo.toml/pnpm-workspace.yaml.
+    /// Used to resolve `import { X } from "@myorg/core-models"` to a local path
+    /// instead of treating it as an external node_modules dependency.
+    #[serde(default)]
+    pub workspace_packages: BTreeMap<String, String>,
+    /// Call edges extracted from function bodies: caller → callee.
+    /// Extends structural_dependents beyond import-graph hops.
+    #[serde(default)]
+    pub call_edges: Vec<CallEdge>,
 }
 
 /// What one file contributed to the structural graph, cached against
@@ -968,6 +1156,8 @@ pub struct StructuralFileFacts {
     pub route_calls: Vec<RouteCall>,
     #[serde(default)]
     pub function_bodies: Vec<FunctionBody>,
+    #[serde(default)]
+    pub call_edges: Vec<CallEdge>,
 }
 
 /// Bump this when the structural extractors change semantics. Invalidates
@@ -985,11 +1175,13 @@ pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 19; // +project.godot [autoload] s
 /// Extract the structural graph for `root`, reusing `prior` for unchanged
 /// files. Called from `scan::scan_with_prior` after the schema pass.
 pub fn extract(
-    _root: &std::path::Path,
+    root: &std::path::Path,
     files: &[crate::scan::ScannableFile],
     prior: Option<&StructuralGraph>,
 ) -> StructuralGraph {
     use rayon::prelude::*;
+
+    let workspace_packages = read_workspace_packages(root);
 
     let prior_facts: BTreeMap<String, StructuralFileFacts> =
         prior.map(|p| p.file_facts.clone()).unwrap_or_default();
@@ -997,7 +1189,7 @@ pub fn extract(
     let prior_version_matches =
         prior.map(|p| p.extractor_version == STRUCTURAL_EXTRACTOR_VERSION).unwrap_or(false);
 
-    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>, Vec<FunctionBody>)> = files
+    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>, Vec<FunctionBody>, Vec<CallEdge>)> = files
         .par_iter()
         .map(|f| {
             let unchanged = prior_version_matches
@@ -1017,11 +1209,12 @@ pub fn extract(
                     pf.routes.clone(),
                     pf.route_calls.clone(),
                     pf.function_bodies.clone(),
+                    pf.call_edges.clone(),
                 );
             }
 
             let Ok(text) = std::fs::read_to_string(&f.path) else {
-                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
             };
 
             let ext = f.path.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -1030,22 +1223,30 @@ pub fn extract(
             extract_route_calls(&f.rel, ext, &text, &mut route_calls);
             let mut function_bodies = Vec::new();
             extract_function_bodies(&f.rel, ext, &text, &mut function_bodies);
-            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls, function_bodies)
+            let mut call_edges = Vec::new();
+            if ext == "rs" {
+                extract_call_edges_rs(&f.rel, &text, &mut call_edges);
+            } else if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts") {
+                extract_call_edges_ts(&f.rel, &text, &mut call_edges);
+            }
+            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls, function_bodies, call_edges)
         })
         .collect();
 
     let mut graph = StructuralGraph {
         extractor_version: STRUCTURAL_EXTRACTOR_VERSION,
+        workspace_packages,
         ..Default::default()
     };
 
-    for (rel, size, mtime_ms, symbols, imports, routes, route_calls, function_bodies) in results {
+    for (rel, size, mtime_ms, symbols, imports, routes, route_calls, function_bodies, call_edges) in results {
         graph.file_facts.insert(
             rel.clone(),
             StructuralFileFacts {
                 size, mtime_ms,
                 symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone(),
                 route_calls: route_calls.clone(), function_bodies: function_bodies.clone(),
+                call_edges: call_edges.clone(),
             },
         );
         for s in &symbols {
@@ -1055,9 +1256,97 @@ pub fn extract(
         graph.routes.extend(routes);
         graph.route_calls.extend(route_calls);
         graph.function_bodies.extend(function_bodies);
+        graph.call_edges.extend(call_edges);
     }
 
     graph
+}
+
+/// Read workspace package name → local directory path mappings from root manifests.
+/// Handles: npm/pnpm/yarn (package.json workspaces), Cargo (Cargo.toml [workspace]),
+/// and pnpm-workspace.yaml. Returns empty map if no workspace file found.
+///
+/// This is what lets `import { X } from "@myorg/core-models"` resolve to
+/// `packages/core-models/src/index.ts` instead of disappearing into the
+/// node_modules void.
+fn read_workspace_packages(root: &std::path::Path) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+
+    // ── npm / pnpm / yarn: package.json workspaces ────────────────────────
+    let pkg_json = root.join("package.json");
+    if let Ok(text) = std::fs::read_to_string(&pkg_json) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+            // workspaces: ["packages/*"] or workspaces.packages: ["packages/*"]
+            let patterns = val["workspaces"]
+                .as_array()
+                .cloned()
+                .or_else(|| val["workspaces"]["packages"].as_array().cloned())
+                .unwrap_or_default();
+
+            for pattern in patterns {
+                let Some(pat) = pattern.as_str() else { continue };
+                // Expand glob patterns like "packages/*" or "apps/*"
+                let prefix = pat.trim_end_matches("/*").trim_end_matches('*');
+                if let Ok(entries) = std::fs::read_dir(root.join(prefix)) {
+                    for entry in entries.flatten() {
+                        let dir = entry.path();
+                        let member_pkg = dir.join("package.json");
+                        if let Ok(mpkg) = std::fs::read_to_string(&member_pkg) {
+                            if let Ok(mv) = serde_json::from_str::<serde_json::Value>(&mpkg) {
+                                if let Some(name) = mv["name"].as_str() {
+                                    let rel = dir
+                                        .strip_prefix(root)
+                                        .unwrap_or(&dir)
+                                        .to_string_lossy()
+                                        .to_string();
+                                    map.insert(name.to_string(), rel);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Cargo workspaces: Cargo.toml [workspace] members ─────────────────
+    let cargo_toml = root.join("Cargo.toml");
+    if let Ok(text) = std::fs::read_to_string(&cargo_toml) {
+        if let Ok(val) = text.parse::<toml::Value>() {
+            if let Some(members) = val.get("workspace")
+                .and_then(|w| w.get("members"))
+                .and_then(|m| m.as_array())
+            {
+                for member in members {
+                    let Some(pat) = member.as_str() else { continue };
+                    let prefix = pat.trim_end_matches("/*").trim_end_matches('*');
+                    if let Ok(entries) = std::fs::read_dir(root.join(prefix)) {
+                        for entry in entries.flatten() {
+                            let dir = entry.path();
+                            let member_toml = dir.join("Cargo.toml");
+                            if let Ok(mtext) = std::fs::read_to_string(&member_toml) {
+                                if let Ok(mv) = mtext.parse::<toml::Value>() {
+                                    if let Some(name) = mv.get("package")
+                                        .and_then(|p| p.get("name"))
+                                        .and_then(|n| n.as_str())
+                                    {
+                                        let rel = dir
+                                            .strip_prefix(root)
+                                            .unwrap_or(&dir)
+                                            .to_string_lossy()
+                                            .to_string();
+                                        map.insert(name.to_string(), rel);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    map
 }
 
 /// After concept extraction (schema pass) is complete, link structural symbols
@@ -1153,6 +1442,17 @@ pub fn structural_dependents(
         reverse.entry(imp.to_module.clone()).or_default().push(imp.from_file.clone());
     }
 
+    // Build a reverse call index: callee_name → (from_file, caller_name).
+    // Used to extend reachability beyond import-graph hops — a file that
+    // calls a symbol in an owner file is a dependent even if it never
+    // imports the owner file directly.
+    let mut reverse_calls: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for edge in &graph.call_edges {
+        reverse_calls.entry(edge.callee.clone())
+            .or_default()
+            .push((edge.from_file.clone(), edge.caller.clone()));
+    }
+
     // Helper: given a set of file paths, which other files import any of them?
     let importers_of = |targets: &std::collections::HashSet<String>| -> std::collections::HashSet<String> {
         let mut result = std::collections::HashSet::new();
@@ -1178,8 +1478,30 @@ pub fn structural_dependents(
     let mut frontier = owner_files.clone();
     let mut out = Vec::new();
 
+    // Collect the concept's own symbol names for call-edge lookup
+    let concept_symbols: std::collections::HashSet<String> = graph
+        .symbols
+        .values()
+        .filter(|s| s.linked_concept.as_deref() == Some(concept_name) || s.name == concept_name)
+        .map(|s| s.name.clone())
+        .collect();
+
     for depth in 1..=depth_limit {
-        let next = importers_of(&frontier);
+        let mut next = importers_of(&frontier);
+
+        // Also add files that call any of the concept's symbols directly
+        // (call-edge reachability — catches callers that don't import the
+        // owner file explicitly, e.g. dependency-injection containers)
+        for sym_name in &concept_symbols {
+            if let Some(callers) = reverse_calls.get(sym_name) {
+                for (from_file, _caller) in callers {
+                    if !seen.contains(from_file) {
+                        next.insert(from_file.clone());
+                    }
+                }
+            }
+        }
+
         let new_files: std::collections::HashSet<String> =
             next.difference(&seen).cloned().collect();
         if new_files.is_empty() {
@@ -5385,21 +5707,21 @@ mod import_relationship_tests {
     #[test]
     fn resolves_a_relative_import_with_inferred_extension() {
         let files = known(&["src/a.ts", "src/utils/b.ts"]);
-        let resolved = resolve_relative_import("src/a.ts", "./utils/b", &files);
+        let resolved = resolve_relative_import("src/a.ts", "./utils/b", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("src/utils/b.ts".to_string()));
     }
 
     #[test]
     fn resolves_parent_relative_import() {
         let files = known(&["src/components/a.ts", "src/lib/b.ts"]);
-        let resolved = resolve_relative_import("src/components/a.ts", "../lib/b", &files);
+        let resolved = resolve_relative_import("src/components/a.ts", "../lib/b", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("src/lib/b.ts".to_string()));
     }
 
     #[test]
     fn resolves_index_file_when_directory_imported() {
         let files = known(&["src/a.ts", "src/widgets/index.ts"]);
-        let resolved = resolve_relative_import("src/a.ts", "./widgets", &files);
+        let resolved = resolve_relative_import("src/a.ts", "./widgets", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("src/widgets/index.ts".to_string()));
     }
 
@@ -5409,21 +5731,21 @@ mod import_relationship_tests {
     #[test]
     fn resolves_a_godot_res_path() {
         let files = known(&["player/Player.gd", "player/Player.tscn"]);
-        let resolved = resolve_relative_import("player/Player.tscn", "res://player/Player.gd", &files);
+        let resolved = resolve_relative_import("player/Player.tscn", "res://player/Player.gd", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("player/Player.gd".to_string()));
     }
 
     #[test]
     fn unresolved_res_path_resolves_to_nothing() {
         let files = known(&["player/Player.gd"]);
-        assert_eq!(resolve_relative_import("player/Player.tscn", "res://nonexistent/Foo.gd", &files), None);
+        assert_eq!(resolve_relative_import("player/Player.tscn", "res://nonexistent/Foo.gd", &files, &BTreeMap::new()), None);
     }
 
     #[test]
     fn external_package_import_resolves_to_nothing() {
         let files = known(&["src/a.ts"]);
-        assert_eq!(resolve_relative_import("src/a.ts", "lodash", &files), None);
-        assert_eq!(resolve_relative_import("src/a.ts", "react", &files), None);
+        assert_eq!(resolve_relative_import("src/a.ts", "lodash", &files, &BTreeMap::new()), None);
+        assert_eq!(resolve_relative_import("src/a.ts", "react", &files, &BTreeMap::new()), None);
     }
 
     #[test]
@@ -5432,7 +5754,7 @@ mod import_relationship_tests {
         // slash-separated file paths) — deliberately not attempted, per
         // Import::relationship's own doc. Must return None, not a wrong guess.
         let files = known(&["myapp/utils.py"]);
-        assert_eq!(resolve_relative_import("myapp/main.py", ".utils", &files), None);
+        assert_eq!(resolve_relative_import("myapp/main.py", ".utils", &files, &BTreeMap::new()), None);
     }
 
     #[test]
@@ -5440,20 +5762,20 @@ mod import_relationship_tests {
         // Two real scanned files could both satisfy "./foo" — .ts and .js
         // both present. Silence is correct; guessing between them is not.
         let files = known(&["src/foo.ts", "src/foo.js"]);
-        assert_eq!(resolve_relative_import("src/main.ts", "./foo", &files), None);
+        assert_eq!(resolve_relative_import("src/main.ts", "./foo", &files, &BTreeMap::new()), None);
     }
 
     #[test]
     fn no_match_at_all_resolves_to_nothing() {
         let files = known(&["src/other.ts"]);
-        assert_eq!(resolve_relative_import("src/main.ts", "./missing", &files), None);
+        assert_eq!(resolve_relative_import("src/main.ts", "./missing", &files, &BTreeMap::new()), None);
     }
 
     #[test]
     fn import_relationship_carries_declared_tier_and_real_evidence_text() {
         let imp = Import { from_file: "src/a.ts".to_string(), to_module: "./b".to_string(), names: vec![] };
         let files = known(&["src/a.ts", "src/b.ts"]);
-        let rel = imp.relationship(&files).expect("expected a resolved relationship");
+        let rel = imp.relationship(&files, &BTreeMap::new()).expect("expected a resolved relationship");
         assert_eq!(rel.from.0, "src/a.ts");
         assert_eq!(rel.to.0, "src/b.ts");
         assert_eq!(rel.kind, "imports");
@@ -5465,6 +5787,6 @@ mod import_relationship_tests {
     fn import_relationship_is_none_for_unresolvable_import() {
         let imp = Import { from_file: "src/a.ts".to_string(), to_module: "some-package".to_string(), names: vec![] };
         let files = known(&["src/a.ts"]);
-        assert!(imp.relationship(&files).is_none());
+        assert!(imp.relationship(&files, &BTreeMap::new()).is_none());
     }
 }
