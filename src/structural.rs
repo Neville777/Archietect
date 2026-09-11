@@ -1168,7 +1168,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 19; // +project.godot [autoload] singleton registrations as symbols; +.tscn ext_resource id cross-referenced against [node ... instance=ExtResource(id)] to record the specific instancing node name(s)
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 20; // +Terraform (.tf) and Kubernetes (.yaml/.yml) extractors
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -1622,6 +1622,17 @@ pub fn structural_dependents(
                 imp.to_module.ends_with(stem)
                     || imp.to_module.ends_with(target.as_str())
                     || imp.names.iter().any(|n| crate::model::names_concept(n, stem))
+                    // Symbol-name imports (Terraform, Kubernetes, dbt): the
+                    // to_module IS the resource/model name, and the owner file
+                    // declares a symbol with that exact name. Match when any
+                    // symbol in the target file has a name that the to_module
+                    // references — enables blast-radius across IaC resources
+                    // without changing how extractors write import edges.
+                    || graph.symbols.values().any(|s| {
+                        targets.contains(&s.file)
+                            && (imp.to_module == s.name
+                                || imp.to_module.ends_with(&format!(".{}", s.name)))
+                    })
             });
             if matches_any && !targets.contains(&imp.from_file) {
                 result.insert(imp.from_file.clone());
@@ -1969,6 +1980,25 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         extensions: &["godot"],
         extractor: extract_project_godot,
         symbol_support: "[autoload] global singleton registrations — the only authoritative source of an autoload script's global name, since a Godot 4 script that declares both class_name and an autoload registration of the same name is a hard parse error, so autoload scripts deliberately have no class_name for extract_gdscript to fall back on",
+        frameworks: &[],
+    },
+    LanguageSpec {
+        name: "Terraform",
+        extensions: &["tf"],
+        extractor: extract_terraform,
+        symbol_support: "resource, data, and module blocks as named symbols; interpolation references (type.name.attr) as import edges",
+        frameworks: &[],
+    },
+    LanguageSpec {
+        name: "Kubernetes Manifest",
+        // .yaml/.yml are normally in NON_CODE_EXTS; for Kubernetes we gate
+        // on content (must contain `apiVersion:` and `kind:`) inside the
+        // extractor, so non-Kubernetes YAML files produce zero symbols and
+        // are effectively skipped. Removing from NON_CODE_EXTS means they
+        // are walked — the content gate stops them contributing noise.
+        extensions: &["yaml", "yml"],
+        extractor: extract_kubernetes,
+        symbol_support: "Kubernetes resources as {Kind}.{metadata.name} symbols; cross-resource references (configMapRef, secretRef, serviceAccountName, claimName) as import edges",
         frameworks: &[],
     },
 ];
@@ -6058,5 +6088,239 @@ mod import_relationship_tests {
         let imp = Import { from_file: "src/a.ts".to_string(), to_module: "some-package".to_string(), names: vec![] };
         let files = known(&["src/a.ts"]);
         assert!(imp.relationship(&files, &BTreeMap::new()).is_none());
+    }
+}
+
+// ── Terraform extractor ──────────────────────────────────────────────────────
+
+/// Extract Terraform resources, data sources, and modules as `Symbol` nodes,
+/// and HCL interpolation references (`type.name.attribute`) as `Import` edges.
+///
+/// Lexical, not a full HCL parser. The HCL block grammar is regular enough
+/// for the claims this extractor makes:
+///   - `resource "aws_s3_bucket" "uploads"` → Symbol { name: "aws_s3_bucket.uploads", kind: Class }
+///   - `data "aws_iam_policy" "base"` → Symbol { name: "data.aws_iam_policy.base", kind: Class }
+///   - `module "vpc"` → Symbol { name: "module.vpc", kind: Class }
+///   - `${aws_s3_bucket.uploads.arn}` inside any block → Import edge to "aws_s3_bucket.uploads"
+///
+/// SymbolKind::Class is the right fit: a Terraform resource is a named,
+/// declared thing with dependents — the same semantic as a class or a dbt model.
+///
+/// Edge direction: if a Lambda resource references `aws_iam_role.worker.arn`,
+/// the Lambda's file gets an Import { from_file: lambda.tf, to_module: "aws_iam_role.worker" }.
+/// `impact aws_iam_role.worker` then surfaces the Lambda as a dependent.
+fn extract_terraform(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    use regex::Regex;
+
+    // resource "type" "name" { or data "type" "name" {
+    let block_re = Regex::new(
+        r#"(?m)^\s*(resource|data)\s+"([^"]+)"\s+"([^"]+)""#
+    ).unwrap();
+    for cap in block_re.captures_iter(text) {
+        let block_type = &cap[1];
+        let res_type = &cap[2];
+        let res_name = &cap[3];
+        // data sources prefixed to avoid collision with resources of same type+name
+        let name = if block_type == "data" {
+            format!("data.{}.{}", res_type, res_name)
+        } else {
+            format!("{}.{}", res_type, res_name)
+        };
+        symbols.push(Symbol {
+            name,
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+
+    // module "name" {
+    let module_re = Regex::new(r#"(?m)^\s*module\s+"([^"]+)""#).unwrap();
+    for cap in module_re.captures_iter(text) {
+        symbols.push(Symbol {
+            name: format!("module.{}", &cap[1]),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+
+    // Interpolation references: ${type.name.attr} or type.name.attr in expressions.
+    // Matches resource-type-shaped dotted paths (at least two dot-separated
+    // lowercase/underscore segments) that appear inside ${ } or as bare values.
+    // data.type.name references are preserved as-is.
+    let ref_re = Regex::new(
+        r"\$\{([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,3})\}"
+    ).unwrap();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for cap in ref_re.captures_iter(text) {
+        let full_ref = cap[1].to_string();
+        // Normalize: drop the trailing attribute segment (keep type.name only).
+        // "aws_s3_bucket.uploads.arn" → "aws_s3_bucket.uploads"
+        // "data.aws_iam_policy.base.arn" → "data.aws_iam_policy.base"
+        let parts: Vec<&str> = full_ref.splitn(4, '.').collect();
+        let to_module = if parts.first() == Some(&"data") && parts.len() >= 3 {
+            // data.type.name[.attr] → keep first 3 segments
+            parts[..3.min(parts.len())].join(".")
+        } else if parts.len() >= 2 {
+            // type.name[.attr] → keep first 2 segments
+            parts[..2].join(".")
+        } else {
+            continue;
+        };
+        if seen.insert(to_module.clone()) {
+            imports.push(Import {
+                from_file: rel.to_string(),
+                to_module,
+                names: vec![],
+            });
+        }
+    }
+}
+
+// ── Kubernetes manifest extractor ────────────────────────────────────────────
+
+/// Extract Kubernetes resources as `Symbol` nodes and cross-resource
+/// references as `Import` edges from YAML manifests.
+///
+/// Gated on content: a file must contain both `apiVersion:` and `kind:` to
+/// be treated as a Kubernetes manifest — generic YAML config files (docker-
+/// compose, GitHub Actions workflows, etc.) produce zero symbols and are
+/// effectively skipped. This gate is why `.yaml`/`.yml` can safely be added
+/// to `LANGUAGES` without turning every config file in a repo into noise.
+///
+/// Symbol: `{Kind}.{metadata.name}` — e.g. `Deployment.api-server`,
+/// `Secret.db-password`, `ConfigMap.app-config`. SymbolKind::Class, same
+/// reasoning as Terraform and dbt: a named declared infrastructure resource
+/// with dependents.
+///
+/// Edges: scan `spec:` for common cross-resource reference fields:
+///   - `configMapRef/configMapKeyRef → name:` → Import to ConfigMap.{name}
+///   - `secretRef/secretKeyRef → name:` → Import to Secret.{name}
+///   - `serviceAccountName:` → Import to ServiceAccount.{name}
+///   - `claimName:` → Import to PersistentVolumeClaim.{name}
+///
+/// This is deliberately lexical/line-oriented, not a YAML parser. The subset
+/// of Kubernetes YAML that carries these cross-resource references is
+/// regular enough for this claim — the same "fails open, never wrong" stance
+/// docker_domain.rs takes with docker-compose YAML.
+fn extract_kubernetes(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    _routes: &mut Vec<Route>,
+) {
+    use regex::Regex;
+
+    // Content gate: must look like a Kubernetes manifest.
+    if !text.contains("apiVersion:") || !text.contains("kind:") {
+        return;
+    }
+
+    // Support multi-document YAML (--- separator) — a single file can
+    // contain multiple Kubernetes objects.
+    let docs: Vec<&str> = text.split("\n---").collect();
+
+    let kind_re = Regex::new(r"(?m)^kind:\s*(\S+)").unwrap();
+    let name_re = Regex::new(r"(?m)^\s{0,2}name:\s*(\S+)").unwrap();
+
+    // Cross-resource reference patterns
+    let configmap_ref_re = Regex::new(r"(?m)configMap(?:Ref|KeyRef)?\s*:\s*\n\s+name:\s*(\S+)").unwrap();
+    let configmap_name_re = Regex::new(r"(?m)configMapRef:\s*\n\s+name:\s*(\S+)").unwrap();
+    let secret_ref_re = Regex::new(r"(?m)secret(?:Ref|KeyRef)?\s*:\s*\n\s+name:\s*(\S+)").unwrap();
+    let svc_account_re = Regex::new(r"(?m)serviceAccountName:\s*(\S+)").unwrap();
+    let claim_re = Regex::new(r"(?m)claimName:\s*(\S+)").unwrap();
+    // inline configMapRef: {name: foo}
+    let inline_cm_re = Regex::new(r"configMapRef:\s*\{[^}]*name:\s*(\S+?)[},]").unwrap();
+    let inline_secret_re = Regex::new(r"secretRef:\s*\{[^}]*name:\s*(\S+?)[},]").unwrap();
+
+    for doc in &docs {
+        if !doc.contains("apiVersion:") || !doc.contains("kind:") {
+            continue;
+        }
+
+        let kind = match kind_re.captures(doc) {
+            Some(c) => c[1].trim().to_string(),
+            None => continue,
+        };
+
+        // metadata.name: first `name:` at root/near-root indentation
+        let resource_name = match name_re.captures(doc) {
+            Some(c) => c[1].trim().trim_end_matches('"').trim_start_matches('"').to_string(),
+            None => continue,
+        };
+        if resource_name.is_empty() {
+            continue;
+        }
+
+        let sym_name = format!("{}.{}", kind, resource_name);
+        let sym_file = rel.to_string();
+
+        // Find approximate line number of `kind:` declaration
+        let kind_line = kind_re
+            .find(doc)
+            .map(|m| line_of(doc, m.start()))
+            .unwrap_or(1);
+
+        symbols.push(Symbol {
+            name: sym_name.clone(),
+            kind: SymbolKind::Class,
+            file: sym_file.clone(),
+            linked_concept: None,
+            line: kind_line,
+            observation_source: ObservationSource::Lexical,
+        });
+
+        // Collect cross-resource references, deduped
+        let mut refs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+        for cap in configmap_ref_re.captures_iter(doc) {
+            refs.insert(format!("ConfigMap.{}", cap[1].trim()));
+        }
+        for cap in configmap_name_re.captures_iter(doc) {
+            refs.insert(format!("ConfigMap.{}", cap[1].trim()));
+        }
+        for cap in inline_cm_re.captures_iter(doc) {
+            refs.insert(format!("ConfigMap.{}", cap[1].trim()));
+        }
+        for cap in secret_ref_re.captures_iter(doc) {
+            refs.insert(format!("Secret.{}", cap[1].trim()));
+        }
+        for cap in inline_secret_re.captures_iter(doc) {
+            refs.insert(format!("Secret.{}", cap[1].trim()));
+        }
+        for cap in svc_account_re.captures_iter(doc) {
+            let name = cap[1].trim();
+            // Skip default service account — it's implicit everywhere, not
+            // a meaningful cross-resource dependency worth surfacing.
+            if name != "default" {
+                refs.insert(format!("ServiceAccount.{}", name));
+            }
+        }
+        for cap in claim_re.captures_iter(doc) {
+            refs.insert(format!("PersistentVolumeClaim.{}", cap[1].trim()));
+        }
+
+        for to_module in refs {
+            // Don't create self-edges (a resource referencing itself)
+            if to_module != sym_name {
+                imports.push(Import {
+                    from_file: sym_file.clone(),
+                    to_module,
+                    names: vec![],
+                });
+            }
+        }
     }
 }

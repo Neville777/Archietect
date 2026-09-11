@@ -182,7 +182,7 @@ fn is_scannable_ext(ext: &str) -> bool {
 /// which law-014 exists to prevent, this list erring incomplete is safe by
 /// construction).
 const NON_CODE_EXTS: &[&str] = &[
-    "md", "markdown", "txt", "rst", "adoc", "json", "yml", "yaml", "toml", "ini",
+    "md", "markdown", "txt", "rst", "adoc", "json", "toml", "ini",
     "cfg", "conf", "lock", "lockb", "env", "editorconfig", "gitignore", "gitattributes",
     "png", "jpg", "jpeg", "gif", "svg", "ico", "bmp", "webp", "avif",
     "woff", "woff2", "ttf", "eot", "otf",
