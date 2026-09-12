@@ -481,27 +481,30 @@ ladder** — each tier a progressively harder mechanical gate, not a reminder.
 
 ### The honest distinction: cooperative vs. hard gates
 
-`verify_edit` and the MCP query tools (`concept`, `impact`, `claim`) are
-**Level 1 — cooperative pre-flight**: they give a well-behaved agent instant
-in-memory feedback before writing to disk, but an agent under context
-pressure can technically skip them. Knowing this matters — don't overclaim.
+`verify_edit`, the MCP query tools (`concept`, `impact`, `claim`), and the
+pre-tool-use hook are all **Level 1 — cooperative pre-flight**: they depend
+on the agent's harness routing through them. A well-behaved agent in Claude
+Code or Cursor will hit these gates; an agent using a different harness or
+calling a lower-level write primitive can bypass them. Don't overclaim.
 
 The pre-commit hook and CI gate are **hard mechanical interlocks**: the
 agent physically cannot record broken code to git history or merge it into
-main, regardless of what it did locally or which tool it skipped.
+main, regardless of which tool it used or skipped.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ LEVEL 1 — COOPERATIVE PRE-FLIGHT (MCP tools, 5ms in-memory)        │
-│  verify_edit, concept, impact, claim, guard                         │
-│  Fast feedback before writing. Agent CAN skip under pressure.       │
+│ LEVEL 1 — COOPERATIVE PRE-FLIGHT (harness-dependent)               │
+│  verify_edit (MCP + CLI) — 5ms in-memory syntax + duplicate check  │
+│  concept, impact, claim, guard — query before deciding              │
+│  pre-tool-use hook — intercepts file-create via harness             │
+│  Agent CAN skip if it bypasses the harness or uses a different one. │
 └───────────────────────────────┬─────────────────────────────────────┘
-                                │ if agent skips...
+                                │ if agent skips or uses wrong harness...
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ LEVEL 2 — LOCAL HARD GATE (pre-commit hook, pre-tool-use hook)      │
-│  archietect ci on staged diff / archietect-guard.sh on file writes  │
-│  Agent CANNOT commit broken code. Works regardless of agent tool.   │
+│ LEVEL 2 — LOCAL HARD GATE (pre-commit hook)                         │
+│  archietect ci on staged diff — runs at git commit time             │
+│  Agent CANNOT commit broken code regardless of what it wrote.       │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │ if bypassed with --no-verify...
                                 ▼
@@ -608,10 +611,11 @@ ladder is designed so each tier catches what the previous one missed:
 
 | Layer | Enforcement | What the AI can do |
 |---|---|---|
-| MCP verify_edit | Cooperative (5ms, in-memory) | Fix errors before writing |
-| MCP query tools | Cooperative (concept, impact, claim) | Query before deciding |
-| Pre-tool-use hook | Hard (file create intercepted) | Must acknowledge or abort |
-| Pre-commit hook | Hard (commit rejected) | Cannot commit without passing |
+| MCP verify_edit | Cooperative — harness-dependent | Fix errors before writing |
+| MCP query tools | Cooperative — harness-dependent | Query before deciding |
+| Pre-tool-use hook | Cooperative — harness-dependent | Must acknowledge or abort |
+| Pre-commit hook | Hard — runs at git commit regardless | Cannot commit without passing |
+| CI gate | Hard — remote, un-bypassable | Cannot merge without passing |
 | CI gate | Before any PR merges | Cannot merge without passing |
 
 Each layer catches what the previous one missed. Together they make it
