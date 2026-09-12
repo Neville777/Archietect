@@ -566,7 +566,124 @@ pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     })
 }
 
+/// Field-level impact: `archietect impact User.email`
+///
+/// Returns the subset of files that (a) use the `User` concept AND (b)
+/// contain a reference to the specific field name `email`. This is a
+/// pure query-time filter — no new scan pass. The concept-level usage
+/// list tells us which files touch `User`; a cheap case-insensitive
+/// string search over those files' source narrows it to the ones that
+/// actually reference that column/field specifically.
+///
+/// What counts as a field reference (honest about the limitation):
+/// We search for the field name as an identifier-boundary match in the
+/// source of each usage file, read fresh from disk at query time (same
+/// pattern as source_snippet). This catches `user.email`, `.email =`,
+/// `["email"]`, `SELECT email FROM`, `email:` in JSON/TS. It will
+/// produce false positives for a field named `id` or `name` (too generic)
+/// and false negatives for aliased access (`u.e` where e = email). The
+/// honest framing: this is evidence of LIKELY field access, not proof —
+/// same "risk, not proof" stance as `duplicates`.
+fn impact_field(
+    idx: &Index,
+    graph: &StructuralGraph,
+    concept_term: &str,
+    field_name: &str,
+    original_term: &str,
+) -> Value {
+    // 1. Resolve the concept normally
+    let r = if idx.concepts.contains_key(concept_term) {
+        concept_card(idx, graph, concept_term, concept_term)
+    } else {
+        concept(idx, graph, concept_term)
+    };
+    let canon = match r["canonical"].as_str().map(String::from) {
+        Some(c) => c,
+        None => return json!({
+            "target": original_term,
+            "verdict": "ABSENT",
+            "note": format!("Concept '{}' not found — cannot check field '{}'", concept_term, field_name),
+        }),
+    };
+
+    // 2. Validate the field exists in the concept's declared fields
+    let concept_fields = idx.concepts.get(&canon)
+        .map(|c| c.fields.clone())
+        .unwrap_or_default();
+    let field_exists = concept_fields.iter().any(|f| f.eq_ignore_ascii_case(field_name));
+
+    // 3. Get all files that use the concept
+    let usage_files: Vec<String> = idx.concepts.get(&canon)
+        .map(|c| c.usage.iter().map(|(f, _)| f.clone()).collect())
+        .unwrap_or_default();
+
+    // 4. Filter to files that actually reference the field name
+    // Read source fresh — same as source_snippet, deterministic.
+    let field_lower = field_name.to_lowercase();
+    // Word-boundary pattern: field must appear as an identifier, not as
+    // a substring of a longer word. Use a simple heuristic: preceded and
+    // followed by non-alphanumeric-non-underscore characters.
+    let mut field_usage_files: Vec<String> = Vec::new();
+    for file in &usage_files {
+        let path = std::path::Path::new(&idx.root).join(file);
+        if let Ok(source) = std::fs::read_to_string(&path) {
+            let lower = source.to_lowercase();
+            // Check for word-boundary occurrence of the field name
+            let mut found = false;
+            let bytes = lower.as_bytes();
+            let field_bytes = field_lower.as_bytes();
+            let flen = field_bytes.len();
+            for i in 0..bytes.len().saturating_sub(flen) {
+                if &bytes[i..i + flen] == field_bytes {
+                    let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+                    let after_ok = i + flen >= bytes.len() || !bytes[i + flen].is_ascii_alphanumeric() && bytes[i + flen] != b'_';
+                    if before_ok && after_ok {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if found {
+                field_usage_files.push(file.clone());
+            }
+        }
+    }
+
+    json!({
+        "target": original_term,
+        "concept": canon,
+        "field": field_name,
+        "field_declared": field_exists,
+        "concept_fields": concept_fields,
+        "usage_files_total": usage_files.len(),
+        "field_usage_files": field_usage_files,
+        "severity": if field_usage_files.len() > 5 { "HIGH" } else if !field_usage_files.is_empty() { "MODERATE" } else { "NONE OBSERVED" },
+        "note": if field_exists {
+            format!("'{}' is a declared field of '{}'. {} of {} concept-usage files contain a reference to it.", field_name, canon, field_usage_files.len(), usage_files.len())
+        } else {
+            format!("'{}' is NOT in {}'s declared fields ({}). Field references searched anyway.", field_name, canon, concept_fields.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+        },
+        "evidence_note": "field_usage_files = files that use the concept AND contain the field name at an identifier boundary (word-boundary string search, case-insensitive). Evidence of LIKELY field access — not proof. Generic field names (id, name, type) will produce false positives.",
+    })
+}
+
+
+
+
 pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
+    // Column-level query: "User.email" — split on first dot, validate the
+    // field exists in the concept, then return only the files that both
+    // use the concept AND contain a reference to that specific field name.
+    // This is a pure query-side feature — no new scan pass needed because
+    // the concept-level usage is already tracked and the field name search
+    // is a cheap per-file string scan over the already-indexed usage files.
+    if let Some(dot) = term.find('.') {
+        let concept_term = &term[..dot];
+        let field_name = &term[dot + 1..];
+        if !field_name.is_empty() && !field_name.contains('.') {
+            return impact_field(idx, graph, concept_term, field_name, term);
+        }
+    }
     // law-010 generalized: exact key first (see owner())
     let r = if idx.concepts.contains_key(term) {
         concept_card(idx, graph, term, term)
