@@ -10,3 +10,52 @@
 # report 3 fake duplicate-storage risks — found by dogfooding the tool on
 # itself the same day this exclude was missing.
 exclude = ["validation", "target", "tests/fixtures"]
+
+[[decision]]
+id = "no-ai-in-query-path"
+decision = "No LLM or probabilistic model is ever invoked inside the engine"
+because = "determinism is the entire trust model — an answer that could vary between runs is worse than no answer"
+rejected = ["LLM-assisted concept ranking", "embedding-based similarity search", "GPT-reranked results"]
+links = ["Index", "Evidence", "Tier"]
+
+[[decision]]
+id = "three-verdict-states-only"
+decision = "Every concept query returns exactly one of KNOWN, KNOWN_ABSENT, or INSUFFICIENT_COVERAGE"
+because = "a fourth state (UNCERTAIN, MAYBE, PROBABLE) would let callers build on ambiguous ground — the three states force honesty at the boundary"
+rejected = ["confidence scores", "probability ranges", "PROBABLE verdict"]
+links = ["Concept", "Evidence"]
+
+[[decision]]
+id = "symbol-import-primitives-for-all-domains"
+decision = "Every new domain (Terraform, Kubernetes, dbt) maps into the existing Symbol and Import primitives in StructuralGraph"
+because = "impact(), claim(), and structural_dependents() then work across all domains for free with zero new query logic"
+rejected = ["domain-specific graph types", "separate IaC graph", "separate data lineage graph"]
+links = ["StructuralGraph", "Symbol", "Index"]
+
+[[decision]]
+id = "sqlite-fast-path-for-read-only"
+decision = "Read-only query commands (concept, impact, claim, doctor, etc.) load from archietect.db without scanning the filesystem"
+because = "a 637MB repo took 4.4s per query when every call ran scan_with_prior; the index is already persisted and valid until --refresh or init is run"
+rejected = ["always-incremental scan on every query", "in-memory-only index with no persistence"]
+links = ["Index", "store"]
+
+[[decision]]
+id = "proposal-protocol-for-ai-changes"
+decision = "AI agents propose changes via the proposal protocol; they never commit or self-modify the laws"
+because = "a tool that lets AI rewrite its own invariants has no invariants — the proposal/test/accept flow keeps a human in the loop at the boundary that matters"
+rejected = ["auto-accept proposals that pass tests", "AI-writable laws directory", "self-updating index without review"]
+links = ["Index"]
+
+[[decision]]
+id = "lexical-extractors-unless-ast-needed"
+decision = "Language extractors use regex/lexical matching by default; a real AST parser (syn, tree-sitter) is used only where the claim is a syntactic fact"
+because = "a parser adds real complexity and a real compile-time dependency; for framework annotations and route conventions the evidence IS lexical, so a lexical observer is the honest choice"
+rejected = ["tree-sitter for all languages", "full AST parsing for route extraction"]
+links = ["StructuralGraph", "Symbol"]
+
+[[decision]]
+id = "three-transports-one-engine"
+decision = "CLI, REST, and MCP all call the same query functions in query.rs with no business logic duplicated in any transport"
+because = "business logic in a transport layer creates drift — the same query asked over CLI vs MCP must produce identical output"
+rejected = ["MCP-specific ranking logic", "REST-only features", "CLI shortcuts that bypass evidence checks"]
+links = ["Index"]
