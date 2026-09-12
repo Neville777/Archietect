@@ -476,14 +476,68 @@ against a project can never drop its history or decisions.
 
 The hardest part of any architectural tool is making it actually run instead
 of getting ignored. Passive instructions (README files, AGENTS.md) are read
-once and forgotten under pressure. Archietect uses three **active enforcement
-layers** that fire automatically — no reliance on the AI remembering:
+once and forgotten under pressure. Archietect uses a **3-tier enforcement
+ladder** — each tier a progressively harder mechanical gate, not a reminder.
 
-### Layer 1 — Pre-tool-use hook (blocks bad writes before they happen)
+### The honest distinction: cooperative vs. hard gates
+
+`verify_edit` and the MCP query tools (`concept`, `impact`, `claim`) are
+**Level 1 — cooperative pre-flight**: they give a well-behaved agent instant
+in-memory feedback before writing to disk, but an agent under context
+pressure can technically skip them. Knowing this matters — don't overclaim.
+
+The pre-commit hook and CI gate are **hard mechanical interlocks**: the
+agent physically cannot record broken code to git history or merge it into
+main, regardless of what it did locally or which tool it skipped.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ LEVEL 1 — COOPERATIVE PRE-FLIGHT (MCP tools, 5ms in-memory)        │
+│  verify_edit, concept, impact, claim, guard                         │
+│  Fast feedback before writing. Agent CAN skip under pressure.       │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ if agent skips...
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ LEVEL 2 — LOCAL HARD GATE (pre-commit hook, pre-tool-use hook)      │
+│  archietect ci on staged diff / archietect-guard.sh on file writes  │
+│  Agent CANNOT commit broken code. Works regardless of agent tool.   │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ if bypassed with --no-verify...
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ LEVEL 3 — REMOTE CONTAINMENT (CI gate, isolated runner)             │
+│  archietect ci in GitHub Actions on every PR                        │
+│  CANNOT merge into main. Runs on infrastructure the agent           │
+│  has no access to. The only truly un-bypassable gate.               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Layer 1a — `verify_edit` (pre-write AST gate, MCP + CLI)
+
+Before writing any source file to disk, an agent calls `verify_edit` with
+the full proposed content. Archietect validates syntax and checks for
+duplicate symbol declarations **in memory, in 5ms** — what `cargo build`
+catches in 75 seconds:
+
+```bash
+# CLI usage (pipe proposed content):
+cat proposed_content.rs | archietect verify-edit src/structural.rs
+
+# MCP usage (Claude Code, Cursor, Kiro — native tool call):
+# tool: verify_edit, args: { file: "src/structural.rs", content: "..." }
+```
+
+Returns `valid: true` (safe to write) or `valid: false` with exact error
+messages and exit code 2 (fix before writing). Catches:
+- Rust syntax errors via `syn` — unterminated literals, mismatched braces
+- Duplicate top-level symbol declarations (hard error for Rust, warning for
+  Python/TS/others where overloads are legitimate)
+
+### Layer 1b — Pre-tool-use hook (blocks duplicate concept writes)
 
 Intercepts every file-create attempt. If the new filename resolves to a
-concept that already exists in the index, the write is **blocked** with a
-message explaining what already exists and where.
+concept that already exists in the index, the write is **blocked**:
 
 ```
 archietect: 'RefundService' already resolves to a STRUCTURAL concept —
@@ -491,8 +545,7 @@ run `archietect concept RefundService` to see the evidence before creating
 this file. If this really is a new, unrelated thing, proceed.
 ```
 
-The AI cannot create the file without explicitly acknowledging it. Installed
-by `packaging/onboard.sh --claude-hook` (Claude Code) or
+Installed by `packaging/onboard.sh --claude-hook` (Claude Code) or
 `packaging/onboard.sh --cursor-hook` (Cursor).
 
 ### Layer 2 — Pre-commit hook (catches anything that slipped through)
@@ -522,12 +575,12 @@ Add this to your `.github/workflows/ci.yml` (or equivalent):
 Now a PR that introduces a duplicate or law violation **fails CI** and
 cannot be merged, even if both Layer 1 and Layer 2 were bypassed locally.
 
-### Layer 4 — MCP registration (AI queries archietect as a native tool)
+### MCP registration (AI queries archietect as native tools)
 
 When archietect is registered as an MCP server, the AI calls `concept`,
-`impact`, and `duplicates` as part of its own reasoning loop — not because
-it was told to, but because those tools appear in its context the same way
-file-read tools do. This is the difference between advice and capability.
+`impact`, `verify_edit`, `claim`, and `guard` as part of its own reasoning
+loop — not because it was told to, but because those tools appear in its
+context the same way file-read tools do.
 
 ```bash
 # Claude Code (global, all projects):
@@ -550,14 +603,15 @@ For other tools (Cursor, Kiro, Windsurf, etc.) — add to your MCP config:
 ### Why this works when AGENTS.md doesn't
 
 An instruction file is advice. A hook that exits with code 2 is a wall.
-An MCP tool that already exists in the AI's context is capability, not
-a reminder. The enforcement model is:
+An MCP tool in the agent's context is capability, not a reminder. The
+ladder is designed so each tier catches what the previous one missed:
 
-| Layer | When it fires | What the AI can do |
+| Layer | Enforcement | What the AI can do |
 |---|---|---|
-| MCP tools | Before the AI decides what to do | Query naturally, no friction |
-| Pre-tool-use hook | Before any file is written | Must acknowledge, or abort |
-| Pre-commit hook | Before any commit is recorded | Cannot commit without passing |
+| MCP verify_edit | Cooperative (5ms, in-memory) | Fix errors before writing |
+| MCP query tools | Cooperative (concept, impact, claim) | Query before deciding |
+| Pre-tool-use hook | Hard (file create intercepted) | Must acknowledge or abort |
+| Pre-commit hook | Hard (commit rejected) | Cannot commit without passing |
 | CI gate | Before any PR merges | Cannot merge without passing |
 
 Each layer catches what the previous one missed. Together they make it

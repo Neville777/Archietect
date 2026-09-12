@@ -202,7 +202,7 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "impact",
-            "description": "What is affected if this concept changes: files that observably use it (USED tier) and models that declare relations to it (DECLARED tier). Call before modifying any existing model or table.",
+            "description": "CALL THIS before refactoring, renaming, or deleting any core symbol, function, or model. Traces the AST import graph and call edges to depth 3. Returns every downstream file, background service, and test that will break. You MUST include all listed dependents in your change plan — a change that touches the concept without updating its dependents is incomplete.",
             "inputSchema": { "type": "object", "properties": {
                 "term": { "type": "string" },
                 "root": root_prop
@@ -242,7 +242,7 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "duplicates",
-            "description": "Suspected duplicate concepts in the repository: live pairs sharing a name token. Evidence of RISK, not proof — use to check whether territory is already claimed before proposing new concepts.",
+            "description": "CALL THIS when planning a new domain feature or adding a new concept. Scans the codebase for concepts that share name tokens or schemas. If a pair is returned, investigate before building — the territory may already be claimed under a different name.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
@@ -265,7 +265,7 @@ fn tool_defs_inner() -> Value {
         },
         {
             "name": "claim",
-            "description": "Verify a plain-language OR structured claim against the index. Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt. Free-form: pass 'statement'. Structured: pass 'type' (absence|usage-threshold|isolation) + 'target' + optional 'min'/'within'. UNVERIFIABLE is returned when coverage gaps prevent a confident answer — never silently treated as REFUTED.",
+            "description": "CALL THIS to verify architectural assumptions before executing changes. Tests whether a concept is genuinely absent (--type absence), actively adopted (--type usage-threshold), or strictly bounded to a directory (--type isolation). If it returns REFUTED, adjust your implementation plan to respect the violation list — do NOT proceed as if the claim were true.",
             "inputSchema": { "type": "object", "properties": {
                 "statement": { "type": "string", "description": "Free-form claim, e.g. 'RefundService does not exist' or 'User is used in more than 5 files'." },
                 "type": { "type": "string", "enum": ["absence", "usage-threshold", "isolation"], "description": "Structured claim type. Takes precedence over statement." },
