@@ -447,6 +447,16 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // one question. stdin is read one line at a time, sequentially, so a
     // plain HashMap needs no lock here either.
     let mut cache: std::collections::HashMap<PathBuf, (crate::model::Index, crate::structural::StructuralGraph)> = std::collections::HashMap::new();
+    // Track archietect.db mtime per root so the cache is invalidated
+    // when the index changes on disk (archietect init ran in another
+    // terminal, a migration updated the DB, etc.). Checked on every
+    // tool call — hot-reload in 55ms via load_cached, never stale.
+    let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> = std::collections::HashMap::new();
+    // Track archietect.db mtime per root — invalidate cache when the index
+    // changes on disk (e.g. `archietect init` ran in another terminal).
+    // Same 55ms load_cached path as the CLI fast-path fix; the session never
+    // goes stale silently. Checked on every tool call, not just at startup.
+    let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> = std::collections::HashMap::new();
     // Captured from `initialize`'s `clientInfo` (name/version) — every real
     // MCP client sends this per the protocol spec, and until now archietect
     // just ignored it. Recorded once per (session, root actually touched)
@@ -523,18 +533,32 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             let now = crate::humanize::now_ms();
                             flush_if_due(&mut guard, &root, now);
                         }
+                        // Hot-reload: if archietect.db changed on disk since
+                        // we last loaded it (archietect init, a migration, etc.)
+                        // evict the cache entry so the next block reloads it.
+                        // This is the fix for stale MCP answers: the in-process
+                        // cache now tracks DB mtime per root and re-runs
+                        // load_cached (55ms) the instant the file is newer.
+                        let db_path = root.join("archietect.db");
+                        let current_db_mtime = std::fs::metadata(&db_path)
+                            .and_then(|m| m.modified())
+                            .ok();
+                        if let Some(current) = current_db_mtime {
+                            let known = db_mtimes.get(&root).copied();
+                            if known.map(|k| k != current).unwrap_or(false) {
+                                // DB changed — evict stale cache entry
+                                cache.remove(&root);
+                            }
+                            db_mtimes.insert(root.clone(), current);
+                        }
                         let prior = cache.remove(&root);
                         // Fast path: if the in-process cache already has a
                         // warm index for this root, use it directly without
                         // scanning the filesystem at all. The cache is
                         // populated on the first call (cold path below) and
-                        // stays valid until the process is restarted or
-                        // `archietect init` is run externally (at which point
-                        // the binary's stale-warning fires and the user is
-                        // told to restart the session anyway). This is the
-                        // MCP equivalent of the CLI's index_for_query fast
-                        // path — same principle: a read-only query has no
-                        // reason to re-walk 400+ files when the index is warm.
+                        // stays valid until the process is restarted.
+                        // Hot-reload (above) ensures stale entries are evicted
+                        // when archietect.db changes on disk.
                         let (idx, graph) = match prior {
                             Some((s, g)) => (s, g),
                             None => {
