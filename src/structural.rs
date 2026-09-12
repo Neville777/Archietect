@@ -6554,6 +6554,7 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
         // Call the raw extractor directly — NOT extract_file() — because
         // extract_file() deduplicates symbols before returning, which would
         // hide the very duplicates we're trying to catch.
+        let hard_error = ext == "rs"; // only Rust guarantees duplicate top-level names are compile errors
         let mut symbols: Vec<Symbol> = Vec::new();
         let mut imports: Vec<Import> = Vec::new();
         let mut routes: Vec<Route> = Vec::new();
@@ -6572,12 +6573,13 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
                     .map(|&i| format!("line {}", symbols[i].line))
                     .collect();
                 let sym_name = key.split("::").next().unwrap_or(key);
-                errors.push(format!(
+                let msg = format!(
                     "Duplicate symbol '{sym_name}' declared {} times in {file_path} (at {}). \
                      Remove the old declaration before inserting the new one.",
                     indices.len(),
                     lines.join(", ")
-                ));
+                );
+                if hard_error { errors.push(msg); } else { warnings.push(msg); }
             }
         }
     } else {
