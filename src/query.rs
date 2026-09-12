@@ -1734,10 +1734,15 @@ mod status_git_section_tests {
             resources.iter().any(|r| r["kind"] == "git_repository"),
             "expected a git_repository resource in status's git section, got: {resources:?}"
         );
-        assert!(
-            resources.iter().any(|r| r["kind"] == "git_branch"),
-            "expected a git_branch resource (this repo has a checked-out branch)"
-        );
+        // git_branch is only present on a branch checkout — tag/detached-HEAD
+        // checkouts (CI release run on v* tag) have no branch by definition.
+        let head = std::fs::read_to_string(root.join(".git/HEAD")).unwrap_or_default();
+        if head.trim_start().starts_with("ref: refs/heads/") {
+            assert!(
+                resources.iter().any(|r| r["kind"] == "git_branch"),
+                "expected a git_branch resource (this repo has a checked-out branch)"
+            );
+        }
     }
 
     /// A project-level `[domains] git = "disabled"` override must make the

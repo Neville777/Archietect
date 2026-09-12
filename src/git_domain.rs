@@ -218,6 +218,16 @@ mod tests {
     #[test]
     fn scan_finds_current_branch_as_observed() {
         let resources = scan(&this_repo_root());
+        // This test only makes sense on a branch checkout — tag/detached-HEAD
+        // checkouts (e.g. the CI release run that checked out v0.1.x) have no
+        // branch by definition, so skip rather than fail with a misleading
+        // "expected branch" message.
+        let head = std::fs::read_to_string(this_repo_root().join(".git/HEAD"))
+            .unwrap_or_default();
+        if !head.trim_start().starts_with("ref: refs/heads/") {
+            // detached HEAD — no branch resource expected, nothing to assert
+            return;
+        }
         let branch = resources.iter().find(|r| r.kind == "git_branch");
         assert!(branch.is_some(), "expected a git_branch resource for a non-detached checkout");
         let branch = branch.unwrap();
