@@ -314,9 +314,13 @@ enum Cmd {
         /// Minimum observed usage count (for usage-threshold)
         #[arg(long)]
         min: Option<usize>,
-        /// Scope restriction: concept must only appear within this directory/domain (for isolation)
+        /// Scope restriction: concept must only appear within this directory/domain (for isolation).
+        /// Comma-separated for multiple allowed prefixes: --within src,tests
         #[arg(long)]
         within: Option<String>,
+        /// Exclude path prefixes from violation checks (comma-separated, e.g. tests)
+        #[arg(long)]
+        exclude: Option<String>,
     },
     /// LIVE container state — shells out to `docker compose ps`, unlike
     /// every other command in this binary. Deliberately its own explicit
@@ -651,10 +655,10 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Doctor => { let (idx, g) = index_for_query(&root, refresh); query::doctor(&idx, &g, &root) }
         Cmd::Tour => { let (idx, g) = index_for_query(&root, refresh); query::tour(&idx, &g) }
-        Cmd::Claim { statement, r#type, target, min, within } => {
+        Cmd::Claim { statement, r#type, target, min, within, exclude } => {
             let (idx, g) = index_for_query(&root, refresh);
             if let Some(claim_type) = r#type {
-                query::claim_structured(&idx, &g, &claim_type, target.as_deref(), min, within.as_deref())
+                query::claim_structured(&idx, &g, &claim_type, target.as_deref(), min, within.as_deref(), exclude.as_deref())
             } else {
                 let stmt = statement.join(" ");
                 query::claim(&idx, &g, &stmt)

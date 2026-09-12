@@ -271,7 +271,8 @@ fn tool_defs_inner() -> Value {
                 "type": { "type": "string", "enum": ["absence", "usage-threshold", "isolation"], "description": "Structured claim type. Takes precedence over statement." },
                 "target": { "type": "string", "description": "Concept name for structured claims." },
                 "min": { "type": "number", "description": "Minimum usage count for usage-threshold claims." },
-                "within": { "type": "string", "description": "Directory prefix for isolation claims, e.g. 'ghost-engine'." },
+                "within": { "type": "string", "description": "Directory prefix for isolation claims. Comma-separated for multiple allowed scopes: 'src,tests'. E.g. 'src'." },
+                "exclude": { "type": "string", "description": "Optional comma-separated path prefixes to exempt from isolation violations, e.g. 'tests' to ignore test files. Use to avoid false positives from test directories that legitimately reference internal code." },
                 "root": root_prop
             } }
         },
@@ -592,6 +593,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         args.get("target").and_then(|v| v.as_str()),
                                         args.get("min").and_then(|v| v.as_u64()).map(|n| n as usize),
                                         args.get("within").and_then(|v| v.as_str()),
+                                        args.get("exclude").and_then(|v| v.as_str()),
                                     )
                                 } else {
                                     query::claim(&idx, &graph, args["statement"].as_str().unwrap_or(""))

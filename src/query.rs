@@ -2925,6 +2925,7 @@ pub fn claim_structured(
     target: Option<&str>,
     min: Option<usize>,
     within: Option<&str>,
+    exclude: Option<&str>,
 ) -> Value {
     let target = match target {
         Some(t) => t,
@@ -3009,13 +3010,29 @@ pub fn claim_structured(
                 });
             }
 
+            // Parse comma-separated within prefixes: "src,tests" → ["src", "tests"]
+            let within_prefixes: Vec<&str> = scope.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            // Parse comma-separated exclude prefixes: "tests,vendor" → ["tests", "vendor"]
+            let exclude_prefixes: Vec<&str> = exclude
+                .map(|e| e.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+
+            let is_allowed = |file: &str| -> bool {
+                // Excluded paths are always allowed (not violations)
+                if exclude_prefixes.iter().any(|ex| file.starts_with(ex)) {
+                    return true;
+                }
+                // File must start with at least one within prefix
+                within_prefixes.iter().any(|prefix| file.starts_with(prefix))
+            };
+
             // Check schema usage (ORM calls etc.)
             let outside_files: Vec<String> = concept_result["used_by_files"]
                 .as_array()
                 .map(|files| {
                     files.iter()
                         .filter_map(|f| f.as_str())
-                        .filter(|f| !f.starts_with(scope))
+                        .filter(|f| !is_allowed(f))
                         .map(|f| f.to_string())
                         .collect()
                 })
@@ -3024,7 +3041,7 @@ pub fn claim_structured(
             // Check structural dependents
             let structural_outside: Vec<String> = crate::structural::structural_dependents(graph, target, 3)
                 .into_iter()
-                .filter(|d| !d.file.starts_with(scope))
+                .filter(|d| !is_allowed(&d.file))
                 .map(|d| d.file)
                 .collect();
 
@@ -3033,6 +3050,8 @@ pub fn claim_structured(
                 .chain(structural_outside)
                 .collect();
 
+            let within_display = within_prefixes.join(", ");
+            let exclude_display = if exclude_prefixes.is_empty() { String::new() } else { format!(" (excluding: {})", exclude_prefixes.join(", ")) };
             json!({
                 "claim_type": "isolation",
                 "target": target,
@@ -3040,7 +3059,7 @@ pub fn claim_structured(
                 "verdict": if all_outside.is_empty() { "CONFIRMED" } else { "REFUTED" },
                 "violations": all_outside.iter().take(20).collect::<Vec<_>>(),
                 "receipt": {
-                    "checked": format!("all usages of '{target}' outside '{scope}'"),
+                    "checked": format!("all usages of '{target}' outside '{within_display}'{exclude_display}"),
                     "engine": "tree-sitter-ast + import-graph",
                 },
             })
