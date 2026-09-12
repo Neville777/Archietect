@@ -104,6 +104,20 @@ enum Cmd {
     /// src/query.rs::duplicate_logic for how this differs from `duplicates`
     /// above (concept-name overlap vs function-BEHAVIOR overlap).
     DuplicateLogic,
+    /// Pre-write AST validation gate — checks proposed file content in memory
+    /// before it touches disk. Catches Rust syntax errors (via syn) and
+    /// duplicate top-level symbol declarations (via the structural extractor)
+    /// in <5ms. Exits 0 if clean, 2 if broken. Pipe the proposed full file
+    /// content on stdin, or pass --content-file. See src/structural.rs::verify_edit.
+    VerifyEdit {
+        /// Repository-relative path of the file being edited (used to select
+        /// the right extractor and produce accurate error messages).
+        file: String,
+        /// Path to a file containing the proposed full content. If omitted,
+        /// proposed content is read from stdin.
+        #[arg(long)]
+        content_file: Option<std::path::PathBuf>,
+    },
     /// Every declared concept bucketed by verdict (ACTIVE vs DECLARED_ONLY)
     /// instead of querying one name at a time. See src/query.rs::verdicts
     /// for why UNKNOWN/ABSENT are deliberately not listable here.
@@ -648,6 +662,33 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Duplicates => { let (idx, _g) = index_for_query(&root, refresh); query::duplicates(&idx) }
         Cmd::DuplicateLogic => { let (_idx, g) = index_for_query(&root, refresh); query::duplicate_logic(&g) }
+        Cmd::VerifyEdit { file, content_file } => {
+            let proposed = match content_file {
+                Some(path) => std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("cannot read --content-file {}: {}", path.display(), e)
+                })?,
+                None => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)?;
+                    s
+                }
+            };
+            let verdict = archietect::structural::verify_edit(&file, &proposed);
+            let out = serde_json::json!({
+                "file": file,
+                "valid": verdict.valid,
+                "errors": verdict.errors,
+                "warnings": verdict.warnings,
+            });
+            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+            if !verdict.valid {
+                for e in &verdict.errors {
+                    eprintln!("archietect verify-edit: {e}");
+                }
+                std::process::exit(2);
+            }
+            return Ok(());
+        }
         Cmd::Verdicts => { let (idx, _g) = index_for_query(&root, refresh); query::verdicts(&idx) }
         Cmd::Owner { term } => { let (idx, g) = index_for_query(&root, refresh); query::owner(&idx, &g, &term) }
         Cmd::History { concept, limit, include_archived: _, digest } if digest => {

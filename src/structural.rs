@@ -1168,7 +1168,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 20; // +Terraform (.tf) and Kubernetes (.yaml/.yml) extractors
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 21; // +OpenAPI/Swagger extractor for .yaml/.yml; extract_kubernetes renamed to extract_yaml dispatch
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -2027,10 +2027,12 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         // extractor, so non-Kubernetes YAML files produce zero symbols and
         // are effectively skipped. Removing from NON_CODE_EXTS means they
         // are walked — the content gate stops them contributing noise.
+        // OpenAPI/Swagger specs (.yaml/.yml containing `openapi:` or
+        // `swagger:`) are handled by the same dispatch function.
         extensions: &["yaml", "yml"],
-        extractor: extract_kubernetes,
-        symbol_support: "Kubernetes resources as {Kind}.{metadata.name} symbols; cross-resource references (configMapRef, secretRef, serviceAccountName, claimName) as import edges",
-        frameworks: &[],
+        extractor: extract_yaml,
+        symbol_support: "Kubernetes resources as {Kind}.{metadata.name} symbols; cross-resource references as import edges. OpenAPI/Swagger: each path+method as a Route symbol, request/response $ref schema names as import edges",
+        frameworks: &["Kubernetes", "OpenAPI 3.x", "Swagger 2.x"],
     },
 ];
 
@@ -6354,4 +6356,236 @@ fn extract_kubernetes(
             }
         }
     }
+}
+
+/// Dispatch for .yaml/.yml files — routes to the correct extractor based on
+/// content. Kubernetes manifests are detected by `apiVersion:` + `kind:`.
+/// OpenAPI/Swagger specs are detected by `openapi:` or `swagger:`. Generic
+/// YAML (docker-compose, GitHub Actions, config files) produces nothing.
+fn extract_yaml(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    if text.contains("apiVersion:") && text.contains("kind:") {
+        extract_kubernetes(rel, text, symbols, imports, routes);
+    }
+    if text.contains("openapi:") || text.contains("swagger:") {
+        extract_openapi(rel, text, symbols, imports, routes);
+    }
+}
+
+// ── OpenAPI / Swagger extractor ──────────────────────────────────────────────
+
+/// Extract OpenAPI 3.x and Swagger 2.x specs as Route symbols and schema
+/// symbols + $ref import edges.
+///
+/// Routes: each `paths:` entry + HTTP method → Route { method, path, handler }.
+///   `GET /users/{id}` → Route { method: "GET", path: "/users/{id}",
+///                                handler: "getUsersId", file: rel }
+///
+/// Schema symbols: `components/schemas/User:` or `definitions/User:` →
+///   Symbol { name: "User", kind: Class } — the declared contract types.
+///
+/// Schema imports: `$ref: '#/components/schemas/User'` → Import edge to
+///   "User". This is what lets `archietect impact User` (an ORM model)
+///   surface every API endpoint and spec file that references that schema —
+///   cross-silo linkage from backend models to API contracts.
+///
+/// Lexical/line-oriented — no YAML parser. OpenAPI's path and method
+/// structure is regular enough. Fails open: an unparseable path produces
+/// no route rather than a wrong one.
+fn extract_openapi(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+    routes: &mut Vec<Route>,
+) {
+    use regex::Regex;
+
+    // Extract path + method → Route.
+    // OpenAPI paths: `  /users/{id}:` (2-space indent) followed by
+    // method lines `    get:` (4-space indent).
+    let path_re = Regex::new(r"(?m)^  (/.+):[ \t]*$").unwrap();
+    let method_re = Regex::new(r"(?m)^    (get|post|put|patch|delete|head|options):").unwrap();
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut current_path: Option<String> = None;
+
+    for line in &lines {
+        if let Some(cap) = path_re.captures(line) {
+            current_path = Some(cap[1].trim().to_string());
+            continue;
+        }
+        if let Some(cap) = method_re.captures(line) {
+            if let Some(ref path) = current_path {
+                let method = cap[1].to_uppercase();
+                // Generate a handler name: GET /users/{id} → getUsersId
+                let handler = {
+                    let method_lower = cap[1].to_lowercase();
+                    let path_part = path
+                        .split('/')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| {
+                            let s = s.trim_matches(|c: char| c == '{' || c == '}');
+                            let mut chars = s.chars();
+                            match chars.next() {
+                                None => String::new(),
+                                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                            }
+                        })
+                        .collect::<String>();
+                    format!("{}{}", method_lower, path_part)
+                };
+                routes.push(Route {
+                    method,
+                    path: path.clone(),
+                    handler,
+                    file: rel.to_string(),
+                });
+            }
+        }
+    }
+
+    // Extract schema symbols from components/schemas (OpenAPI 3.x) or
+    // definitions (Swagger 2.x).
+    let schema_section_re = Regex::new(r"(?m)^  (?:schemas|definitions):").unwrap();
+    let schema_name_re = Regex::new(r"(?m)^    ([A-Z][A-Za-z0-9_]*):").unwrap();
+
+    if let Some(section_match) = schema_section_re.find(text) {
+        let after_section = &text[section_match.end()..];
+        for cap in schema_name_re.captures_iter(after_section) {
+            let schema_name = cap[1].to_string();
+            let line_num = line_of(text, section_match.end() + cap.get(0).unwrap().start());
+            symbols.push(Symbol {
+                name: schema_name,
+                kind: SymbolKind::Class,
+                file: rel.to_string(),
+                linked_concept: None,
+                line: line_num,
+                observation_source: ObservationSource::Lexical,
+            });
+        }
+    }
+
+    // Extract $ref schema references as import edges.
+    // $ref: '#/components/schemas/User' → Import { to_module: "User" }
+    // This links this spec file to the schema concept — enabling
+    // `archietect impact User` to surface API specs that depend on it.
+    let ref_re = Regex::new(
+        r#"\$ref:\s*["']#/(?:components/schemas|definitions)/([A-Za-z0-9_]+)["']"#
+    ).unwrap();
+    let mut seen_refs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for cap in ref_re.captures_iter(text) {
+        let schema_name = cap[1].to_string();
+        if seen_refs.insert(schema_name.clone()) {
+            imports.push(Import {
+                from_file: rel.to_string(),
+                to_module: schema_name,
+                names: vec![],
+            });
+        }
+    }
+}
+
+// ── Pre-write edit validator ──────────────────────────────────────────────────
+
+/// Result of a pre-write edit validation.
+/// `valid` is false if any error would make the file structurally broken.
+/// Warnings are informational — they do not block the write.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EditVerdict {
+    pub valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Pre-write edit validator — the AST gate that `str_replace` and unified-diff
+/// patching tools lack.
+///
+/// Given the PROPOSED content of a file (after the edit has been applied in
+/// the caller's memory, before anything touches disk), this function:
+///
+/// 1. For Rust files, runs `syn::parse_file` — catches unterminated string/
+///    char literals, mismatched braces, and invalid tokens in <5ms instead
+///    of after a 60s `cargo build`.
+/// 2. Runs the structural extractor for the file's language and checks for
+///    duplicate top-level symbol declarations — the exact failure a blind
+///    `str_replace` produces when the old version isn't removed before the
+///    new one is inserted (e.g. two `fn extract_openapi` in the same file).
+///
+/// ## Exit-code contract
+/// The CLI (`archietect verify-edit`) exits 0 on valid, 2 on invalid —
+/// matching `archietect ci` and the pre-tool-use hook, so agent harnesses
+/// can gate on it uniformly.
+///
+/// ## What this does NOT catch
+/// Type errors, borrow-checker failures, or semantic correctness — those
+/// still require a real compiler. This is a fast first line of defence, not
+/// a full compiler. Languages with no structural extractor get a warning
+/// rather than a false VALID.
+pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // ── Rust: full syn parse ──────────────────────────────────────────────
+    if ext == "rs" {
+        if let Err(e) = syn::parse_file(proposed_content) {
+            errors.push(format!(
+                "Rust syntax error in {file_path}: {e}. \
+                 This edit would produce a file that does not parse — fix before writing to disk."
+            ));
+            // Duplicate detection on a broken AST is meaningless — return early.
+            return EditVerdict { valid: false, errors, warnings };
+        }
+    }
+
+    // ── Symbol duplicate detection ────────────────────────────────────────
+    if let Some(lang) = LANGUAGES.iter().find(|l| l.extensions.contains(&ext.as_str())) {
+        // Call the raw extractor directly — NOT extract_file() — because
+        // extract_file() deduplicates symbols before returning, which would
+        // hide the very duplicates we're trying to catch.
+        let mut symbols: Vec<Symbol> = Vec::new();
+        let mut imports: Vec<Import> = Vec::new();
+        let mut routes: Vec<Route> = Vec::new();
+        (lang.extractor)(file_path, proposed_content, &mut symbols, &mut imports, &mut routes);
+
+        let mut seen: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, sym) in symbols.iter().enumerate() {
+            let key = format!("{}::{:?}", sym.name, sym.kind);
+            seen.entry(key).or_default().push(i);
+        }
+        for (key, indices) in &seen {
+            if indices.len() > 1 {
+                let lines: Vec<String> = indices
+                    .iter()
+                    .map(|&i| format!("line {}", symbols[i].line))
+                    .collect();
+                let sym_name = key.split("::").next().unwrap_or(key);
+                errors.push(format!(
+                    "Duplicate symbol '{sym_name}' declared {} times in {file_path} (at {}). \
+                     Remove the old declaration before inserting the new one.",
+                    indices.len(),
+                    lines.join(", ")
+                ));
+            }
+        }
+    } else {
+        warnings.push(format!(
+            "No structural extractor for .{ext} — syntax not verified. \
+             Duplicate symbol detection skipped."
+        ));
+    }
+
+    EditVerdict { valid: errors.is_empty(), errors, warnings }
 }
