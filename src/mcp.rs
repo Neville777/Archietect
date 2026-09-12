@@ -256,6 +256,14 @@ fn tool_defs_inner() -> Value {
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
+            "name": "verify_edit",
+            "description": "Pre-write AST validation gate — validates proposed file content IN MEMORY before it touches disk. Pass the FULL proposed content of the file (after your edit has been applied in memory). Returns valid:true/false with exact error messages. CALL THIS before any fs_write or file-patching operation on a source file. Catches in <5ms what cargo build finds in 75s: Rust syntax errors (unterminated literals, mismatched braces via syn) and duplicate top-level symbol declarations in any supported language (the exact failure a blind str_replace produces when the old version is not removed before the new one is inserted). Exit: valid:true = safe to write; valid:false with errors = fix before writing.",
+            "inputSchema": { "type": "object", "required": ["file", "content"], "properties": {
+                "file": { "type": "string", "description": "Repository-relative path of the file being edited, e.g. src/structural.rs. Used to select the right extractor." },
+                "content": { "type": "string", "description": "The FULL proposed file content after your edit has been applied in memory. Not a diff — the complete new file text." }
+            } }
+        },
+        {
             "name": "claim",
             "description": "Verify a plain-language OR structured claim against the index. Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt. Free-form: pass 'statement'. Structured: pass 'type' (absence|usage-threshold|isolation) + 'target' + optional 'min'/'within'. UNVERIFIABLE is returned when coverage gaps prevent a confident answer — never silently treated as REFUTED.",
             "inputSchema": { "type": "object", "properties": {
@@ -568,6 +576,17 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "duplicates" => query::duplicates(&idx),
                             "duplicate_logic" => query::duplicate_logic(&graph),
                             "verdicts" => query::verdicts(&idx),
+                            "verify_edit" => {
+                                let file = args["file"].as_str().unwrap_or("");
+                                let proposed = args["content"].as_str().unwrap_or("");
+                                let verdict = crate::structural::verify_edit(file, proposed);
+                                json!({
+                                    "file": file,
+                                    "valid": verdict.valid,
+                                    "errors": verdict.errors,
+                                    "warnings": verdict.warnings,
+                                })
+                            }
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),
                             "tour" => query::tour(&idx, &graph),
