@@ -184,6 +184,7 @@ fn is_scannable_ext(ext: &str) -> bool {
 const NON_CODE_EXTS: &[&str] = &[
     "md", "markdown", "txt", "rst", "adoc", "json", "toml", "ini",
     "cfg", "conf", "lock", "lockb", "env", "editorconfig", "gitignore", "gitattributes",
+    "code-workspace", "tsbuildinfo", // IDE workspace config and TypeScript build metadata
     "png", "jpg", "jpeg", "gif", "svg", "ico", "bmp", "webp", "avif",
     "woff", "woff2", "ttf", "eot", "otf",
     "css", "scss", "sass", "less", "html", "htm", "xml", "csv", "tsv",

@@ -1807,12 +1807,13 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
             })
             .map(|d| json!({ "id": d.id, "decision": d.decision, "rejected": d.rejected }))
             .collect();
-        let c = &idx.concepts[canon];
+        // Structural symbols have owners and impact, but no schema relations.
+        let related = idx.concepts.get(canon).map(|c| c.relations.as_slice()).unwrap_or_default();
         planned.push(json!({
             "concept": e["concept"],
             "canonical": canon,
             "canonical_location": own["owner_directory"],
-            "related": c.relations,
+            "related": related,
             "existing_decisions": decisions,
             "impact_if_changed": imp["severity"],
             "affected_files": imp["used_by_files"],
@@ -2270,6 +2271,50 @@ mod intent_tests {
             "'widget' must not be confidently claimed as create-worthy when coverage is insufficient, got: {out}"
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn plan_handles_structural_components_and_preserves_schema_relations() {
+        let (idx, graph, tmp) = scan_tmp(
+            "plan-mixed",
+            &[
+                ("src/AdminProtectedRoute.tsx", "export function AdminProtectedRoute() { return null; }\n"),
+                ("schema.prisma", "model Church {\n  id Int @id\n  members Member[]\n}\nmodel Member {\n  id Int @id\n}\n"),
+            ],
+        );
+        assert_eq!(concept(&idx, &graph, "AdminProtectedRoute")["verdict"], "STRUCTURAL");
+        let out = plan(&idx, &graph, "AdminProtectedRoute");
+        let component = &out["extend"][0];
+        assert_eq!(component["canonical"], "AdminProtectedRoute", "{out}");
+        assert_eq!(component["canonical_location"], "src");
+        assert_eq!(component["related"], json!([]));
+        assert!(component["impact_if_changed"].is_string());
+
+        let out = plan(&idx, &graph, "Church");
+        assert_eq!(out["extend"][0]["canonical"], "Church", "{out}");
+        assert!(!idx.concepts["Church"].relations.is_empty());
+        assert_eq!(out["extend"][0]["related"], json!(idx.concepts["Church"].relations));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn metadata_does_not_mask_absence_but_unknown_source_still_does() {
+        let (idx, graph, tmp) = scan_tmp(
+            "metadata-coverage",
+            &[
+                ("project.code-workspace", "{}"),
+                ("project.tsbuildinfo", "{}"),
+                ("bundle.js.map", "{}"),
+                ("package.lock", ""),
+                ("bun.lockb", ""),
+            ],
+        );
+        assert_eq!(concept(&idx, &graph, "Glimmerpod")["verdict"], "ABSENT");
+        std::fs::write(tmp.join("handler.lua"), "function Glimmerpod() end\n").unwrap();
+        let out = concept(&idx, &graph, "Glimmerpod");
+        assert_eq!(out["verdict"], "INSUFFICIENT_COVERAGE");
+        assert_eq!(out["next_action"]["read"], json!(["handler.lua"]));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
