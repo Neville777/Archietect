@@ -5469,6 +5469,16 @@ const config = () => ({});
         );
     }
 
+    #[test]
+    fn finds_typed_react_component_const_declaration() {
+        let src = "export const SignUpPage: React.FC<Props> = () => null;\n";
+        let mut symbols = Vec::new();
+        let mut imports = Vec::new();
+        let mut routes = Vec::new();
+        extract_ts_js("src/SignUpPage.tsx", src, &mut symbols, &mut imports, &mut routes);
+        assert!(symbols.iter().any(|s| s.name == "SignUpPage" && s.kind == SymbolKind::Function), "{symbols:?}");
+    }
+
     /// An exported PascalCase function must not be recorded twice (once by
     /// the pre-existing `export`-anchored pattern, once by the new
     /// unexported-local pattern) — `extract_file`'s own `dedup_by` collapses

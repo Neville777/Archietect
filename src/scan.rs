@@ -805,7 +805,11 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("prisma".into());
         }
     }
-    if name == "models.py" && text.contains("models.Model") {
+    if name == "models.py"
+        && (text.contains("models.Model")
+            || text.contains("models.")
+            || Regex::new(r"(?m)^class\s+\w+\s*\([^)]*Model[^)]*\):").unwrap().is_match(text))
+    {
         let before = decls.len();
         extract_django(text, &mut decls);
         if decls.len() > before {
@@ -959,20 +963,26 @@ fn extract_prisma(text: &str, out: &mut Vec<DeclFragment>) {
 }
 
 fn extract_django(text: &str, out: &mut Vec<DeclFragment>) {
-    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\([^)]*Model[^)]*\)\s*:").unwrap();
+    let class_re = Regex::new(r"(?m)^class\s+(\w+)\s*\(([^)]*)\)\s*:").unwrap();
     let field_re = Regex::new(r"(?m)^    (\w+)\s*=\s*models\.").unwrap();
     let rel_re =
         Regex::new(r#"models\.(?:ForeignKey|OneToOneField|ManyToManyField)\(\s*['"]?(\w+)"#)
             .unwrap();
     let top_re = Regex::new(r"(?m)^\S").unwrap();
-    let starts: Vec<(usize, String)> = class_re
+    let starts: Vec<(usize, String, String)> = class_re
         .captures_iter(text)
-        .map(|c| (c.get(0).unwrap().end(), c[1].to_string()))
+        .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
         .collect();
-    for (start, name) in starts {
+    for (start, name, bases) in starts {
         let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
         let body = &text[start..body_end];
         let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let is_model = bases.split(',').any(|b| b.trim().ends_with("Model"))
+            || !fields.is_empty()
+            || body.contains("class Meta:");
+        if !is_model {
+            continue;
+        }
         let mut relations: Vec<String> = rel_re
             .captures_iter(body)
             .map(|r| r[1].to_string())
@@ -983,6 +993,21 @@ fn extract_django(text: &str, out: &mut Vec<DeclFragment>) {
         // table stays None: Django's real table name needs the app label, and
         // we do not guess.
         out.push(DeclFragment { name, kind: "django".into(), fields, relations, table: None });
+    }
+}
+
+#[cfg(test)]
+mod django_model_tests {
+    use super::*;
+
+    #[test]
+    fn custom_model_bases_and_fieldful_models_py_classes_are_schema_declarations() {
+        let text = "class Member(TenantModel):\n    email = models.EmailField()\n\nclass Contribution(AuditedModel):\n    amount = models.DecimalField()\n\nclass PlainHelper: pass\n";
+        let mut out = Vec::new();
+        extract_django(text, &mut out);
+        assert!(out.iter().any(|d| d.name == "Member" && d.kind == "django"));
+        assert!(out.iter().any(|d| d.name == "Contribution" && d.kind == "django"));
+        assert!(!out.iter().any(|d| d.name == "PlainHelper"));
     }
 }
 
