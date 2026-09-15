@@ -255,6 +255,31 @@ pub struct Index {
     /// update when the project opts into architectural-reasoning enforcement.
     #[serde(default)]
     pub decision_required_paths: Vec<String>,
+    /// Policy enforcement mode from archietect.toml. Missing means preventive
+    /// for backward compatibility with the original hard gate.
+    #[serde(default)]
+    pub enforcement: EnforcementLevel,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementLevel {
+    Advisory,
+    #[default]
+    Preventive,
+    ApprovalRequired,
+}
+
+impl std::str::FromStr for EnforcementLevel {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "advisory" => Ok(Self::Advisory),
+            "preventive" => Ok(Self::Preventive),
+            "approval_required" | "approval-required" => Ok(Self::ApprovalRequired),
+            other => Err(format!("unknown enforcement level {other:?}")),
+        }
+    }
 }
 
 /// What one file contributed, cached against (size, mtime, extractor version).

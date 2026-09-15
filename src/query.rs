@@ -1710,15 +1710,26 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
     }
 
     let change = crate::mutation::evaluate(idx, graph, diff);
-    violations.extend(change["violations"].as_array().cloned().unwrap_or_default());
+    if change["enforcement_level"] != serde_json::json!(crate::model::EnforcementLevel::Advisory) {
+        violations.extend(change["violations"].as_array().cloned().unwrap_or_default());
+    }
 
     let fail = !violations.is_empty() || (strict && !warnings.is_empty());
+    let mutation_count = change["mutations"].as_array().map(|m| m.len()).unwrap_or(0);
     json!({
         "pass": !fail,
         "violations": violations,
         "warnings": warnings,
         "strict": strict,
         "change": change,
+        "enforcement_level": idx.enforcement,
+        "governance_receipt": {
+            "verdict": if fail { "BLOCKED" } else if !warnings.is_empty() { "WARNING" } else { "PASSED" },
+            "enforcement_level": idx.enforcement,
+            "mutation_count": mutation_count,
+            "engine": env!("CARGO_PKG_VERSION"),
+            "remediation": if fail { json!({"required_action":"review_mutation", "next_command":"archietect mutations"}) } else { Value::Null },
+        },
         "note": "violations = CREATE TABLE colliding with an existing canonical (always fails). warnings = new declaration whose NAME collides (name evidence only; fails only under --strict, because related concepts legitimately share vocabulary).",
     })
 }

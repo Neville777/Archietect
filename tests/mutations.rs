@@ -75,6 +75,18 @@ fn new_django_model_requires_applicable_multiline_decision() {
 }
 
 #[test]
+fn advisory_mode_reports_without_blocking() {
+    let repo = Repo::new();
+    repo.write("archietect.toml", "[policy]\nenforcement = \"advisory\"\ndecision_required_paths = [\"src\", \"backend\"]\n");
+    repo.stage("archietect.toml");
+    repo.contribution();
+    let (code, out) = repo.ci();
+    assert_eq!(code, 0, "advisory mode must not block: {out:#}");
+    assert_eq!(out["governance_receipt"]["verdict"], "PASSED");
+    assert_eq!(out["governance_receipt"]["enforcement_level"], "advisory");
+}
+
+#[test]
 fn unstaged_decision_cannot_authorize_staged_model() {
     let repo = Repo::new();
     repo.contribution();

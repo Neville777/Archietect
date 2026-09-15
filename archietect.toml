@@ -41,6 +41,14 @@ links = ["Decision", "Mutation"]
 proposed_by = "human"
 
 [[decision]]
+id = "policy-enforcement-levels"
+decision = "Policy evaluation exposes advisory and preventive enforcement levels through one governance receipt."
+because = "Teams need a safe onboarding mode while retaining a deterministic blocking mode for protected changes."
+rejected = ["Forcing every repository into blocking enforcement immediately"]
+links = ["Index", "Decision"]
+proposed_by = "human"
+
+[[decision]]
 id = "no-ai-in-query-path"
 decision = "No LLM or probabilistic model is ever invoked inside the engine"
 because = "determinism is the entire trust model — an answer that could vary between runs is worse than no answer"

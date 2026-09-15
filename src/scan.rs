@@ -411,6 +411,11 @@ pub fn scan_with_prior(
         .and_then(|v| v.as_array().cloned())
         .map(|a| a.into_iter().filter_map(|x| x.as_str().map(String::from)).collect())
         .unwrap_or_default();
+    idx.enforcement = std::fs::read_to_string(root.join("archietect.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .and_then(|v| v.get("policy").and_then(|p| p.get("enforcement")).and_then(|v| v.as_str()).map(|s| s.parse().unwrap_or_default()))
+        .unwrap_or_default();
 
     // ── file inventory with metadata ────────────────────────────────────────
     let files: Vec<ScannableFile> = WalkDir::new(root)
