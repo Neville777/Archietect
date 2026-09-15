@@ -604,6 +604,7 @@ fn main() -> anyhow::Result<()> {
 
     let out = match cmd {
         Cmd::Init => {
+            bootstrap_policy(&root)?;
             let (idx, graph) = scan::scan(&root);
             let path = store::save(&idx, &graph, &root)?;
             serde_json::json!({
@@ -1043,6 +1044,26 @@ fn main() -> anyhow::Result<()> {
     };
     if exit_code != 0 {
         std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
+/// Give a newly onboarded repository the hard architectural-reasoning gate
+/// without overwriting an existing ontology. Projects can edit the protected
+/// prefixes after init; rerunning init is idempotent.
+fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
+    let path = root.join("archietect.toml");
+    if path.exists() {
+        let text = std::fs::read_to_string(&path)?;
+        if text.contains("decision_required_paths") {
+            return Ok(());
+        }
+        let mut updated = text;
+        if !updated.ends_with('\n') { updated.push('\n'); }
+        updated.push_str("\n[policy]\n# Hard gate for architectural source changes. Edit the prefixes for this project.\ndecision_required_paths = [\"src\"]\n");
+        std::fs::write(path, updated)?;
+    } else {
+        std::fs::write(path, "# Archietect project policy — edit protected prefixes as needed.\n[policy]\ndecision_required_paths = [\"src\"]\n")?;
     }
     Ok(())
 }
