@@ -171,6 +171,7 @@
 use notify::Watcher as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -478,9 +479,16 @@ fn handle_request(
         // patches and tokens stay out of browser history and URL limits.
         if req.method().to_string().eq_ignore_ascii_case("POST") {
             let mut body = String::new();
-            if req.as_reader().read_to_string(&mut body).is_ok() {
+            let mut limited = req.as_reader().take(8 * 1024 * 1024 + 1);
+            if limited.read_to_string(&mut body).is_ok() && body.len() <= 8 * 1024 * 1024 {
                 let (_, body_params) = params(&format!("/?{body}"));
                 p.extend(body_params);
+            } else {
+                let response = tiny_http::Response::from_string("{\"error\":\"request body exceeds 8 MiB limit\"}")
+                    .with_status_code(413)
+                    .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap());
+                let _ = req.respond(response);
+                return;
             }
         }
 
