@@ -141,7 +141,7 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 14; // robust Rust raw-string test-module stripping
+pub const EXTRACTOR_VERSION: u32 = 15; // test-directory and test-file SQL filtering
 
 // `.claude`: Claude Code's `isolation: "worktree"` agents leave a full
 // checkout of (part of) the repo under `.claude/worktrees/<agent>/...`. A
@@ -781,7 +781,9 @@ fn strip_rust_test_modules(text: &str) -> String {
 fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
     // Test fixtures may contain literal CREATE TABLE strings and schemas used
     // to exercise the extractor. They are not production ontology declarations.
-    let in_tests = path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("tests"));
+    let in_tests = path.components().any(|c| {
+        matches!(c.as_os_str().to_str(), Some("test" | "tests" | "__tests__"))
+    });
     let in_fixture = path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("fixtures"));
     let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -912,7 +914,8 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
     // Explicit schema files remain authoritative even when stored under a
     // test fixture directory; only embedded declarations in test source are
     // excluded from the production ontology.
-    let allow_embedded_sql = !in_tests || in_fixture || ext == "sql";
+    let test_file = name.contains(".test.") || name.contains(".spec.");
+    let allow_embedded_sql = (!in_tests && !test_file) || in_fixture || ext == "sql";
     if allow_embedded_sql && (text.contains("CREATE TABLE") || text.contains("create table")) {
         let before = decls.len();
         extract_sql(ext == "sql", text, &mut decls);
@@ -1025,6 +1028,14 @@ mod django_model_tests {
         let path = std::path::Path::new("/tmp/project/tests/laws.rs");
         let (decls, _) = extract_declarations(path, "CREATE TABLE ghosts (id INT);");
         assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn singular_test_directories_and_test_named_files_do_not_extract_embedded_sql() {
+        let sql = "CREATE TABLE ghosts (id INT);";
+        assert!(extract_declarations(std::path::Path::new("/tmp/project/test/setup.ts"), sql).0.is_empty());
+        assert!(extract_declarations(std::path::Path::new("/tmp/project/src/setup.test.ts"), sql).0.is_empty());
+        assert!(!extract_declarations(std::path::Path::new("/tmp/project/test/schema.sql"), sql).0.is_empty());
     }
 
     #[test]
