@@ -453,11 +453,6 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // terminal, a migration updated the DB, etc.). Checked on every
     // tool call — hot-reload in 55ms via load_cached, never stale.
     let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> = std::collections::HashMap::new();
-    // Track archietect.db mtime per root — invalidate cache when the index
-    // changes on disk (e.g. `archietect init` ran in another terminal).
-    // Same 55ms load_cached path as the CLI fast-path fix; the session never
-    // goes stale silently. Checked on every tool call, not just at startup.
-    let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> = std::collections::HashMap::new();
     // Captured from `initialize`'s `clientInfo` (name/version) — every real
     // MCP client sends this per the protocol spec, and until now archietect
     // just ignored it. Recorded once per (session, root actually touched)

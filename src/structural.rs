@@ -566,9 +566,21 @@ pub(crate) fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(us
     let mut depth = 0i32;
     let mut i = open;
     let mut in_string: Option<u8> = None;
+    let mut raw_hashes: Option<usize> = None;
     let quote_chars: &[u8] = if ext == "rs" { b"\"`" } else { b"'\"`" };
     while i < bytes.len() {
         let b = bytes[i];
+        if let Some(hashes) = raw_hashes {
+            if b == b'"' {
+                let end = i + 1 + hashes;
+                if end <= bytes.len() && bytes[i + 1..end].iter().all(|&x| x == b'#') {
+                    raw_hashes = None;
+                    i = end;
+                }
+            }
+            i += 1;
+            continue;
+        }
         if let Some(q) = in_string {
             if b == b'\\' {
                 i += 2;
@@ -578,6 +590,18 @@ pub(crate) fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(us
                 in_string = None;
             }
         } else {
+            if ext == "rs" && b == b'r' {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] == b'#' {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'"' {
+                    raw_hashes = Some(j - (i + 1));
+                    i = j;
+                    i += 1;
+                    continue;
+                }
+            }
             match b {
                 b if quote_chars.contains(&b) => in_string = Some(b),
                 b'{' => depth += 1,
@@ -1184,7 +1208,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 22; // Rust crate-root import resolution
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 23; // Rust raw-string-aware brace scanning
 
 // ── Public API ───────────────────────────────────────────────────────────────
 

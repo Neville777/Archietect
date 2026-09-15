@@ -141,7 +141,7 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 13; // test-source schema filtering and Django custom-base coverage
+pub const EXTRACTOR_VERSION: u32 = 14; // robust Rust raw-string test-module stripping
 
 // `.claude`: Claude Code's `isolation: "worktree"` agents leave a full
 // checkout of (part of) the repo under `.claude/worktrees/<agent>/...`. A
@@ -1024,6 +1024,30 @@ mod django_model_tests {
         let path = std::path::Path::new("/tmp/project/tests/laws.rs");
         let (decls, _) = extract_declarations(path, "CREATE TABLE ghosts (id INT);");
         assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn raw_rust_test_fixture_is_removed_before_sql_extraction() {
+        let path = std::path::Path::new("/tmp/project/src/example.rs");
+        let source = r##"
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fixture() {
+        let value = r#"{"sql":"CREATE TABLE ghosts (id INT);"}"#;
+    }
+}
+"##;
+        let (decls, _) = extract_declarations(path, source);
+        assert!(decls.is_empty(), "test-only raw-string SQL leaked: {decls:?}");
+    }
+
+    #[test]
+    fn this_source_has_no_test_sql_declarations_after_stripping() {
+        let source = include_str!("scan.rs");
+        let (decls, _) = extract_declarations(std::path::Path::new("src/scan.rs"), source);
+        assert!(!decls.iter().any(|d| d.name == "ghosts"), "ghost fixture survived extraction: {decls:?}");
+        assert!(!decls.iter().any(|d| d.name == "widgets"), "widget fixture survived extraction: {decls:?}");
     }
 }
 

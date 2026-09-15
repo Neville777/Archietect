@@ -599,7 +599,7 @@ fn main() -> anyhow::Result<()> {
         | Cmd::Verdicts | Cmd::Duplicates | Cmd::Tour | Cmd::Owner { .. }
         | Cmd::Claim { .. } | Cmd::ConceptAt { .. } | Cmd::Intent { .. }
         | Cmd::Plan { .. } | Cmd::Imports { .. } | Cmd::Guard { .. }
-        | Cmd::Duplicates | Cmd::DuplicateLogic | Cmd::Register { .. }
+        | Cmd::DuplicateLogic | Cmd::Register { .. }
     );
 
     let out = match cmd {
