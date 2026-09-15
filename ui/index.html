@@ -934,7 +934,18 @@ async function runGovernance(){
 async function submitGovernanceProposal(){
   const s=$('proposalStatus'), token=($('proposalToken')||{}).value||'', patch=($('proposalPatch')||{}).value||'', title=($('proposalTitle')||{}).value||'Architectural decision';
   if(!token||!patch){s.textContent=' token and TOML patch are required';s.className='bad';return;} s.textContent=' submitting…';
-  try { const q=new URLSearchParams({root:$('root').value,token,kind:'decision',title,patch}); const d=await fetch(`/proposal/submit?${q}`).then(r=>r.json()); s.textContent=d.error?` ${d.error}`:` submitted proposal ${d.id||''}`; s.className=d.error?'bad':'ok'; }
+  try {
+    const q=new URLSearchParams({root:$('root').value,token,kind:'decision',title,patch}); const d=await fetch(`/proposal/submit?${q}`).then(r=>r.json());
+    if(d.error){s.textContent=` ${d.error}`;s.className='bad';}
+    else {s.innerHTML=` submitted proposal <b>${esc(d.id||'')}</b> <button onclick="proposalAction(${Number(d.id)||0},'test')">test</button> <button onclick="proposalAction(${Number(d.id)||0},'accept')">accept</button> <button onclick="proposalAction(${Number(d.id)||0},'reject')">reject</button>`;s.className='ok';}
+  }
+  catch(e){s.textContent=` ${e}`;s.className='bad';}
+}
+async function proposalAction(id, action){
+  const s=$('proposalStatus'), token=($('proposalToken')||{}).value||'';
+  if(!token){s.textContent=' token is required';s.className='bad';return;}
+  s.textContent=` ${action}ing…`; s.className='muted';
+  try { const q=new URLSearchParams({root:$('root').value,token,id:String(id)}); const d=await fetch(`/proposal/${action}?${q}`).then(r=>r.json()); s.textContent=d.error?` ${d.error}`:` ${action} complete for proposal ${id}`; s.className=d.error?'bad':'ok'; }
   catch(e){s.textContent=` ${e}`;s.className='bad';}
 }
 
