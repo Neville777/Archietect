@@ -67,9 +67,10 @@ fn objects(path: &str, text: &str) -> (BTreeMap<String, (String, Value)>, Vec<St
     let (facts, uncertainty) = crate::structural::extract_snapshot(path, text);
     let sources = crate::structural::symbol_sources(path, text);
     let mut uncertainty = uncertainty;
+    let cfg_guarded = rust_cfg_guarded_duplicates(path, text);
     let mut seen_symbols = BTreeSet::new();
     for symbol in &facts.symbols {
-        if !seen_symbols.insert(symbol.name.clone()) {
+        if !seen_symbols.insert(symbol.name.clone()) && !cfg_guarded.contains(&symbol.name) {
             uncertainty.push(format!("Duplicate symbol identity '{}' in {path}", symbol.name));
         }
     }
@@ -80,7 +81,7 @@ fn objects(path: &str, text: &str) -> (BTreeMap<String, (String, Value)>, Vec<St
     let mut declared = BTreeSet::new();
     for capture in declaration_names.captures_iter(text) {
         let name = capture[1].to_string();
-        if !declared.insert(name.clone()) {
+        if !declared.insert(name.clone()) && !cfg_guarded.contains(&name) {
             uncertainty.push(format!("Duplicate declaration identity '{}' in {path}", name));
         }
     }
@@ -106,6 +107,32 @@ fn objects(path: &str, text: &str) -> (BTreeMap<String, (String, Value)>, Vec<St
         objects.insert(format!("route::{value}"), (path.into(), value));
     }
     (objects, uncertainty)
+}
+
+/// Rust permits complementary platform implementations under `#[cfg(...)]`.
+/// They share a source-level name but only one exists in a compiled target, so
+/// treating that pair as an ambiguous duplicate makes ordinary cross-platform
+/// maintenance impossible. This only suppresses a duplicate when *every*
+/// declaration of that name is directly cfg-guarded; an ordinary duplicate
+/// remains UNKNOWN and therefore fails closed.
+fn rust_cfg_guarded_duplicates(path: &str, text: &str) -> BTreeSet<String> {
+    if !path.ends_with(".rs") { return BTreeSet::new(); }
+    let re = regex::Regex::new(r"^(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let mut pending_cfg = false;
+    let mut flags: BTreeMap<String, Vec<bool>> = BTreeMap::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#[cfg(") { pending_cfg = true; continue; }
+        if let Some(capture) = re.captures(trimmed) {
+            flags.entry(capture[1].to_string()).or_default().push(pending_cfg);
+            pending_cfg = false;
+        } else if !trimmed.is_empty() && !trimmed.starts_with("#[") && !trimmed.starts_with("///") {
+            pending_cfg = false;
+        }
+    }
+    flags.into_iter().filter_map(|(name, declarations)| {
+        (declarations.len() > 1 && declarations.iter().all(|guarded| *guarded)).then_some(name)
+    }).collect()
 }
 
 fn compare(change: &crate::patch::FileChange, graph: &StructuralGraph) -> Vec<Mutation> {

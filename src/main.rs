@@ -1109,7 +1109,11 @@ fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
 fn detect_source_roots(root: &std::path::Path) -> Vec<String> {
     let candidates = ["src", "app", "apps", "packages", "services", "backend", "api", "core"];
     let mut found: Vec<String> = candidates.iter().filter(|name| root.join(name).is_dir()).map(|name| (*name).to_string()).collect();
-    if found.is_empty() { found.push("src".to_string()); }
+    // Flat-layout repositories commonly keep Django models, Python modules,
+    // Go packages, or small Rust binaries at the root. Falling back to a
+    // nonexistent `src/` silently disables the policy gate for exactly those
+    // projects; `.` deliberately protects every code file the scanner finds.
+    if found.is_empty() { found.push(".".to_string()); }
     found
 }
 
@@ -1149,6 +1153,24 @@ mod tests {
     #[test]
     fn urlencode_leaves_safe_characters_alone() {
         assert_eq!(urlencode("abcXYZ019-_.~/:"), "abcXYZ019-_.~/:");
+    }
+
+    #[test]
+    fn flat_layout_bootstrap_protects_the_repository_root() {
+        let root = std::env::temp_dir().join(format!("archietect-flat-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(detect_source_roots(&root), vec!["."]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conventional_source_root_beats_flat_layout_fallback() {
+        let root = std::env::temp_dir().join(format!("archietect-src-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("backend")).unwrap();
+        assert_eq!(detect_source_roots(&root), vec!["backend"]);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -128,6 +128,16 @@ fn duplicate_symbol_identity_is_unknown() {
 }
 
 #[test]
+fn cfg_guarded_rust_implementations_are_not_duplicate_mutations() {
+    let repo = Repo::new();
+    repo.write("src/lib.rs", "#[cfg(unix)]\nfn platform_hook() {}\n#[cfg(not(unix))]\nfn platform_hook() {}\n");
+    repo.stage("src/lib.rs");
+    let (code, out) = repo.ci();
+    assert_eq!(code, 0, "{out:#}");
+    assert!(!out.to_string().contains("Duplicate declaration identity 'platform_hook'"), "{out:#}");
+}
+
+#[test]
 fn pure_file_rename_preserves_structural_identity() {
     let repo = Repo::new();
     repo.write("src/worker.rs", "pub fn worker() -> u32 { 1 }\n");
