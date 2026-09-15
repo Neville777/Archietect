@@ -60,6 +60,8 @@ enum Cmd {
         #[command(subcommand)]
         action: HookAction,
     },
+    /// Remove Archietect-managed local integration points. Project data stays.
+    Uninstall,
     /// Dump every subcommand, its description, and its exit codes as JSON.
     /// Machine-readable help for AI agents and tooling — generated from the
     /// same dispatch table the binary runs, so it can never drift.
@@ -634,6 +636,14 @@ fn main() -> anyhow::Result<()> {
             })
         }
         Cmd::Hook { action } => hook_command(&root, action)?,
+        Cmd::Uninstall => {
+            let result = hook_command(&root, HookAction::Uninstall)?;
+            serde_json::json!({
+                "hook": result,
+                "data_preserved": ["archietect.db", "archietect.toml"],
+                "note": "Remove MCP registrations and user daemons through their owning tools; Archietect never edits global editor or service configuration."
+            })
+        }
         Cmd::Status => { let (idx, g) = index_for_query(&root, refresh); query::status(&idx, &g) }
         Cmd::Concept { term } => { let (idx, g) = index_for_query(&root, refresh); query::concept(&idx, &g, &term) }
         Cmd::ConceptAt { term, version } => {
@@ -1108,7 +1118,7 @@ fn hook_command(root: &std::path::Path, action: HookAction) -> anyhow::Result<se
             let mut text = old;
             if text.is_empty() { text.push_str("#!/bin/sh\n"); }
             if !text.ends_with('\n') { text.push('\n'); }
-            text.push_str(&format!("\n{BEGIN}\ngit diff --cached | archietect ci\n{END}\n"));
+            text.push_str(&format!("\n{BEGIN}\nif command -v archietect >/dev/null 2>&1; then\n  git diff --cached | archietect ci\nfi\n{END}\n"));
             std::fs::write(&path, text)?;
             #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; let mut p = std::fs::metadata(&path)?.permissions(); p.set_mode(0o755); std::fs::set_permissions(&path, p)?; }
             Ok(serde_json::json!({"installed": true, "changed": true, "hook": path.display().to_string()}))
@@ -1178,6 +1188,7 @@ fn help_json() -> serde_json::Value {
     serde_json::json!([
         { "command": "init",             "description": "Scan the repository and persist the index (archietect.db)", "exit_codes": {"0": "success"} },
         { "command": "hook install|uninstall", "description": "Install or remove the local pre-commit architectural gate", "exit_codes": {"0": "success", "1": "not a git repository"} },
+        { "command": "uninstall",          "description": "Remove Archietect-managed local hook integration while preserving project data", "exit_codes": {"0": "success"} },
         { "command": "status",           "description": "Summary of what the index knows — and what it admits it cannot see", "exit_codes": {"0": "success"} },
         { "command": "concept <term>",   "description": "Does this concept exist? Which implementation is canonical? Evidence-tiered answer.", "exit_codes": {"0": "success"} },
         { "command": "intent <goal>",    "description": "From a stated intent to the smallest correct change — EXTEND vs CREATE", "exit_codes": {"0": "success"} },
