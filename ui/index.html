@@ -106,6 +106,7 @@
   <button data-tab="overview" class="active" onclick="show('overview')">overview</button>
   <button data-tab="timeline" onclick="show('timeline')">timeline</button>
   <button data-tab="drift" onclick="show('drift')">drift</button>
+  <button data-tab="governance" onclick="show('governance')" title="review a Git diff against architectural policy and submit a decision proposal">governance</button>
   <button data-tab="laws" onclick="show('laws')">laws</button>
   <button data-tab="memory" onclick="show('memory')" title="every file archietect currently holds facts for — persistent, not tied to an in-flight scan">memory</button>
   <button data-tab="query" onclick="show('query')" title="owner, impact, guard, plan, tour, verdicts, register, permissions, docker observe, documents/photos/messages scan — CLI/MCP-only elsewhere">query</button>
@@ -523,12 +524,12 @@ async function show(name){
   // project, same as "query") — same race the query tab already documents
   // above: a synchronous render with no scan in flight loses to the
   // poller's first tick every time, so it's excluded the same way.
-  if (name !== 'query' && name !== 'projects') {
+  if (name !== 'query' && name !== 'projects' && name !== 'governance') {
     startProgressPolling(gen, signal, started);
     startLiveTimer(gen, started);
   }
   try {
-    await ({overview, timeline, drift, laws, memory, query, projects})[name](gen, signal);
+    await ({overview, timeline, drift, governance, laws, memory, query, projects})[name](gen, signal);
   } finally {
     // Only the load that's still current gets to stop polling/timer and
     // report a final time — see the "Load ownership" note above `startLoad`.
@@ -907,6 +908,34 @@ async function laws(gen, signal){
     <span class="stat"><b>v${d.stats.extractor_version}</b>extractor</span></div>
     <table><tr><th>law</th><th>statement</th></tr>
     ${d.laws.map(l=>`<tr><td>${esc(l.id)}</td><td>${esc(l.statement)}</td></tr>`).join('')}</table>`;
+}
+
+// Thin client of the deterministic mutation/policy engine. The browser never
+// edits source or archietect.toml; approval goes through the proposal API.
+let lastGovernancePatch = '';
+async function governance(gen, signal){
+  $('out').innerHTML = `<h3>governance review <span class="muted">(paste a full-index Git diff)</span></h3>
+    <textarea id="governanceDiff" rows="12" style="width:100%;box-sizing:border-box" placeholder="git diff --cached --full-index">${esc(lastGovernancePatch)}</textarea>
+    <div style="margin-top:.5rem"><button onclick="runGovernance()">review diff</button> <span id="governanceStatus" class="muted"></span></div>
+    <div id="governanceResult" class="card" style="margin-top:.7rem"><span class="muted">no review yet</span></div>`;
+}
+function renderGovernanceReceipt(d){
+  const r=d.governance_receipt||{}, c=d.change||{}, ms=c.mutations||[], vs=[...(d.violations||[]),...(c.violations||[])];
+  const verdict=r.verdict||(d.pass?'PASSED':'BLOCKED'), cls=verdict==='PASSED'?'ok':verdict==='WARNING'?'warn':'bad';
+  const rows=ms.map(m=>`<tr><td>${esc(m.kind)}</td><td><b>${esc(m.name||m.resource||'unknown')}</b></td><td class="muted">${esc(m.file||m.evidence||'')}</td></tr>`).join('');
+  return `<h3 class="${cls}">${esc(verdict)} <span class="muted">· ${esc(r.enforcement_level||c.enforcement_level||'preventive')}</span></h3><p>${ms.length} mutation${ms.length===1?'':'s'} observed · engine ${esc(r.engine||'—')}</p><table><tr><th>kind</th><th>resource</th><th>evidence</th></tr>${rows||'<tr><td colspan="3" class="muted">no structural mutations observed</td></tr>'}</table>${vs.length?`<h4 class="bad">policy findings</h4><ul>${vs.map(v=>`<li>${esc(typeof v==='string'?v:JSON.stringify(v))}</li>`).join('')}</ul>`:''}${verdict==='BLOCKED'?`<h4>submit a decision proposal</h4><input id="proposalTitle" style="width:100%;box-sizing:border-box" placeholder="Decision title"><textarea id="proposalPatch" rows="6" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="TOML patch containing [[decision]] and links = [...]"></textarea><input id="proposalToken" type="password" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="server token (printed by archietect serve)"><button style="margin-top:.4rem" onclick="submitGovernanceProposal()">submit proposal</button> <span id="proposalStatus" class="muted"></span>`:''}`;
+}
+async function runGovernance(){
+  const diff=($('governanceDiff')||{}).value||''; lastGovernancePatch=diff; const out=$('governanceResult'); if(!out)return;
+  out.innerHTML='<span class="muted">reviewing…</span>';
+  try { const q=new URLSearchParams({root:$('root').value,diff}); const d=await fetch(`/ci?${q}`).then(r=>r.json()); out.innerHTML=d.error?`<span class="bad">${esc(d.error)}</span>`:renderGovernanceReceipt(d); }
+  catch(e){out.innerHTML=`<span class="bad">${esc(e)}</span>`;}
+}
+async function submitGovernanceProposal(){
+  const s=$('proposalStatus'), token=($('proposalToken')||{}).value||'', patch=($('proposalPatch')||{}).value||'', title=($('proposalTitle')||{}).value||'Architectural decision';
+  if(!token||!patch){s.textContent=' token and TOML patch are required';s.className='bad';return;} s.textContent=' submitting…';
+  try { const q=new URLSearchParams({root:$('root').value,token,kind:'decision',title,patch}); const d=await fetch(`/proposal/submit?${q}`).then(r=>r.json()); s.textContent=d.error?` ${d.error}`:` submitted proposal ${d.id||''}`; s.className=d.error?'bad':'ok'; }
+  catch(e){s.textContent=` ${e}`;s.className='bad';}
 }
 
 // The only tab that works with NO root typed in at all — see show()'s own

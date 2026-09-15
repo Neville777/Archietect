@@ -150,7 +150,7 @@ pub fn evaluate(idx: &Index, graph: &StructuralGraph, diff: &str) -> Value {
     let enabled = !idx.decision_required_paths.is_empty();
     let changes = match crate::patch::materialize(Path::new(&idx.root), diff) {
         Ok(c) => c,
-        Err(reason) => return json!({"status": "UNKNOWN", "mutations": [unknown("patch", reason)], "violations": if enabled {vec![json!({"kind":"unknown_structural_mutation", "reason":"Cannot establish patch contents", "next_command":"git diff --full-index --no-ext-diff --no-textconv"})]} else {vec![]}}),
+        Err(reason) => return json!({"status": "UNKNOWN", "enforcement_level": idx.enforcement, "mutations": [unknown("patch", reason)], "violations": if enabled {vec![json!({"kind":"unknown_structural_mutation", "reason":"Cannot establish patch contents", "next_command":"git diff --full-index --no-ext-diff --no-textconv"})]} else {vec![]}}),
     };
     let mut mutations: Vec<_> = changes.iter().flat_map(|c| compare(c, graph)).collect();
     for m in &mut mutations {
@@ -170,5 +170,5 @@ pub fn evaluate(idx: &Index, graph: &StructuralGraph, diff: &str) -> Value {
                 "governing_decisions": m.governing_decisions, "required": "A changed decision in archietect.toml linked to this exact resource", "next_command":format!("archietect plan '{}'", m.resource)}));
         }
     }
-    json!({"status":if mutations.iter().any(|m| m.kind == MutationKind::Unknown) {"UNKNOWN"} else {"OBSERVED"}, "mutations":mutations, "violations":violations})
+    json!({"status":if mutations.iter().any(|m| m.kind == MutationKind::Unknown) {"UNKNOWN"} else {"OBSERVED"}, "enforcement_level":idx.enforcement, "mutations":mutations, "violations":violations})
 }
