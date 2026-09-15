@@ -195,6 +195,7 @@ const NON_CODE_EXTS: &[&str] = &[
     "db", "sqlite", "sqlite3", // archietect.db itself, and other embedded DBs
     "db-wal", "db-shm", "db-journal", // archietect.db's own WAL-mode sidecar files
     "icns", // macOS application icon bundles are assets, not source languages
+    "bak", "tag", // editor/backup metadata artifacts, not source languages
     "example", "local", "development", "template", // .env.example/.local/.development — not code
     "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
     "service", "plist", "unit", // systemd/launchd unit files — config, not code

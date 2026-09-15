@@ -2346,6 +2346,8 @@ mod intent_tests {
                 ("bundle.js.map", "{}"),
                 ("package.lock", ""),
                 ("bun.lockb", ""),
+                ("editor.bak", ""),
+                ("workspace.tag", ""),
             ],
         );
         assert_eq!(concept(&idx, &graph, "Glimmerpod")["verdict"], "ABSENT");
