@@ -126,3 +126,36 @@ fn duplicate_symbol_identity_is_unknown() {
     assert_eq!(code, 1, "{out:#}");
     assert!(out.to_string().contains("unknown_structural_mutation"), "{out:#}");
 }
+
+#[test]
+fn pure_file_rename_preserves_structural_identity() {
+    let repo = Repo::new();
+    repo.write("src/worker.rs", "pub fn worker() -> u32 { 1 }\n");
+    repo.stage("src/worker.rs");
+    repo.commit_base();
+    repo.git(&["mv", "src/worker.rs", "src/processor.rs"]);
+    let (code, out) = repo.ci();
+    assert_eq!(code, 0, "{out:#}");
+    let mutations = out["change"]["mutations"].as_array().expect("receipt mutations");
+    assert!(mutations.iter().any(|m| m["kind"] == "renamed" && m["evidence"].to_string().contains("worker.rs")), "{mutations:#?}");
+    assert!(!mutations.iter().any(|m| m["kind"] == "unknown"), "pure rename must not lose identity: {mutations:#?}");
+}
+
+#[test]
+fn import_target_change_is_reported_as_relationship_mutations() {
+    let repo = Repo::new();
+    repo.write("src/old.rs", "pub fn old() {}\n");
+    repo.write("src/new.rs", "pub fn new() {}\n");
+    repo.write("src/main.rs", "use crate::old;\nfn main() {}\n");
+    repo.stage("src/old.rs");
+    repo.stage("src/new.rs");
+    repo.stage("src/main.rs");
+    repo.commit_base();
+    repo.write("src/main.rs", "use crate::new;\nfn main() {}\n");
+    repo.stage("src/main.rs");
+    let (code, out) = repo.ci();
+    assert_eq!(code, 0, "{out:#}");
+    let mutations = out["change"]["mutations"].as_array().expect("receipt mutations");
+    assert!(mutations.iter().any(|m| m["kind"] == "relationship_removed"), "{mutations:#?}");
+    assert!(mutations.iter().any(|m| m["kind"] == "relationship_added"), "{mutations:#?}");
+}

@@ -9,7 +9,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum MutationKind { Added, Removed, Modified, RelationshipAdded, RelationshipRemoved, Unknown }
+pub enum MutationKind { Added, Removed, Modified, Renamed, RelationshipAdded, RelationshipRemoved, Unknown }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mutation {
@@ -121,7 +121,22 @@ fn compare(change: &crate::patch::FileChange, graph: &StructuralGraph) -> Vec<Mu
     }
     for key in before.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
         let b = before.get(key); let a = after.get(key);
-        if b == a { continue; }
+        if b == a {
+            if change.before_path != change.after_path {
+                let (name, value) = a.or(b).expect("equal object exists");
+                let object = key.split("::").next().unwrap();
+                let required = object == "concept" || deps.len() >= 10;
+                mutations.push(Mutation {
+                    resource: if object == "concept" { name.clone() } else { format!("{path}::{name}") },
+                    file: path.into(), object: object.into(), kind: MutationKind::Renamed,
+                    before: Some(value.clone()), after: Some(value.clone()),
+                    evidence: vec![format!("Verified unchanged object moved from '{}' to '{}'", before_path, path), "Dependent files are exact resolved imports from the supplied index, capped at three hops".into()],
+                    dependent_files: deps.clone(), decision_required: required,
+                    governing_decisions: vec![], supplied_decisions: vec![],
+                });
+            }
+            continue;
+        }
         let (name, _) = a.or(b).unwrap();
         let object = key.split("::").next().unwrap();
         let relation = object == "relationship" || object == "route";
@@ -130,17 +145,24 @@ fn compare(change: &crate::patch::FileChange, graph: &StructuralGraph) -> Vec<Mu
             (_, None, true) => MutationKind::RelationshipRemoved,
             (None, _, _) => MutationKind::Added,
             (_, None, _) => MutationKind::Removed,
+            // A pure Git move preserves the blob, so the observed object is
+            // still the same architectural object under a new owning path.
+            _ if change.before_path != change.after_path => MutationKind::Renamed,
             _ => MutationKind::Modified,
         };
         let required = object == "concept" || deps.len() >= 10;
-        mutations.push(Mutation { resource: if object == "concept" { name.clone() } else { format!("{path}::{name}") }, file: path.into(), object: object.into(), kind,
+        mutations.push(Mutation { resource: if object == "concept" { name.clone() } else { format!("{path}::{name}") }, file: path.into(), object: object.into(), kind: kind.clone(),
             before: b.map(|(_, v)| v.clone()), after: a.map(|(_, v)| v.clone()),
-            evidence: vec!["Compared extractor observations of verified patch contents".into(), "Dependent files are exact resolved imports from the supplied index, capped at three hops".into()],
+            evidence: if kind == MutationKind::Renamed {
+                vec![format!("Verified unchanged object moved from '{}' to '{}'", before_path, path), "Dependent files are exact resolved imports from the supplied index, capped at three hops".into()]
+            } else {
+                vec!["Compared extractor observations of verified patch contents".into(), "Dependent files are exact resolved imports from the supplied index, capped at three hops".into()]
+            },
             dependent_files: deps.clone(), decision_required: required,
             governing_decisions: vec![], supplied_decisions: vec![] });
     }
-    if change.before_path != change.after_path && !change.before.is_empty() && !change.after.is_empty() {
-        mutations.push(unknown(path, "File moved: identity continuity across paths has not been established".into()));
+    if change.before_path != change.after_path && before.is_empty() && after.is_empty() {
+        mutations.push(unknown(path, "File moved but no supported structural object established identity continuity".into()));
     }
     mutations
 }

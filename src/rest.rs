@@ -250,6 +250,60 @@ const MUTATING_ENDPOINTS: &[&str] = &[
     "/system/register",
 ];
 
+/// Browser writes must originate from the local GUI (or a local development
+/// frontend).  CLI/MCP clients do not send an Origin header, so an absent
+/// header remains valid; a supplied header is checked strictly.  The token
+/// gate is still required — this check prevents a page on an unrelated
+/// origin from using the operator's browser as a write-capable client.
+fn allowed_mutation_origin(req: &tiny_http::Request) -> bool {
+    let Some(origin) = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Origin"))
+        .map(|h| h.value.as_str().trim())
+    else {
+        return true;
+    };
+
+    let Some(host_port) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    if host_port.is_empty()
+        || host_port.contains(['/', '?', '#', '@'])
+        || host_port.contains('\0')
+    {
+        return false;
+    }
+
+    // Accept an optional numeric port, but never credentials, paths, or an
+    // arbitrary hostname.  Browsers serialize IPv6 loopback as [::1].
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        let Some(end) = rest.find(']') else { return false };
+        if &rest[..end] != "::1" || !valid_optional_port(&rest[end + 1..]) {
+            return false;
+        }
+        "::1"
+    } else {
+        let (host, port) = host_port
+            .rsplit_once(':')
+            .filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+            .map_or((host_port, None), |(host, port)| (host, Some(port)));
+        if let Some(port) = port {
+            if !valid_port(port) { return false; }
+        }
+        host
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+fn valid_optional_port(rest: &str) -> bool {
+    rest.is_empty() || (rest.starts_with(':') && valid_port(&rest[1..]))
+}
+
+fn valid_port(port: &str) -> bool {
+    !port.is_empty() && port.parse::<u16>().is_ok()
+}
+
 /// The warm cache, shared across request-handling threads — see `serve`'s
 /// doc comment on why this is no longer a single-threaded, lock-free
 /// HashMap: a `/scan-progress` poll must be answerable WHILE another thread
@@ -473,6 +527,21 @@ fn handle_request(
     started_mtime: Option<std::time::SystemTime>,
 ) {
         let (path, mut p) = params(req.url());
+        if MUTATING_ENDPOINTS.contains(&path.as_str()) && !allowed_mutation_origin(&req) {
+            let body = json!({
+                "error": "origin rejected — mutating REST requests must come from the local archietect GUI",
+            });
+            let response = tiny_http::Response::from_string(
+                serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+            )
+            .with_status_code(403)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+            let _ = req.respond(response);
+            return;
+        }
         // Mutating and large-payload clients may use POST with a standard
         // application/x-www-form-urlencoded body. Merge it with the query
         // parameters so every endpoint keeps one parameter model while
@@ -1062,15 +1131,53 @@ mod tests {
     }
 
     fn http_post_form(port: u16, path: &str, form: &str) -> (u16, String) {
+        http_post_form_with_origin(port, path, form, None)
+    }
+
+    fn http_post_form_with_origin(port: u16, path: &str, form: &str, origin: Option<&str>) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{form}", form.len());
+        let origin_header = origin.map(|o| format!("Origin: {o}\r\n")).unwrap_or_default();
+        let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{origin_header}Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{form}", form.len());
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = Vec::new();
         stream.read_to_end(&mut resp).expect("reading response");
         let resp = String::from_utf8_lossy(&resp);
         let status = resp.lines().next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         (status, resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+    }
+
+    fn form_encode(value: &str) -> String {
+        value
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                b => format!("%{b:02X}"),
+            })
+            .collect()
+    }
+
+    fn http_post_form_query_token(port: u16, path: &str, token: &str, fields: &[(&str, &str)]) -> (u16, String) {
+        let path = format!("{path}?token={}", form_encode(token));
+        let form = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", form_encode(key), form_encode(value)))
+            .collect::<Vec<_>>()
+            .join("&");
+        http_post_form(port, &path, &form)
+    }
+
+    fn init_git_project(project: &Path) {
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "rest-tests@example.invalid"][..],
+            &["config", "user.name", "REST tests"][..],
+            &["add", "README.md"][..],
+            &["commit", "-qm", "initial"][..],
+        ] {
+            let out = Command::new("git").current_dir(project).args(args).output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        }
     }
 
     // Fixed, widely-spaced high ports — distinct per test so they can run
@@ -1246,6 +1353,26 @@ mod tests {
     }
 
     #[test]
+    fn mutating_requests_reject_non_local_origins_but_allow_local_gui() {
+        let home = tmp_dir("home-origin-guard");
+        let project = tmp_dir("project-origin-guard");
+        let (_guard, token) = spawn_server(&project, &home, 17413);
+        let form = format!("token={token}&kind=decision&title=origin-check");
+
+        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("https://evil.example"));
+        assert_eq!(status, 403, "cross-origin mutation must be rejected before token evaluation");
+
+        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("http://localhost:3000"));
+        assert_ne!(status, 403, "localhost GUI origin should pass origin validation");
+
+        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("http://127.0.0.1:7373"));
+        assert_ne!(status, 403, "127.0.0.1 GUI origin should pass origin validation");
+
+        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("null"));
+        assert_eq!(status, 403, "opaque browser origins must be rejected");
+    }
+
+    #[test]
     fn ci_accepts_form_encoded_post_body() {
         let home = tmp_dir("home-post-ci");
         let project = tmp_dir("project-post-ci");
@@ -1254,6 +1381,67 @@ mod tests {
         assert_eq!(status, 200, "got: {body}");
         let v: Value = serde_json::from_str(&body).unwrap();
         assert!(v.get("governance_receipt").is_some(), "POST /ci must return a governance receipt: {body}");
+    }
+
+    #[test]
+    fn post_proposal_lifecycle_submits_tests_accepts_and_rejects() {
+        let accept_home = tmp_dir("home-post-proposal-accept");
+        let accept_project = tmp_dir("project-post-proposal-accept");
+        std::fs::write(accept_project.join("README.md"), "fixture\n").unwrap();
+        init_git_project(&accept_project);
+        let (_accept_guard, accept_token) = spawn_server(&accept_project, &accept_home, 17413);
+        let add_policy = "diff --git a/archietect.toml b/archietect.toml\nnew file mode 100644\n--- /dev/null\n+++ b/archietect.toml\n@@ -0,0 +1,2 @@\n+[policy]\n+enforcement = \"advisory\"\n";
+
+        let post = http_post_form_query_token;
+        let (status, body) = post(
+            17413,
+            "/proposal/submit",
+            &accept_token,
+            &[("kind", "decision"), ("title", "REST lifecycle policy"), ("patch", add_policy)],
+        );
+        assert_eq!(status, 200, "submit failed: {body}");
+        let submitted: Value = serde_json::from_str(&body).unwrap();
+        let id = submitted["id"].as_u64().expect("submit must return proposal id");
+        assert_eq!(submitted["status"], "pending");
+
+        let (status, body) = post(17413, "/proposal/test", &accept_token, &[("id", &id.to_string())]);
+        assert_eq!(status, 200, "test failed: {body}");
+        let tested: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(tested["status"], "passed", "proposal test must pass: {body}");
+
+        let (status, body) = post(17413, "/proposal/accept", &accept_token, &[("id", &id.to_string())]);
+        assert_eq!(status, 200, "accept failed: {body}");
+        let accepted: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(accepted["status"], "accepted");
+        assert!(accept_project.join("archietect.toml").is_file(), "accept must apply the patch to the working tree");
+
+        let reject_home = tmp_dir("home-post-proposal-reject");
+        let reject_project = tmp_dir("project-post-proposal-reject");
+        std::fs::write(reject_project.join("README.md"), "fixture\n").unwrap();
+        init_git_project(&reject_project);
+        let (_reject_guard, reject_token) = spawn_server(&reject_project, &reject_home, 17414);
+        let (status, body) = post(
+            17414,
+            "/proposal/submit",
+            &reject_token,
+            &[("kind", "decision"), ("title", "rejected policy"), ("patch", add_policy)],
+        );
+        assert_eq!(status, 200, "reject submit failed: {body}");
+        let rejected_id = serde_json::from_str::<Value>(&body).unwrap()["id"].as_u64().unwrap();
+        let (status, body) = post(17414, "/proposal/reject", &reject_token, &[("id", &rejected_id.to_string()), ("purge", "false")]);
+        assert_eq!(status, 200, "reject failed: {body}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["status"], "rejected");
+    }
+
+    #[test]
+    fn post_body_over_limit_returns_413() {
+        let home = tmp_dir("home-post-too-large");
+        let project = tmp_dir("project-post-too-large");
+        let (_guard, _token) = spawn_server(&project, &home, 17415);
+        let oversized = format!("diff={}", "x".repeat(8 * 1024 * 1024 + 1));
+        let (status, body) = http_post_form(17415, "/ci", &oversized);
+        assert_eq!(status, 413, "oversized POST must be rejected: {body}");
+        assert!(body.contains("8 MiB"), "response should explain the limit: {body}");
     }
 
     /// End-to-end proof of the watcher-driven cache invalidation described

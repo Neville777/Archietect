@@ -43,6 +43,16 @@ fn blob(root: &Path, oid: &str) -> Result<String, String> {
     Ok(text)
 }
 
+fn staged_oid(root: &Path, spec: &str) -> Result<String, String> {
+    let output = Command::new("git").arg("--no-replace-objects").arg("-C").arg(root)
+        .args(["rev-parse", "--verify", spec]).output()
+        .map_err(|e| format!("cannot resolve rename blob: {e}"))?;
+    if !output.status.success() { return Err("rename blob is unavailable".into()); }
+    let oid = String::from_utf8(output.stdout).map_err(|_| "invalid rename blob identity".to_string())?.trim().to_string();
+    if !(4..=64).contains(&oid.len()) || !oid.bytes().all(|b| b.is_ascii_hexdigit()) { return Err("invalid rename blob identity".into()); }
+    Ok(oid)
+}
+
 /// Missing base identities, unsupported formats and mismatched hunks are
 /// explicit errors. Callers must preserve them as unknown change evidence.
 pub fn materialize(root: &Path, diff: &str) -> Result<Vec<FileChange>, String> {
@@ -65,8 +75,8 @@ pub fn materialize(root: &Path, diff: &str) -> Result<Vec<FileChange>, String> {
         let header_after = path(new, "")?;
         let mut before_path = header_before.clone();
         let mut after_path = header_after.clone();
-        let mut old_oid = None;
-        let mut new_oid = None;
+        let mut old_oid: Option<String> = None;
+        let mut new_oid: Option<String> = None;
         let mut saw_before = false;
         let mut saw_after = false;
         let mut i = 1;
@@ -83,8 +93,8 @@ pub fn materialize(root: &Path, diff: &str) -> Result<Vec<FileChange>, String> {
                 if fields.next().is_some_and(|mode| !matches!(mode, "100644" | "100755")) {
                     return Err("symlink or submodule patch is unsupported".into());
                 }
-                old_oid = Some(a);
-                new_oid = Some(b);
+                old_oid = Some(a.to_string());
+                new_oid = Some(b.to_string());
             } else if let Some(value) = line.strip_prefix("--- ") {
                 if saw_before { return Err("duplicate old path header".into()); }
                 before_path = path(value, "a/")?;
@@ -112,13 +122,23 @@ pub fn materialize(root: &Path, diff: &str) -> Result<Vec<FileChange>, String> {
         if i < section.len() && (!saw_before || !saw_after) {
             return Err("hunks lack old/new path headers".into());
         }
+        // Git omits an index and hunks for a 100% similarity rename. In a
+        // local staged review, recover both exact blobs from HEAD and the
+        // index so a pure move can retain object identity. If either ref is
+        // unavailable we still fail closed below instead of guessing.
+        if before_path != after_path && i == section.len() && old_oid.is_none() {
+            let old = before_path.as_deref().ok_or("rename lacks old path")?;
+            let new = after_path.as_deref().ok_or("rename lacks new path")?;
+            old_oid = Some(staged_oid(root, &format!("HEAD:{old}"))?);
+            new_oid = Some(staged_oid(root, &format!(":{new}"))?);
+        }
         let before = if before_path.is_none() {
-            if old_oid.is_some_and(|oid| !oid.bytes().all(|b| b == b'0')) {
+            if old_oid.as_ref().is_some_and(|oid| !oid.bytes().all(|b| b == b'0')) {
                 return Err("new file has nonempty base identity".into());
             }
             String::new()
         } else {
-            blob(root, old_oid.ok_or("existing file patch lacks base blob identity")?)?
+            blob(root, old_oid.as_deref().ok_or("existing file patch lacks base blob identity")?)?
         };
         let base: Vec<&str> = before.split_inclusive('\n').collect();
         let mut cursor = 0;
@@ -169,13 +189,13 @@ pub fn materialize(root: &Path, diff: &str) -> Result<Vec<FileChange>, String> {
         }
         let after = output.concat();
         if after.contains('\0') { return Err("binary content is unsupported".into()); }
-        if after_path.is_none() && (!after.is_empty() || new_oid.is_some_and(|oid| !oid.bytes().all(|b| b == b'0'))) {
+        if after_path.is_none() && (!after.is_empty() || new_oid.as_ref().is_some_and(|oid| !oid.bytes().all(|b| b == b'0'))) {
             return Err("deleted file patch leaves content or nonempty identity".into());
         }
         // An omitted entire final hunk still has valid local counts. The Git
         // postimage identity detects that truncation without consulting files.
         if before_path.is_some() && after_path.is_some() {
-            let expected = new_oid.ok_or("modified file lacks new blob identity")?;
+            let expected = new_oid.as_deref().ok_or("modified file lacks new blob identity")?;
             let mut child = Command::new("git").arg("-C").arg(root)
                 .args(["hash-object", "--stdin"])
                 .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
