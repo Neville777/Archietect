@@ -54,4 +54,16 @@ archietect proposal submit --kind decision --title "..." --patch some.diff
 archietect proposal test <id>
 archietect proposal accept <id>   # only after: status==passed, diff unchanged
 ```
+
+### Architectural reasoning is required for shared changes
+Before changing a shared component, data model, tenant boundary, flag, or
+cross-cutting service, the agent must run:
+```bash
+archietect plan "<the change>"
+```
+If the plan returns no governing decision for an existing concept, the agent
+must either link the change to an existing decision or submit a new
+`[[decision]]` entry through the proposal protocol. A decision records the
+reason and rejected alternatives; source comments alone do not satisfy this
+step. The final patch still must pass `archietect ci` and the normal tests.
 <!-- archietect:agent-instructions:end -->
