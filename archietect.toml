@@ -11,6 +11,19 @@
 # itself the same day this exclude was missing.
 exclude = ["validation", "target", "tests/fixtures"]
 
+[policy]
+# Hard CI gate: changes under src/ must carry a reviewed architectural
+# decision update in the same patch.
+decision_required_paths = ["src"]
+
+[[decision]]
+id = "rationale-required-for-protected-changes"
+decision = "Changes under protected architectural paths carry a decision update in the same patch."
+because = "Repository instructions alone are advisory; the CI gate must make architectural reasoning impossible to skip."
+rejected = ["Relying only on AGENTS.md or an AI remembering to document rationale"]
+links = ["Decision", "Index"]
+proposed_by = "human"
+
 [[decision]]
 id = "no-ai-in-query-path"
 decision = "No LLM or probabilistic model is ever invoked inside the engine"

@@ -400,6 +400,16 @@ pub fn scan_with_prior(
 
     idx.excludes = excludes.clone();
 
+    // Optional hard gate for repositories that require architectural
+    // rationale alongside changes to protected paths.
+    idx.decision_required_paths = std::fs::read_to_string(root.join("archietect.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .and_then(|v| v.get("policy").and_then(|p| p.get("decision_required_paths")).cloned())
+        .and_then(|v| v.as_array().cloned())
+        .map(|a| a.into_iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
     // ── file inventory with metadata ────────────────────────────────────────
     let files: Vec<ScannableFile> = WalkDir::new(root)
         .into_iter()

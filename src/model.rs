@@ -219,6 +219,10 @@ pub struct Index {
     /// the same boundaries as the extraction pass.
     #[serde(default)]
     pub excludes: Vec<String>,
+    /// Relative path prefixes whose source changes must include a decision
+    /// update when the project opts into architectural-reasoning enforcement.
+    #[serde(default)]
+    pub decision_required_paths: Vec<String>,
 }
 
 /// What one file contributed, cached against (size, mtime, extractor version).

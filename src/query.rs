@@ -1672,7 +1672,7 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
         .join("\n");
 
     let g = guard(idx, graph, &added);
-    let violations: Vec<Value> = if g["allowed"] == false {
+    let mut violations: Vec<Value> = if g["allowed"] == false {
         vec![json!({ "kind": "duplicate_storage", "reason": g["reason"], "findings": g["findings"] })]
     } else {
         Vec::new()
@@ -1706,6 +1706,33 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
                 break;
             }
         }
+    }
+
+    // Opt-in hard gate: protected source paths must carry an architectural
+    // decision update in the same patch. This is deliberately path-based and
+    // deterministic; it never attempts to infer a rationale from prose.
+    let decision_gate = if idx.decision_required_paths.is_empty() {
+        None
+    } else {
+        let protected_change = diff.lines().filter_map(|line| line.strip_prefix("+++ b/")).any(|path| {
+            idx.decision_required_paths.iter().any(|prefix| {
+                let p = prefix.trim_end_matches('/');
+                path == p || path.starts_with(&format!("{p}/"))
+            })
+        });
+        if protected_change && !added.lines().any(|line| line.contains("[[decision]]")) {
+            Some(json!({
+                "kind": "missing_architectural_decision",
+                "protected_paths": idx.decision_required_paths,
+                "reason": "this repository requires a [[decision]] update when protected architectural paths change",
+                "advice": "run `archietect plan \"<change>\"`, then add or propose a linked decision"
+            }))
+        } else {
+            None
+        }
+    };
+    if let Some(finding) = decision_gate {
+        violations.push(finding);
     }
 
     let fail = !violations.is_empty() || (strict && !warnings.is_empty());
