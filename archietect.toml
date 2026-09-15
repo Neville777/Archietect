@@ -49,6 +49,14 @@ links = ["Index", "Decision"]
 proposed_by = "human"
 
 [[decision]]
+id = "advisory-receipts-show-warnings"
+decision = "Advisory policy emits a WARNING governance receipt while allowing the change to proceed."
+because = "Onboarding teams need visibility into architectural mutations without blocking routine adoption."
+rejected = ["Calling an advisory mutation PASSED"]
+links = ["Decision", "Index"]
+proposed_by = "human"
+
+[[decision]]
 id = "no-ai-in-query-path"
 decision = "No LLM or probabilistic model is ever invoked inside the engine"
 because = "determinism is the entire trust model — an answer that could vary between runs is worse than no answer"

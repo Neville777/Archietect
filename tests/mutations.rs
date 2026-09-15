@@ -82,7 +82,7 @@ fn advisory_mode_reports_without_blocking() {
     repo.contribution();
     let (code, out) = repo.ci();
     assert_eq!(code, 0, "advisory mode must not block: {out:#}");
-    assert_eq!(out["governance_receipt"]["verdict"], "PASSED");
+    assert_eq!(out["governance_receipt"]["verdict"], "WARNING");
     assert_eq!(out["governance_receipt"]["enforcement_level"], "advisory");
 }
 

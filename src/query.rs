@@ -1716,6 +1716,7 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
 
     let fail = !violations.is_empty() || (strict && !warnings.is_empty());
     let mutation_count = change["mutations"].as_array().map(|m| m.len()).unwrap_or(0);
+    let change_warning = change["violations"].as_array().is_some_and(|v| !v.is_empty());
     json!({
         "pass": !fail,
         "violations": violations,
@@ -1724,7 +1725,7 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
         "change": change,
         "enforcement_level": idx.enforcement,
         "governance_receipt": {
-            "verdict": if fail { "BLOCKED" } else if !warnings.is_empty() { "WARNING" } else { "PASSED" },
+            "verdict": if fail { "BLOCKED" } else if change_warning || !warnings.is_empty() { "WARNING" } else { "PASSED" },
             "enforcement_level": idx.enforcement,
             "mutation_count": mutation_count,
             "engine": env!("CARGO_PKG_VERSION"),
