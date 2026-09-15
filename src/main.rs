@@ -618,6 +618,9 @@ fn main() -> anyhow::Result<()> {
     let out = match cmd {
         Cmd::Init => {
             bootstrap_policy(&root)?;
+            let hook = if root.join(".git/hooks").is_dir() {
+                Some(hook_command(&root, HookAction::Install)?)
+            } else { None };
             let (idx, graph) = scan::scan(&root);
             let path = store::save(&idx, &graph, &root)?;
             serde_json::json!({
@@ -627,6 +630,7 @@ fn main() -> anyhow::Result<()> {
                 "symbols": graph.symbols.len(),
                 "routes": graph.routes.len(),
                 "declaration_files": idx.declaration_files,
+                "hook": hook,
             })
         }
         Cmd::Hook { action } => hook_command(&root, action)?,
