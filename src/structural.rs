@@ -699,7 +699,9 @@ fn collect_calls_in_node(
 
 /// Extract call edges from TypeScript/JavaScript using tree-sitter.
 fn extract_call_edges_ts(rel: &str, text: &str, out: &mut Vec<CallEdge>) {
-    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") {
+    let lang = if rel.ends_with(".tsx") {
+        tree_sitter_typescript::language_tsx()
+    } else if rel.ends_with(".ts") || rel.ends_with(".mts") || rel.ends_with(".cts") {
         tree_sitter_typescript::language_typescript()
     } else {
         tree_sitter_javascript::language()
@@ -1208,9 +1210,130 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 23; // Rust raw-string-aware brace scanning
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 24; // TSX grammar for JSX-bearing TypeScript
 
 // ── Public API ───────────────────────────────────────────────────────────────
+
+/// Observe supplied file contents without reading the worktree or cached index.
+/// Uncertainty is returned separately: an empty observation is not proof that
+/// unsupported or malformed source contains no architectural objects.
+pub(crate) fn extract_snapshot(rel: &str, text: &str) -> (StructuralFileFacts, Vec<String>) {
+    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let (symbols, imports, routes) = extract_file(rel, ext, text);
+    let mut facts = StructuralFileFacts { size: text.len() as u64, symbols, imports, routes, ..Default::default() };
+    extract_route_calls(rel, ext, text, &mut facts.route_calls);
+    extract_function_bodies(rel, ext, text, &mut facts.function_bodies);
+    if ext == "rs" {
+        extract_call_edges_rs(rel, text, &mut facts.call_edges);
+    } else if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts") {
+        extract_call_edges_ts(rel, text, &mut facts.call_edges);
+    }
+    let uncertainty = match snapshot_tree(rel, text) {
+        Ok(_) => Vec::new(),
+        Err(reason) => vec![reason],
+    };
+    (facts, uncertainty)
+}
+
+fn snapshot_tree(rel: &str, text: &str) -> Result<tree_sitter::Tree, String> {
+    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let language = match ext {
+        "rs" => {
+            syn::parse_file(text).map_err(|e| format!("Cannot establish Rust structure in {rel}: {e}"))?;
+            tree_sitter_rust::language()
+        }
+        "py" => tree_sitter_python::language(),
+        "tsx" => tree_sitter_typescript::language_tsx(),
+        "ts" | "mts" | "cts" => tree_sitter_typescript::language_typescript(),
+        "js" | "jsx" | "mjs" | "cjs" => tree_sitter_javascript::language(),
+        "go" => tree_sitter_go::language(),
+        "java" => tree_sitter_java::language(),
+        _ => return Err(format!("No AST snapshot validation for {rel}; lexical observations cannot establish structural completeness")),
+    };
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(language).map_err(|e| format!("Cannot load parser for {rel}: {e}"))?;
+    let tree = parser.parse(text, None).ok_or_else(|| format!("Parser returned no tree for {rel}"))?;
+    if tree.root_node().has_error() {
+        return Err(format!("Syntax errors prevent establishing complete structure in {rel}"));
+    }
+    Ok(tree)
+}
+
+/// Canonical AST token sequences for observed declarations. Whitespace and
+/// comments outside literals do not alter these sequences. Missing entries
+/// mean the extractor's symbol could not be tied to an unambiguous AST node.
+pub(crate) fn symbol_sources(rel: &str, text: &str) -> BTreeMap<String, String> {
+    let Ok(tree) = snapshot_tree(rel, text) else { return BTreeMap::new() };
+    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let (symbols, _, _) = extract_file(rel, ext, text);
+    fn tokens(node: tree_sitter::Node, bytes: &[u8], out: &mut Vec<String>) {
+        if node.kind().contains("comment") { return; }
+        // Preserve literal contents, including whitespace inside strings.
+        if node.child_count() == 0 || node.kind().contains("string") || node.kind().contains("literal") {
+            out.push(format!("{}:{}", node.kind(), ts_text(node, bytes)));
+            return;
+        }
+        for child in node.children(&mut node.walk()) { tokens(child, bytes, out); }
+    }
+    fn visit(node: tree_sitter::Node, bytes: &[u8], symbols: &[Symbol], found: &mut BTreeMap<String, Vec<String>>) {
+        if let Some(name) = node.child_by_field_name("name") {
+            let name_text = ts_text(name, bytes);
+            if symbols.iter().any(|s| s.name == name_text && s.line == name.start_position().row + 1) {
+                let mut declaration = node;
+                while let Some(parent) = declaration.parent() {
+                    if matches!(parent.kind(), "export_statement" | "decorated_definition" | "lexical_declaration" | "variable_declaration") {
+                        declaration = parent;
+                    } else { break; }
+                }
+                let mut sequence = Vec::new();
+                tokens(declaration, bytes, &mut sequence);
+                found.entry(name_text).or_default().push(serde_json::to_string(&sequence).unwrap());
+            }
+        }
+        for child in node.named_children(&mut node.walk()) { visit(child, bytes, symbols, found); }
+    }
+    let mut found = BTreeMap::new();
+    visit(tree.root_node(), text.as_bytes(), &symbols, &mut found);
+    found.into_iter().filter_map(|(name, mut nodes)| {
+        if nodes.len() == 1 { Some((name, nodes.remove(0))) } else { None }
+    }).collect()
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_tokens_ignore_trivia_but_preserve_implementation_and_literal_changes() {
+        let before = symbol_sources("src/lib.rs", "pub fn value() -> &'static str { \"a b\" }");
+        let formatted = symbol_sources("src/lib.rs", "// heading\npub fn value() -> &'static str {\n // note\n \"a b\"\n}");
+        let changed = symbol_sources("src/lib.rs", "pub fn value() -> &'static str { \"ab\" }");
+        assert!(before.contains_key("value"));
+        assert_eq!(before, formatted);
+        assert_ne!(before, changed);
+    }
+
+    #[test]
+    fn snapshots_report_invalid_and_lexical_source_as_uncertain() {
+        for (path, source) in [("bad.rs", "pub fn broken( {"), ("bad.py", "class Member(:"), ("schema.sql", "CREATE TABLE Member (id INT);")] {
+            assert!(!extract_snapshot(path, source).1.is_empty(), "{path}");
+            assert!(symbol_sources(path, source).is_empty(), "{path}");
+        }
+    }
+
+    #[test]
+    fn snapshots_preserve_python_and_typed_react_declarations() {
+        for (path, source, name) in [
+            ("backend/models.py", "class Member:\n    name = 1\n", "Member"),
+            ("apps/page.tsx", "export const SignUpPage: React.FC = () => <div>Hello</div>;", "SignUpPage"),
+        ] {
+            let (facts, uncertainty) = extract_snapshot(path, source);
+            assert!(uncertainty.is_empty(), "{uncertainty:?}");
+            assert!(facts.symbols.iter().any(|s| s.name == name), "{path}");
+            assert!(symbol_sources(path, source).contains_key(name), "{path}");
+        }
+    }
+}
 
 /// Extract the structural graph for `root`, reusing `prior` for unchanged
 /// files. Called from `scan::scan_with_prior` after the schema pass.
@@ -2166,7 +2289,9 @@ fn extract_ts_js(
     imports: &mut Vec<Import>,
     routes: &mut Vec<Route>,
 ) {
-    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") || rel.ends_with(".mts") || rel.ends_with(".cts") {
+    let lang = if rel.ends_with(".tsx") {
+        tree_sitter_typescript::language_tsx()
+    } else if rel.ends_with(".ts") || rel.ends_with(".mts") || rel.ends_with(".cts") {
         tree_sitter_typescript::language_typescript()
     } else {
         tree_sitter_javascript::language()
@@ -2460,7 +2585,9 @@ fn extract_require_names(require_call: &tree_sitter::Node, bytes: &[u8]) -> Vec<
 }
 
 fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
-    let lang = if rel.ends_with(".ts") || rel.ends_with(".tsx") {
+    let lang = if rel.ends_with(".tsx") {
+        tree_sitter_typescript::language_tsx()
+    } else if rel.ends_with(".ts") || rel.ends_with(".mts") || rel.ends_with(".cts") {
         tree_sitter_typescript::language_typescript()
     } else {
         tree_sitter_javascript::language()

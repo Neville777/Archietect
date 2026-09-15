@@ -25,6 +25,14 @@ links = ["Decision", "Index"]
 proposed_by = "human"
 
 [[decision]]
+id = "patches-are-observed-mutations"
+decision = "Change policy evaluates verified structural mutations derived from before and after patch contents."
+because = "Diff text heuristics cannot distinguish routine edits from architectural changes reliably; the extractor should observe established objects and report unknown when evidence is incomplete."
+rejected = ["Classifying every protected-path edit from raw diff keywords"]
+links = ["Index", "StructuralGraph", "Mutation", "FileChange"]
+proposed_by = "human"
+
+[[decision]]
 id = "no-ai-in-query-path"
 decision = "No LLM or probabilistic model is ever invoked inside the engine"
 because = "determinism is the entire trust model — an answer that could vary between runs is worse than no answer"

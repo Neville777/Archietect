@@ -788,7 +788,7 @@ fn strip_rust_test_modules(text: &str) -> String {
     out
 }
 
-fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
+pub(crate) fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
     // Test fixtures may contain literal CREATE TABLE strings and schemas used
     // to exercise the extractor. They are not production ontology declarations.
     let in_tests = path.components().any(|c| {
