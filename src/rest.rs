@@ -901,13 +901,18 @@ fn handle_request(
                             }
                             Err(e) => json!({ "error": e.to_string() }),
                         },
+                        "/git/diff" => match std::process::Command::new("git").current_dir(&root).args(["diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv"]).output() {
+                            Ok(out) if out.status.success() => json!({ "diff": String::from_utf8_lossy(&out.stdout), "staged": true }),
+                            Ok(out) => json!({ "error": format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr)) }),
+                            Err(e) => json!({ "error": format!("failed to run git diff: {e}") }),
+                        },
                         other => json!({
                             "error": format!("unknown endpoint {other}"),
                             "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                           "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts",
                                           "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
                                           "/system/list", "/system/query", "/system/status", "/system/register",
-                                          "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe",
+                                          "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe", "/git/diff",
                                           "/proposal/submit", "/proposal/list", "/proposal/inspect",
                                           "/proposal/test", "/proposal/accept", "/proposal/reject"],
                         }),

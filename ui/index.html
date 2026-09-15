@@ -916,8 +916,13 @@ let lastGovernancePatch = '';
 async function governance(gen, signal){
   $('out').innerHTML = `<h3>governance review <span class="muted">(paste a full-index Git diff)</span></h3>
     <textarea id="governanceDiff" rows="12" style="width:100%;box-sizing:border-box" placeholder="git diff --cached --full-index">${esc(lastGovernancePatch)}</textarea>
-    <div style="margin-top:.5rem"><button onclick="runGovernance()">review diff</button> <span id="governanceStatus" class="muted"></span></div>
+    <div style="margin-top:.5rem"><button onclick="loadStagedDiff()">load staged diff</button> <button onclick="runGovernance()">review diff</button> <span id="governanceStatus" class="muted"></span></div>
     <div id="governanceResult" class="card" style="margin-top:.7rem"><span class="muted">no review yet</span></div>`;
+}
+async function loadStagedDiff(){
+  const s=$('governanceStatus'); s.textContent=' loading staged diff…';
+  try { const d=await fetch(`/git/diff?root=${encodeURIComponent($('root').value)}`).then(r=>r.json()); if(d.error){s.textContent=` ${d.error}`;s.className='bad';return;} lastGovernancePatch=d.diff||''; $('governanceDiff').value=lastGovernancePatch; s.textContent=` loaded ${lastGovernancePatch.length} bytes`;s.className='ok'; }
+  catch(e){s.textContent=` ${e}`;s.className='bad';}
 }
 function renderGovernanceReceipt(d){
   const r=d.governance_receipt||{}, c=d.change||{}, ms=c.mutations||[], vs=[...(d.violations||[]),...(c.violations||[])];
