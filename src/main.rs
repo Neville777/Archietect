@@ -1066,6 +1066,8 @@ fn main() -> anyhow::Result<()> {
 /// without overwriting an existing ontology. Projects can edit the protected
 /// prefixes after init; rerunning init is idempotent.
 fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
+    let roots = detect_source_roots(root);
+    let roots_toml = roots.iter().map(|r| format!("\"{r}\"")).collect::<Vec<_>>().join(", ");
     let path = root.join("archietect.toml");
     if path.exists() {
         let text = std::fs::read_to_string(&path)?;
@@ -1074,12 +1076,19 @@ fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
         }
         let mut updated = text;
         if !updated.ends_with('\n') { updated.push('\n'); }
-        updated.push_str("\n[policy]\n# Hard gate for architectural source changes. Edit the prefixes for this project.\ndecision_required_paths = [\"src\"]\n");
+        updated.push_str(&format!("\n[policy]\n# Hard gate for architectural source changes. Edit the prefixes for this project.\ndecision_required_paths = [{roots_toml}]\n"));
         std::fs::write(path, updated)?;
     } else {
-        std::fs::write(path, "# Archietect project policy — edit protected prefixes as needed.\n[policy]\ndecision_required_paths = [\"src\"]\n")?;
+        std::fs::write(path, format!("# Archietect project policy — edit protected prefixes as needed.\n[policy]\ndecision_required_paths = [{roots_toml}]\n"))?;
     }
     Ok(())
+}
+
+fn detect_source_roots(root: &std::path::Path) -> Vec<String> {
+    let candidates = ["src", "app", "apps", "packages", "services", "backend", "api", "core"];
+    let mut found: Vec<String> = candidates.iter().filter(|name| root.join(name).is_dir()).map(|name| (*name).to_string()).collect();
+    if found.is_empty() { found.push("src".to_string()); }
+    found
 }
 
 fn hook_command(root: &std::path::Path, action: HookAction) -> anyhow::Result<serde_json::Value> {
