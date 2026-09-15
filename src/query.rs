@@ -1410,6 +1410,27 @@ pub fn stale_decision_links(idx: &Index, graph: &crate::structural::StructuralGr
     })).collect()
 }
 
+#[cfg(test)]
+mod stale_decision_link_tests {
+    use super::*;
+    use crate::model::Decision;
+
+    #[test]
+    fn reports_removed_links_but_keeps_exact_alias_targets() {
+        let mut idx = Index::default();
+        idx.aliases.insert("old-member".into(), "Member".into());
+        idx.concepts.insert("Member".into(), Default::default());
+        idx.decisions.push(Decision {
+            id: "tenant-models".into(),
+            links: vec!["old-member".into(), "RemovedContribution".into()],
+            ..Default::default()
+        });
+        let stale = stale_decision_links(&idx, &StructuralGraph::default());
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert_eq!(stale[0]["link"], "RemovedContribution");
+    }
+}
+
 /// The onboarding tour. Common mistakes come from the ontology itself: every
 /// alias is a "don't create X" waiting to happen, and every decision's
 /// rejected list is literally what the next person is about to propose.
