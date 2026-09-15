@@ -1227,6 +1227,7 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         .take(15)
         .collect();
     let recent = crate::store::read_history(root, None, 10);
+    let stale_decision_links = stale_decision_links(idx, graph);
 
     // ── Context efficiency: discovery payload vs raw source bytes ────────────
     //
@@ -1351,6 +1352,7 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
             "rejected": d.rejected, "links": d.links, "proposed_by": d.proposed_by,
             "status": d.status, "superseded_by": d.superseded_by,
         })).collect::<Vec<_>>(),
+        "stale_decision_links": stale_decision_links,
         "declared_aliases_list": idx.aliases.iter().map(|(alias, target)| json!({
             "alias": alias, "target": target,
         })).collect::<Vec<_>>(),
@@ -1374,6 +1376,38 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         },
         "note": "Everything above is derived from declarations, usage, decisions and the timeline — nothing is generated prose. 'never observed in use' is evidence of absence at the USED tier only; verify before treating it as dead.",
     })
+}
+
+/// Find decision links whose target disappeared from the current ontology.
+/// This is deliberately exact: a renamed concept must surface as stale rather
+/// than being silently matched to a similarly named replacement.
+pub fn stale_decision_links(idx: &Index, graph: &crate::structural::StructuralGraph) -> Vec<Value> {
+    fn resolves(name: &str, idx: &Index, graph: &crate::structural::StructuralGraph) -> bool {
+        if idx.concepts.contains_key(name) || graph.symbols.contains_key(name)
+            || graph.symbols.values().any(|s| s.name == name) {
+            return true;
+        }
+        let mut current = name;
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(next) = idx.aliases.get(current) {
+            if !seen.insert(current) { return false; }
+            current = next;
+            if idx.concepts.contains_key(current) || graph.symbols.contains_key(current)
+                || graph.symbols.values().any(|s| s.name == current) {
+                return true;
+            }
+        }
+        false
+    }
+    idx.decisions.iter().flat_map(|decision| decision.links.iter().filter_map(|link| {
+        let link = link.trim();
+        (!link.is_empty() && !resolves(link, idx, graph)).then(|| json!({
+            "decision_id": decision.id,
+            "link": link,
+            "status": decision.status,
+            "reason": "decision link does not resolve to a current concept or structural symbol",
+        }))
+    })).collect()
 }
 
 /// The onboarding tour. Common mistakes come from the ontology itself: every

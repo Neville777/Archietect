@@ -917,7 +917,8 @@ async function governance(gen, signal){
   $('out').innerHTML = `<h3>governance review <span class="muted">(paste a full-index Git diff)</span></h3>
     <textarea id="governanceDiff" rows="12" style="width:100%;box-sizing:border-box" placeholder="git diff --cached --full-index">${esc(lastGovernancePatch)}</textarea>
     <div style="margin-top:.5rem"><button onclick="loadStagedDiff()">load staged diff</button> <button onclick="runGovernance()">review diff</button> <span id="governanceStatus" class="muted"></span></div>
-    <div id="governanceResult" class="card" style="margin-top:.7rem"><span class="muted">no review yet</span></div>`;
+    <div id="governanceResult" class="card" style="margin-top:.7rem"><span class="muted">no review yet</span></div>
+    <div id="decisionRegister" class="card" style="margin-top:.7rem"><span class="muted">decision context appears after a review</span></div>`;
 }
 async function loadStagedDiff(){
   const s=$('governanceStatus'); s.textContent=' loading staged diff…';
@@ -927,13 +928,34 @@ async function loadStagedDiff(){
 function renderGovernanceReceipt(d){
   const r=d.governance_receipt||{}, c=d.change||{}, ms=c.mutations||[], vs=[...(d.violations||[]),...(c.violations||[])];
   const verdict=r.verdict||(d.pass?'PASSED':'BLOCKED'), cls=verdict==='PASSED'?'ok':verdict==='WARNING'?'warn':'bad';
-  const rows=ms.map(m=>`<tr><td>${esc(m.kind)}</td><td><b>${esc(m.name||m.resource||'unknown')}</b></td><td class="muted">${esc(m.file||m.evidence||'')}</td></tr>`).join('');
-  return `<h3 class="${cls}">${esc(verdict)} <span class="muted">· ${esc(r.enforcement_level||c.enforcement_level||'preventive')}</span></h3><p>${ms.length} mutation${ms.length===1?'':'s'} observed · engine ${esc(r.engine||'—')}</p><table><tr><th>kind</th><th>resource</th><th>evidence</th></tr>${rows||'<tr><td colspan="3" class="muted">no structural mutations observed</td></tr>'}</table>${vs.length?`<h4 class="bad">policy findings</h4><ul>${vs.map(v=>`<li>${esc(typeof v==='string'?v:JSON.stringify(v))}</li>`).join('')}</ul>`:''}${verdict==='BLOCKED'?`<h4>submit a decision proposal</h4><input id="proposalTitle" style="width:100%;box-sizing:border-box" placeholder="Decision title"><textarea id="proposalPatch" rows="6" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="TOML patch containing [[decision]] and links = [...]"></textarea><input id="proposalToken" type="password" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="server token (printed by archietect serve)"><button style="margin-top:.4rem" onclick="submitGovernanceProposal()">submit proposal</button> <span id="proposalStatus" class="muted"></span>`:''}`;
+  const rows=ms.map(m=>{
+    const deps=(m.dependent_files||[]).map(f=>`<li>${esc(f)}</li>`).join('');
+    const gov=(m.governing_decisions||[]).map(id=>`<code>${esc(id)}</code>`).join(', ');
+    const supplied=(m.supplied_decisions||[]).map(id=>`<code>${esc(id)}</code>`).join(', ');
+    const details=(deps||gov||supplied||m.evidence?.length)
+      ? `<details><summary>impact and decision evidence</summary>${m.evidence?.length?`<div><b>evidence</b><ul>${m.evidence.map(e=>`<li>${esc(e)}</li>`).join('')}</ul></div>`:''}${deps?`<div><b>affected dependents (${m.dependent_files.length})</b><ul>${deps}</ul></div>`:'<div class="muted">no exact dependent files observed</div>'}${gov?`<div><b>governing decisions</b> ${gov}</div>`:'<div class="muted">no governing decision declared for this resource</div>'}${supplied?`<div><b>decision supplied in patch</b> ${supplied}</div>`:''}</details>` : '';
+    return `<tr><td>${esc(m.kind)}</td><td><b>${esc(m.resource||'unknown')}</b>${details}</td><td class="muted">${esc(m.file||'')}</td></tr>`;
+  }).join('');
+  return `<h3 class="${cls}">${esc(verdict)} <span class="muted">· ${esc(r.enforcement_level||c.enforcement_level||'preventive')}</span></h3><p>${ms.length} mutation${ms.length===1?'':'s'} observed · engine ${esc(r.engine||'—')}</p><table><tr><th>kind</th><th>resource and evidence</th><th>file</th></tr>${rows||'<tr><td colspan="3" class="muted">no structural mutations observed</td></tr>'}</table>${vs.length?`<h4 class="bad">policy findings</h4><ul>${vs.map(v=>`<li>${esc(typeof v==='string'?v:JSON.stringify(v))}</li>`).join('')}</ul>`:''}${verdict==='BLOCKED'?`<h4>submit a decision proposal</h4><input id="proposalTitle" style="width:100%;box-sizing:border-box" placeholder="Decision title"><textarea id="proposalPatch" rows="6" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="TOML patch containing [[decision]] and links = [...]"></textarea><input id="proposalToken" type="password" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="server token (printed by archietect serve)"><button style="margin-top:.4rem" onclick="submitGovernanceProposal()">submit proposal</button> <span id="proposalStatus" class="muted"></span>`:''}`;
+}
+async function loadDecisionContext(mutations){
+  const box=$('decisionRegister'); if(!box)return;
+  const resources=[...new Set(mutations.map(m=>m.resource).filter(Boolean))];
+  if(!resources.length){box.innerHTML='<span class="muted">No changed resources require decision context.</span>';return;}
+  box.innerHTML='<span class="muted">loading decision lifecycle…</span>';
+  const results=await Promise.all(resources.map(async resource=>{
+    try { return await fetch(`/plan?root=${encodeURIComponent($('root').value)}&q=${encodeURIComponent(resource)}`).then(r=>r.json()); }
+    catch(e){ return {error:String(e), resource}; }
+  }));
+  const decisions=results.flatMap(x=>(x.extend||[]).flatMap(e=>e.existing_decisions||[]));
+  const unique=new Map(decisions.map(d=>[d.id,d]));
+  if(!unique.size){box.innerHTML='<h4>decision lifecycle</h4><span class="muted">No declared decisions govern the changed resources.</span>';return;}
+  box.innerHTML=`<h4>decision lifecycle</h4><table><tr><th>id</th><th>status</th><th>links</th><th>successor</th></tr>${[...unique.values()].map(d=>`<tr><td><code>${esc(d.id)}</code></td><td>${esc(d.status||'active')}</td><td>${(d.links||[]).map(esc).join(', ')||'—'}</td><td>${esc(d.superseded_by||'—')}</td></tr>`).join('')}</table><p class="muted">Lifecycle changes must be submitted as reviewed decision proposals; the GUI never edits archietect.toml directly.</p>`;
 }
 async function runGovernance(){
   const diff=($('governanceDiff')||{}).value||''; lastGovernancePatch=diff; const out=$('governanceResult'); if(!out)return;
   out.innerHTML='<span class="muted">reviewing…</span>';
-  try { const q=new URLSearchParams({root:$('root').value,diff}); const d=await fetch('/ci',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q}).then(r=>r.json()); out.innerHTML=d.error?`<span class="bad">${esc(d.error)}</span>`:renderGovernanceReceipt(d); }
+  try { const q=new URLSearchParams({root:$('root').value,diff}); const d=await fetch('/ci',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q}).then(r=>r.json()); out.innerHTML=d.error?`<span class="bad">${esc(d.error)}</span>`:renderGovernanceReceipt(d); if(!d.error) loadDecisionContext((d.change||{}).mutations||[]); }
   catch(e){out.innerHTML=`<span class="bad">${esc(e)}</span>`;}
 }
 async function submitGovernanceProposal(){

@@ -550,7 +550,33 @@ fn handle_request(
             let mut body = String::new();
             let mut limited = req.as_reader().take(8 * 1024 * 1024 + 1);
             if limited.read_to_string(&mut body).is_ok() && body.len() <= 8 * 1024 * 1024 {
-                let (_, body_params) = params(&format!("/?{body}"));
+                let content_type = req.headers().iter()
+                    .find(|h| h.field.equiv("Content-Type"))
+                    .map(|h| h.value.as_str().split(';').next().unwrap_or("").trim())
+                    .unwrap_or("");
+                let body_params = if content_type.eq_ignore_ascii_case("application/json") {
+                    match serde_json::from_str::<Value>(&body) {
+                        Ok(Value::Object(values)) => values.into_iter().map(|(key, value)| {
+                            let value = match value {
+                                Value::String(s) => s,
+                                Value::Null => String::new(),
+                                other => other.to_string(),
+                            };
+                            (key, value)
+                        }).collect(),
+                        Ok(_) => {
+                            respond_json(req, 400, json!({"error":"JSON request body must be an object"}));
+                            return;
+                        }
+                        Err(e) => {
+                            respond_json(req, 400, json!({"error":format!("invalid JSON request body: {e}")}));
+                            return;
+                        }
+                    }
+                } else {
+                    let (_, body_params) = params(&format!("/?{body}"));
+                    body_params
+                };
                 p.extend(body_params);
             } else {
                 let response = tiny_http::Response::from_string("{\"error\":\"request body exceeds 8 MiB limit\"}")
@@ -1026,6 +1052,15 @@ fn handle_request(
         let _ = req.respond(response);
 }
 
+fn respond_json(req: tiny_http::Request, status: u16, body: Value) {
+    let response = tiny_http::Response::from_string(
+        serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+    ).with_status_code(status).with_header(
+        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+    );
+    let _ = req.respond(response);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1132,6 +1167,18 @@ mod tests {
 
     fn http_post_form(port: u16, path: &str, form: &str) -> (u16, String) {
         http_post_form_with_origin(port, path, form, None)
+    }
+
+    fn http_post_json(port: u16, path: &str, json_body: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json_body}", json_body.len());
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = Vec::new();
+        stream.read_to_end(&mut resp).expect("reading response");
+        let resp = String::from_utf8_lossy(&resp);
+        let status = resp.lines().next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (status, resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
     }
 
     fn http_post_form_with_origin(port: u16, path: &str, form: &str, origin: Option<&str>) -> (u16, String) {
@@ -1381,6 +1428,16 @@ mod tests {
         assert_eq!(status, 200, "got: {body}");
         let v: Value = serde_json::from_str(&body).unwrap();
         assert!(v.get("governance_receipt").is_some(), "POST /ci must return a governance receipt: {body}");
+    }
+
+    #[test]
+    fn ci_accepts_json_post_body() {
+        let home = tmp_dir("home-json-ci");
+        let project = tmp_dir("project-json-ci");
+        let (_guard, _token) = spawn_server(&project, &home, 17416);
+        let (status, body) = http_post_json(17416, "/ci", r#"{"diff":""}"#);
+        assert_eq!(status, 200, "got: {body}");
+        assert!(serde_json::from_str::<Value>(&body).unwrap().get("governance_receipt").is_some());
     }
 
     #[test]
