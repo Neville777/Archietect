@@ -1708,23 +1708,22 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
         }
     }
 
-    // Opt-in hard gate: protected source paths must carry an architectural
-    // decision update in the same patch. This is deliberately path-based and
-    // deterministic; it never attempts to infer a rationale from prose.
+    // Opt-in hard gate: require rationale only for architectural mutations,
+    // never for routine edits. A mutation is a new schema/model declaration,
+    // or a changed symbol with a high structural blast radius.
     let decision_gate = if idx.decision_required_paths.is_empty() {
         None
     } else {
-        let protected_change = diff.lines().filter_map(|line| line.strip_prefix("+++ b/")).any(|path| {
-            idx.decision_required_paths.iter().any(|prefix| {
-                let p = prefix.trim_end_matches('/');
-                path == p || path.starts_with(&format!("{p}/"))
-            })
+        let changed_files: Vec<&str> = diff.lines().filter_map(|line| line.strip_prefix("+++ b/")).collect();
+        let new_concept = added.contains("CREATE TABLE") || added.contains("create table") || decl_re.is_match(&added);
+        let high_impact_symbol = changed_files.iter().any(|path| {
+            graph.symbols.values().filter(|s| s.file == *path).any(|s| structural_dependents(graph, &s.name, 3).len() >= 10)
         });
-        if protected_change && !added.lines().any(|line| line.contains("[[decision]]")) {
+        if (new_concept || high_impact_symbol) && !added.lines().any(|line| line.contains("[[decision]]")) {
             Some(json!({
                 "kind": "missing_architectural_decision",
                 "protected_paths": idx.decision_required_paths,
-                "reason": "this repository requires a [[decision]] update when protected architectural paths change",
+                "reason": "this repository requires a [[decision]] update for new concepts or high-impact symbol changes",
                 "advice": "run `archietect plan \"<change>\"`, then add or propose a linked decision"
             }))
         } else {
