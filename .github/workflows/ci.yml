@@ -54,25 +54,16 @@ jobs:
         run: |
           git diff HEAD~1 HEAD | ./target/release/archietect ci
 
-      # tests/invariants.rs scans real cloned open-source repos that live in
-      # validation/*  (chatwoot, saleor, etc.). That directory is listed in
-      # .gitignore and is intentionally NOT committed to the repo — cloning
-      # ~9 external corpora (some large) on every CI run is a cost/minutes
-      # decision outside this workflow's scope to make unilaterally.
-      #
-      # Rather than hardcode "always skip," check whether validation/ exists
-      # in the checkout. Today it never will on a fresh clone, so this step
-      # is a no-op — but if someone later decides to commit the corpus (or
-      # add a prior step that fetches it), invariants coverage activates
-      # here automatically with no further changes to this workflow.
-      - name: Run invariant tests (tests/invariants.rs) if corpus is present
+      # Exercise two representative real-world corpora on every CI run. The
+      # complete corpus remains local-only because several repos are large.
+      - name: Fetch invariant fixtures
         run: |
-          if [ -d "validation" ] && [ -n "$(ls -A validation 2>/dev/null)" ]; then
-            echo "validation/ corpus present — running invariant tests"
-            cargo test --test invariants --verbose
-          else
-            echo "validation/ corpus not present in this checkout (it is .gitignore'd and not committed) — skipping tests/invariants.rs"
-          fi
+          mkdir -p validation
+          git clone --depth 1 https://github.com/umami-software/umami.git validation/umami
+          git clone --depth 1 https://github.com/getredash/redash.git validation/redash
+
+      - name: Run representative invariant tests
+        run: cargo test --test invariants invariants_umami invariants_redash --verbose
 
   # cargo fmt --check and cargo clippy are intentionally NOT part of the
   # required gate yet: as of the commit that introduced this workflow,
