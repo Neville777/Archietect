@@ -463,7 +463,7 @@ fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path
 }
 
 fn handle_request(
-    req: tiny_http::Request,
+    mut req: tiny_http::Request,
     token: &str,
     default_root: &Option<PathBuf>,
     cache: &Cache,
@@ -471,7 +471,18 @@ fn handle_request(
     watchers: &Watchers,
     started_mtime: Option<std::time::SystemTime>,
 ) {
-        let (path, p) = params(req.url());
+        let (path, mut p) = params(req.url());
+        // Mutating and large-payload clients may use POST with a standard
+        // application/x-www-form-urlencoded body. Merge it with the query
+        // parameters so every endpoint keeps one parameter model while
+        // patches and tokens stay out of browser history and URL limits.
+        if req.method().to_string().eq_ignore_ascii_case("POST") {
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_ok() {
+                let (_, body_params) = params(&format!("/?{body}"));
+                p.extend(body_params);
+            }
+        }
 
         if MUTATING_ENDPOINTS.contains(&path.as_str())
             && p.get("token").map(|t| t.as_str()) != Some(token)
