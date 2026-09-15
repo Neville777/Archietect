@@ -1224,6 +1224,15 @@ mod tests {
     }
 
     #[test]
+    fn post_proposal_endpoints_remain_token_gated() {
+        let home = tmp_dir("home-post-proposal");
+        let project = tmp_dir("project-post-proposal");
+        let (_guard, _token) = spawn_server(&project, &home, 17412);
+        let (status, _) = http_post_form(17412, "/proposal/submit", "kind=decision&title=missing-token");
+        assert_eq!(status, 401, "POST proposal endpoints must require the startup token");
+    }
+
+    #[test]
     fn ci_accepts_form_encoded_post_body() {
         let home = tmp_dir("home-post-ci");
         let project = tmp_dir("project-post-ci");
