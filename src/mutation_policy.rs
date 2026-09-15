@@ -2,6 +2,7 @@
 //! TOML; comments and unrelated decision records never authorize a mutation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use crate::model::DecisionStatus;
 
 /// Return the new or substantively updated decision IDs applicable to each
 /// target. An empty ID list means the target has no supplied authorization.
@@ -28,6 +29,9 @@ pub fn applicable_decisions(
         .map(|target| (target.clone(), Vec::new()))
         .collect();
     for (id, record) in after {
+        if record.status != DecisionStatus::Active {
+            continue;
+        }
         if before.get(&id) == Some(&record) {
             continue;
         }
@@ -69,6 +73,10 @@ struct Authorization {
     rejected: Vec<String>,
     #[serde(default)]
     links: Vec<String>,
+    #[serde(default)]
+    status: DecisionStatus,
+    #[serde(default)]
+    superseded_by: Option<String>,
 }
 
 fn decisions(text: &str) -> Result<BTreeMap<String, Authorization>, String> {
@@ -103,7 +111,42 @@ fn decisions(text: &str) -> Result<BTreeMap<String, Authorization>, String> {
             return Err(format!("duplicate decision id {id:?}"));
         }
     }
+    validate_lifecycle(&records)?;
     Ok(records)
+}
+
+fn validate_lifecycle(records: &BTreeMap<String, Authorization>) -> Result<(), String> {
+    for (id, record) in records {
+        if record.status == DecisionStatus::Superseded {
+            let target = record.superseded_by.as_deref().ok_or_else(|| {
+                format!("superseded decision {id:?} must name superseded_by")
+            })?;
+            if target == id {
+                return Err(format!("decision {id:?} cannot supersede itself"));
+            }
+            let successor = records.get(target).ok_or_else(|| {
+                format!("decision {id:?} superseded_by target {target:?} does not exist")
+            })?;
+            if successor.status != DecisionStatus::Active {
+                return Err(format!("decision {id:?} superseded_by target {target:?} is not active"));
+            }
+        } else if record.superseded_by.is_some() {
+            return Err(format!("decision {id:?} has superseded_by but status is not superseded"));
+        }
+    }
+    // Follow every supersession edge. The target must be active above, but
+    // retaining cycle detection protects this validator if that rule evolves.
+    for id in records.keys() {
+        let mut seen = BTreeSet::new();
+        let mut current = id.as_str();
+        while let Some(next) = records.get(current).and_then(|r| r.superseded_by.as_deref()) {
+            if !seen.insert(current) {
+                return Err(format!("decision supersession cycle involving {id:?}"));
+            }
+            current = next;
+        }
+    }
+    Ok(())
 }
 
 fn canonical(name: &str, aliases: &BTreeMap<String, String>) -> Result<String, String> {
@@ -241,5 +284,44 @@ mod tests {
         ] {
             assert!(evaluate("", &invalid, &["Member"]).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn legacy_decisions_default_to_active_and_authorize() {
+        let result = evaluate("", &record("['Member']"), &["Member"]).unwrap();
+        assert_eq!(result["Member"], ["tenant"]);
+    }
+
+    #[test]
+    fn only_active_decisions_authorize_a_mutation() {
+        let superseded = record("['Member']")
+            .replace("id = 'tenant'", "id = 'old'\nstatus = 'superseded'\nsuperseded_by = 'current'");
+        let current = record("['Member']")
+            .replace("id = 'tenant'", "id = 'current'")
+            .replace("Scope tenant data", "Current tenant policy");
+        let result = evaluate("", &(superseded + &current), &["Member"]).unwrap();
+        assert_eq!(result["Member"], ["current"]);
+    }
+
+    #[test]
+    fn supersession_requires_active_existing_successor() {
+        let missing = record("['Member']")
+            .replace("id = 'tenant'", "id = 'old'\nstatus = 'superseded'\nsuperseded_by = 'missing'");
+        assert!(applicable_decisions(&missing, &missing, &[], &BTreeMap::new())
+            .unwrap_err().contains("does not exist"));
+
+        let inactive_successor = missing.replace("missing", "current") +
+            &record("['Member']").replace("id = 'tenant'", "id = 'current'\nstatus = 'retired'");
+        assert!(applicable_decisions("", &inactive_successor, &["Member".into()], &BTreeMap::new())
+            .unwrap_err().contains("not active"));
+    }
+
+    #[test]
+    fn lifecycle_rejects_invalid_status_and_bad_superseded_by_shape() {
+        let invalid = record("['Member']").replace("id = 'tenant'", "id = 'x'\nstatus = 'paused'");
+        assert!(evaluate("", &invalid, &["Member"]).is_err());
+        let active_with_target = record("['Member']")
+            .replace("id = 'tenant'", "id = 'x'\nsuperseded_by = 'y'");
+        assert!(evaluate("", &active_with_target, &["Member"]).is_err());
     }
 }

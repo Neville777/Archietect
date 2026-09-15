@@ -1349,6 +1349,7 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         "things_to_read": idx.decisions.iter().map(|d| json!({
             "id": d.id, "decision": d.decision, "because": d.because,
             "rejected": d.rejected, "links": d.links, "proposed_by": d.proposed_by,
+            "status": d.status, "superseded_by": d.superseded_by,
         })).collect::<Vec<_>>(),
         "declared_aliases_list": idx.aliases.iter().map(|(alias, target)| json!({
             "alias": alias, "target": target,
@@ -1722,6 +1723,12 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
     })
 }
 
+/// Read-only structural mutation report for agents and humans. Unlike `ci`,
+/// this returns observations without applying pass/fail policy.
+pub fn mutation_report(idx: &Index, graph: &StructuralGraph, diff: &str) -> Value {
+    crate::mutation::evaluate(idx, graph, diff)
+}
+
 /// The glance — bare `archietect`, the git-status of architecture. A pure
 /// COMPOSITION of existing queries (freshness, drift, ontology, timeline)
 /// plus suggestions DERIVED from the facts. Deliberately no "health: 92/100":
@@ -1847,7 +1854,7 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
                     l.eq_ignore_ascii_case(canon) || names_concept(canon, l)
                 })
             })
-            .map(|d| json!({ "id": d.id, "decision": d.decision, "rejected": d.rejected }))
+            .map(|d| json!({ "id": d.id, "decision": d.decision, "rejected": d.rejected, "status": d.status, "superseded_by": d.superseded_by }))
             .collect();
         // Structural symbols have owners and impact, but no schema relations.
         let related = idx.concepts.get(canon).map(|c| c.relations.as_slice()).unwrap_or_default();

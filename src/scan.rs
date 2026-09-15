@@ -372,6 +372,8 @@ pub fn scan_with_prior(
                         rejected: arr("rejected"),
                         links: arr("links"),
                         proposed_by: g("proposed_by"),
+                        status: d.get("status").and_then(|x| x.as_str()).unwrap_or("active").parse().unwrap_or_default(),
+                        superseded_by: d.get("superseded_by").and_then(|x| x.as_str()).map(String::from),
                     });
                 }
             }

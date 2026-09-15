@@ -190,6 +190,8 @@ enum Cmd {
         #[arg(long)]
         strict: bool,
     },
+    /// Observe structural mutations in a Git diff without applying policy.
+    Mutations,
     /// The law registry: every rule the engine obeys, with the wrong answer
     /// that taught it and the regression test that enforces it forever
     Laws,
@@ -614,7 +616,7 @@ fn main() -> anyhow::Result<()> {
         | Cmd::Verdicts | Cmd::Duplicates | Cmd::Tour | Cmd::Owner { .. }
         | Cmd::Claim { .. } | Cmd::ConceptAt { .. } | Cmd::Intent { .. }
         | Cmd::Plan { .. } | Cmd::Imports { .. } | Cmd::Guard { .. }
-        | Cmd::DuplicateLogic | Cmd::Register { .. }
+        | Cmd::DuplicateLogic | Cmd::Register { .. } | Cmd::Mutations
     );
 
     let out = match cmd {
@@ -770,6 +772,12 @@ fn main() -> anyhow::Result<()> {
                 "archived_to": archived_to.display().to_string(),
                 "note": "Moved, not deleted — the full record still exists in archived_to. Pass --include-archived to `archietect history` to read it back.",
             })
+        }
+        Cmd::Mutations => {
+            let mut diff = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
+            let (idx, g) = index_for(&root);
+            query::mutation_report(&idx, &g, &diff)
         }
         Cmd::Ci { strict } => {
             let mut diff = String::new();
@@ -1187,6 +1195,7 @@ mod tests {
 fn help_json() -> serde_json::Value {
     serde_json::json!([
         { "command": "init",             "description": "Scan the repository and persist the index (archietect.db)", "exit_codes": {"0": "success"} },
+        { "command": "mutations",        "description": "Observe structural mutations in a Git diff without applying policy", "exit_codes": {"0": "success", "1": "unknown patch"} },
         { "command": "hook install|uninstall", "description": "Install or remove the local pre-commit architectural gate", "exit_codes": {"0": "success", "1": "not a git repository"} },
         { "command": "uninstall",          "description": "Remove Archietect-managed local hook integration while preserving project data", "exit_codes": {"0": "success"} },
         { "command": "status",           "description": "Summary of what the index knows — and what it admits it cannot see", "exit_codes": {"0": "success"} },

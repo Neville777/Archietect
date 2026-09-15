@@ -186,6 +186,38 @@ pub struct Decision {
     /// wrote something any more than it guesses what a concept means.
     #[serde(default)]
     pub proposed_by: String,
+    /// Lifecycle state of this decision. Missing status is the historical
+    /// format and therefore means active.
+    #[serde(default)]
+    pub status: DecisionStatus,
+    /// ID of the active decision that superseded this one.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
+}
+
+/// Lifecycle state for a declared architectural decision.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionStatus {
+    #[default]
+    Active,
+    Superseded,
+    Rejected,
+    Retired,
+}
+
+impl std::str::FromStr for DecisionStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "active" => Ok(Self::Active),
+            "superseded" => Ok(Self::Superseded),
+            "rejected" => Ok(Self::Rejected),
+            "retired" => Ok(Self::Retired),
+            other => Err(format!("unknown decision status {other:?}")),
+        }
+    }
 }
 
 /// Everything the scan learned about one repository.

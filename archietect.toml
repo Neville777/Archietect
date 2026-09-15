@@ -33,6 +33,14 @@ links = ["Index", "StructuralGraph", "Mutation", "FileChange"]
 proposed_by = "human"
 
 [[decision]]
+id = "decisions-have-lifecycle"
+decision = "Only active architectural decisions authorize a mutation; superseded, rejected, and retired decisions remain historical context."
+because = "A stale decision must not silently govern a new change after the architecture has moved on."
+rejected = ["Treating every historical decision as current authority"]
+links = ["Decision", "Mutation"]
+proposed_by = "human"
+
+[[decision]]
 id = "no-ai-in-query-path"
 decision = "No LLM or probabilistic model is ever invoked inside the engine"
 because = "determinism is the entire trust model — an answer that could vary between runs is worse than no answer"
