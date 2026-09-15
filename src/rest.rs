@@ -1048,6 +1048,18 @@ mod tests {
         (status, body)
     }
 
+    fn http_post_form(port: u16, path: &str, form: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{form}", form.len());
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = Vec::new();
+        stream.read_to_end(&mut resp).expect("reading response");
+        let resp = String::from_utf8_lossy(&resp);
+        let status = resp.lines().next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (status, resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+    }
+
     // Fixed, widely-spaced high ports — distinct per test so they can run
     // concurrently (the default for `cargo test`) without colliding with
     // each other; arbitrary enough to be unlikely to collide with a real
@@ -1209,6 +1221,17 @@ mod tests {
 
         let (status, _) = http_get(17406, "/proposal/submit?kind=decision");
         assert_eq!(status, 401, "proposal/submit with no token must still be rejected");
+    }
+
+    #[test]
+    fn ci_accepts_form_encoded_post_body() {
+        let home = tmp_dir("home-post-ci");
+        let project = tmp_dir("project-post-ci");
+        let (_guard, _token) = spawn_server(&project, &home, 17411);
+        let (status, body) = http_post_form(17411, "/ci", "diff=");
+        assert_eq!(status, 200, "got: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert!(v.get("governance_receipt").is_some(), "POST /ci must return a governance receipt: {body}");
     }
 
     /// End-to-end proof of the watcher-driven cache invalidation described
