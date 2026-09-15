@@ -55,6 +55,11 @@ struct Cli {
 enum Cmd {
     /// Scan the repository and persist the index (archietect.db)
     Init,
+    /// Install or remove the local pre-commit architectural gate.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
     /// Dump every subcommand, its description, and its exit codes as JSON.
     /// Machine-readable help for AI agents and tooling — generated from the
     /// same dispatch table the binary runs, so it can never drift.
@@ -331,6 +336,14 @@ enum Cmd {
     /// `docker_domain::scan_observed`.
     #[command(subcommand)]
     Docker(DockerCmd),
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    /// Install the idempotent Archietect pre-commit check.
+    Install,
+    /// Remove only the Archietect-managed pre-commit block.
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -616,6 +629,7 @@ fn main() -> anyhow::Result<()> {
                 "declaration_files": idx.declaration_files,
             })
         }
+        Cmd::Hook { action } => hook_command(&root, action)?,
         Cmd::Status => { let (idx, g) = index_for_query(&root, refresh); query::status(&idx, &g) }
         Cmd::Concept { term } => { let (idx, g) = index_for_query(&root, refresh); query::concept(&idx, &g, &term) }
         Cmd::ConceptAt { term, version } => {
@@ -1068,6 +1082,35 @@ fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn hook_command(root: &std::path::Path, action: HookAction) -> anyhow::Result<serde_json::Value> {
+    let hooks = root.join(".git/hooks");
+    let path = hooks.join("pre-commit");
+    const BEGIN: &str = "# >>> archietect >>>";
+    const END: &str = "# <<< archietect <<<";
+    match action {
+        HookAction::Install => {
+            if !hooks.exists() { anyhow::bail!("no .git/hooks directory found; run this inside a git repository"); }
+            let old = std::fs::read_to_string(&path).unwrap_or_default();
+            if old.contains(BEGIN) { return Ok(serde_json::json!({"installed": true, "changed": false, "hook": path.display().to_string()})); }
+            let mut text = old;
+            if text.is_empty() { text.push_str("#!/bin/sh\n"); }
+            if !text.ends_with('\n') { text.push('\n'); }
+            text.push_str(&format!("\n{BEGIN}\ngit diff --cached | archietect ci\n{END}\n"));
+            std::fs::write(&path, text)?;
+            #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; let mut p = std::fs::metadata(&path)?.permissions(); p.set_mode(0o755); std::fs::set_permissions(&path, p)?; }
+            Ok(serde_json::json!({"installed": true, "changed": true, "hook": path.display().to_string()}))
+        }
+        HookAction::Uninstall => {
+            let Ok(old) = std::fs::read_to_string(&path) else { return Ok(serde_json::json!({"installed": false, "changed": false})); };
+            let Some(start) = old.find(BEGIN) else { return Ok(serde_json::json!({"installed": false, "changed": false})); };
+            let end = old[start..].find(END).map(|i| start + i + END.len()).unwrap_or(old.len());
+            let text = format!("{}{}", &old[..start], &old[end..]);
+            if text.trim().is_empty() { std::fs::remove_file(&path)?; } else { std::fs::write(&path, text.trim_start_matches('\n'))?; }
+            Ok(serde_json::json!({"installed": false, "changed": true, "hook": path.display().to_string()}))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,6 +1164,7 @@ mod tests {
 fn help_json() -> serde_json::Value {
     serde_json::json!([
         { "command": "init",             "description": "Scan the repository and persist the index (archietect.db)", "exit_codes": {"0": "success"} },
+        { "command": "hook install|uninstall", "description": "Install or remove the local pre-commit architectural gate", "exit_codes": {"0": "success", "1": "not a git repository"} },
         { "command": "status",           "description": "Summary of what the index knows — and what it admits it cannot see", "exit_codes": {"0": "success"} },
         { "command": "concept <term>",   "description": "Does this concept exist? Which implementation is canonical? Evidence-tiered answer.", "exit_codes": {"0": "success"} },
         { "command": "intent <goal>",    "description": "From a stated intent to the smallest correct change — EXTEND vs CREATE", "exit_codes": {"0": "success"} },

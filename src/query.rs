@@ -1719,11 +1719,21 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
         let high_impact_symbol = changed_files.iter().any(|path| {
             graph.symbols.values().filter(|s| s.file == *path).any(|s| structural_dependents(graph, &s.name, 3).len() >= 10)
         });
-        if (new_concept || high_impact_symbol) && !added.lines().any(|line| line.contains("[[decision]]")) {
+        let changed_names: Vec<String> = graph
+            .symbols
+            .values()
+            .filter(|s| changed_files.iter().any(|p| *p == s.file) && high_impact_symbol)
+            .map(|s| s.name.clone())
+            .chain(regex::Regex::new(r"(?i)create\s+table\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap().captures_iter(&added).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())))
+            .chain(decl_re.captures_iter(&added).filter_map(|c| c.get(1).or(c.get(2)).or(c.get(3)).map(|m| m.as_str().to_string())))
+            .collect();
+        let links_text = added.lines().filter(|line| line.contains("links") && line.contains('[')).collect::<Vec<_>>().join(" ");
+        let linked_changed_name = changed_names.iter().any(|name| links_text.to_lowercase().contains(&name.to_lowercase()));
+        if (new_concept || high_impact_symbol) && (!added.lines().any(|line| line.contains("[[decision]]")) || !linked_changed_name) {
             Some(json!({
                 "kind": "missing_architectural_decision",
                 "protected_paths": idx.decision_required_paths,
-                "reason": "this repository requires a [[decision]] update for new concepts or high-impact symbol changes",
+                "reason": "this repository requires a [[decision]] linked to the changed concept for new concepts or high-impact symbol changes",
                 "advice": "run `archietect plan \"<change>\"`, then add or propose a linked decision"
             }))
         } else {
