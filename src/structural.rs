@@ -1002,6 +1002,22 @@ fn resolve_relative_import(
         return known_files.contains(stripped).then(|| stripped.to_string());
     }
 
+    // Rust's `use crate::foo::bar` addresses a module from the repository's
+    // src/ root. Resolve the two standard layouts without consulting the
+    // filesystem or guessing between candidates.
+    if let Some(subpath) = to_module.strip_prefix("crate::") {
+        let module = subpath.replace("::", "/");
+        let file = format!("src/{module}.rs");
+        if known_files.contains(&file) {
+            return Some(file);
+        }
+        let mod_file = format!("src/{module}/mod.rs");
+        if known_files.contains(&mod_file) {
+            return Some(mod_file);
+        }
+        return None;
+    }
+
     // ── Workspace package resolution ──────────────────────────────────────
     // `import { X } from "@myorg/core-models"` — not a relative path, but
     // the package name maps to a local directory in this monorepo. Try exact
@@ -1168,7 +1184,7 @@ pub struct StructuralFileFacts {
 /// validation corpus's cached archietect.db predates both and would otherwise
 /// keep reporting stale (e.g. zero Django routes) forever via the unchanged
 /// (size, mtime) fast path.
-pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 21; // +OpenAPI/Swagger extractor for .yaml/.yml; extract_kubernetes renamed to extract_yaml dispatch
+pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 22; // Rust crate-root import resolution
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -6052,6 +6068,14 @@ mod import_relationship_tests {
         let files = known(&["src/a.ts", "src/utils/b.ts"]);
         let resolved = resolve_relative_import("src/a.ts", "./utils/b", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("src/utils/b.ts".to_string()));
+    }
+
+    #[test]
+    fn resolves_rust_crate_import_to_src_module_or_mod_file() {
+        let files = known(&["src/main.rs", "src/model.rs", "src/query/mod.rs"]);
+        assert_eq!(resolve_relative_import("src/main.rs", "crate::model", &files, &BTreeMap::new()), Some("src/model.rs".into()));
+        assert_eq!(resolve_relative_import("src/main.rs", "crate::query", &files, &BTreeMap::new()), Some("src/query/mod.rs".into()));
+        assert_eq!(resolve_relative_import("src/main.rs", "crate::missing", &files, &BTreeMap::new()), None);
     }
 
     #[test]

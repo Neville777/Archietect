@@ -13,7 +13,7 @@
 //! declaration is the project speaking; usage is the project acting.
 
 use crate::humanize::age_label;
-use crate::model::{names_concept, same_word, Evidence, Index, Tier};
+use crate::model::{name_tokens, names_concept, same_word, Evidence, Index, Tier};
 use crate::scoring;
 use crate::structural::{routes_for_concept, structural_dependents, symbols_for_concept, StructuralGraph};
 use serde_json::{json, Value};
@@ -422,7 +422,7 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
                 })
                 .unwrap_or(false)
         })
-        .cloned()
+        .map(|name| name.to_lowercase())
         .collect();
     unsupported_files.extend(
         crate::scan::unclassified_files(root_path, &idx.excludes, 200)
@@ -469,11 +469,49 @@ const STOP: &[&str] = &[
 
 pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     let mut terms = Vec::new();
+    let lower_text = text.to_lowercase();
+    // Bind identifiers that appear literally in the request before natural
+    // language tokenization. Otherwise `verify_edit` becomes two unrelated
+    // terms (`verify`, `edit`) and the plan incorrectly calls `edit` new.
+    let mut exact_names: Vec<String> = idx
+        .concepts
+        .keys()
+        .chain(graph.symbols.values().map(|s| &s.name))
+        .filter(|name| {
+            let n = name.to_lowercase();
+            lower_text
+                .match_indices(&n)
+                .any(|(i, _)| {
+                    let before = i.checked_sub(1).and_then(|j| lower_text.as_bytes().get(j)).copied();
+                    let end = i + n.len();
+                    let after = lower_text.as_bytes().get(end).copied();
+                    before.map(|b| !(b.is_ascii_alphanumeric() || b == b'_')).unwrap_or(true)
+                        && after.map(|b| !(b.is_ascii_alphanumeric() || b == b'_')).unwrap_or(true)
+                })
+        })
+        .map(|name| name.to_lowercase())
+        .collect();
+    exact_names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    for name in &exact_names {
+        if !terms.iter().any(|t: &String| t.eq_ignore_ascii_case(name)) {
+            terms.push(name.clone());
+        }
+    }
+    let exact_parts: std::collections::HashSet<String> = exact_names
+        .iter()
+        .flat_map(|n| name_tokens(n))
+        .map(|t| t.to_lowercase())
+        .collect();
     for w in text
         .to_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| w.len() >= 4 && !STOP.contains(w))
     {
+        // Avoid re-adding component words already bound to an exact compound
+        // identifier such as verify_edit or AdminProtectedRoute.
+        if exact_parts.contains(w) {
+            continue;
+        }
         if !terms.contains(&w.to_string()) {
             terms.push(w.to_string());
         }
@@ -2364,6 +2402,18 @@ mod intent_tests {
             "expected 'invoice' to extend 'Invoice', got: {out}"
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn exact_compound_identifier_beats_tokenized_create_candidate() {
+        let (idx, graph, tmp) = scan_tmp(
+            "exact-compound",
+            &[("src/verify.rs", "pub fn verify_edit() {}\n")],
+        );
+        let out = intent(&idx, &graph, "change verify_edit");
+        assert!(out["extend"].as_array().unwrap().iter().any(|e| e["canonical"] == "verify_edit"), "{out}");
+        assert!(!out["create"].as_array().unwrap().iter().any(|e| e == "edit"), "{out}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

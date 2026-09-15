@@ -141,7 +141,7 @@ fn scan_pool_size() -> usize {
 
 /// Bump to invalidate every cached extraction (a changed extractor is a
 /// changed compiler — old object files are lies).
-pub const EXTRACTOR_VERSION: u32 = 12; // systematic pass across schema extractors for the same "shallow index" gap: Mongoose's NestJS @Schema decorator style (+ destructured model() import), GORM's gorm.Model-embedding style (no explicit tags), JPA's @Table attribute-order flexibility, Eloquent's Authenticatable-extending User model outside app/Models/
+pub const EXTRACTOR_VERSION: u32 = 13; // test-source schema filtering and Django custom-base coverage
 
 // `.claude`: Claude Code's `isolation: "worktree"` agents leave a full
 // checkout of (part of) the repo under `.claude/worktrees/<agent>/...`. A
@@ -193,7 +193,8 @@ const NON_CODE_EXTS: &[&str] = &[
     "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
     "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
     "db", "sqlite", "sqlite3", // archietect.db itself, and other embedded DBs
-    "db-wal", "db-shm", "db-journal", // archietect.db's own WAL-mode sidecar files — found as a real regression: enabling WAL mode (store::save's own fix for a concurrent-read bug) left archietect.db-wal/archietect.db-shm sitting in the project root, and since Path::extension() returns "db-wal"/"db-shm" (not "db"), they weren't covered by the entry above and dragged every query on that project down to INSUFFICIENT_COVERAGE
+    "db-wal", "db-shm", "db-journal", // archietect.db's own WAL-mode sidecar files
+    "icns", // macOS application icon bundles are assets, not source languages
     "example", "local", "development", "template", // .env.example/.local/.development — not code
     "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
     "service", "plist", "unit", // systemd/launchd unit files — config, not code
@@ -777,6 +778,10 @@ fn strip_rust_test_modules(text: &str) -> String {
 }
 
 fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
+    // Test fixtures may contain literal CREATE TABLE strings and schemas used
+    // to exercise the extractor. They are not production ontology declarations.
+    let in_tests = path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("tests"));
+    let in_fixture = path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("fixtures"));
     let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
     // Strip `#[cfg(test)]` modules from Rust source BEFORE any declaration
@@ -903,7 +908,11 @@ fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<Stri
             kinds.push("ecto".into());
         }
     }
-    if text.contains("CREATE TABLE") || text.contains("create table") {
+    // Explicit schema files remain authoritative even when stored under a
+    // test fixture directory; only embedded declarations in test source are
+    // excluded from the production ontology.
+    let allow_embedded_sql = !in_tests || in_fixture || ext == "sql";
+    if allow_embedded_sql && (text.contains("CREATE TABLE") || text.contains("create table")) {
         let before = decls.len();
         extract_sql(ext == "sql", text, &mut decls);
         if decls.len() > before {
@@ -1008,6 +1017,13 @@ mod django_model_tests {
         assert!(out.iter().any(|d| d.name == "Member" && d.kind == "django"));
         assert!(out.iter().any(|d| d.name == "Contribution" && d.kind == "django"));
         assert!(!out.iter().any(|d| d.name == "PlainHelper"));
+    }
+
+    #[test]
+    fn test_directory_sql_fixture_does_not_create_production_concept() {
+        let path = std::path::Path::new("/tmp/project/tests/laws.rs");
+        let (decls, _) = extract_declarations(path, "CREATE TABLE ghosts (id INT);");
+        assert!(decls.is_empty());
     }
 }
 
