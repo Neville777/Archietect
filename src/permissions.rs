@@ -72,8 +72,15 @@ const FORBIDDEN_PREFIX_DIRS: &[&str] = &[
 
 /// Filename substrings (matched case-insensitively) that mark a path as
 /// credential/secret-shaped regardless of which directory it lives in.
-const FORBIDDEN_FILENAME_PATTERNS: &[&str] =
-    &["credential", "secret", ".pem", ".pfx", "id_rsa", "id_ed25519", "id_ecdsa"];
+const FORBIDDEN_FILENAME_PATTERNS: &[&str] = &[
+    "credential",
+    "secret",
+    ".pem",
+    ".pfx",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainState {
@@ -112,14 +119,26 @@ fn parse_state(s: &str) -> DomainState {
 /// error — the caller falls through to defaults).
 fn parse_domains_table(path: &Path) -> BTreeMap<String, DomainEntry> {
     let mut out = BTreeMap::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return out };
-    let Ok(v) = text.parse::<toml::Value>() else { return out };
-    let Some(domains) = v.get("domains").and_then(|d| d.as_table()) else { return out };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    let Ok(v) = text.parse::<toml::Value>() else {
+        return out;
+    };
+    let Some(domains) = v.get("domains").and_then(|d| d.as_table()) else {
+        return out;
+    };
     for (name, val) in domains {
         match val {
             // `code = "enabled"` — the common case.
             toml::Value::String(s) => {
-                out.insert(name.to_lowercase(), DomainEntry { state: parse_state(s), attributes: None });
+                out.insert(
+                    name.to_lowercase(),
+                    DomainEntry {
+                        state: parse_state(s),
+                        attributes: None,
+                    },
+                );
             }
             // `[domains.photos]` with a `state` key and optional `attributes`.
             toml::Value::Table(t) => {
@@ -129,7 +148,9 @@ fn parse_domains_table(path: &Path) -> BTreeMap<String, DomainEntry> {
                     .map(parse_state)
                     .unwrap_or(DomainState::Disabled);
                 let attributes = t.get("attributes").and_then(|a| a.as_array()).map(|arr| {
-                    arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
                 });
                 out.insert(name.to_lowercase(), DomainEntry { state, attributes });
             }
@@ -159,7 +180,9 @@ pub fn default_confirmations_path() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .context("could not determine home directory (HOME/USERPROFILE unset)")?;
-    Ok(PathBuf::from(home).join(".archietect").join("confirmations.toml"))
+    Ok(PathBuf::from(home)
+        .join(".archietect")
+        .join("confirmations.toml"))
 }
 
 /// Load both config layers. `project_root` is the project directory (this
@@ -183,7 +206,10 @@ pub fn is_structured_domain(domain: &str) -> bool {
 /// other modules (register.rs's completeness test) check against this one
 /// source instead of hand-copying the list.
 pub fn known_domains() -> impl Iterator<Item = &'static str> {
-    STRUCTURED_DOMAINS.iter().chain(KNOWN_UNSTRUCTURED_DOMAINS.iter()).copied()
+    STRUCTURED_DOMAINS
+        .iter()
+        .chain(KNOWN_UNSTRUCTURED_DOMAINS.iter())
+        .copied()
 }
 
 /// Plain config-precedence lookup — no interactive confirmation involved.
@@ -276,13 +302,21 @@ pub fn stdio_asker() -> Box<dyn ConfirmationAsker> {
 /// actually confirmed" — same loader the gate itself uses, not a second
 /// parser.
 pub fn confirmation_state(confirmations_path: &Path, domain: &str) -> Option<bool> {
-    load_confirmation(confirmations_path, &domain.to_lowercase()).ok().flatten()
+    load_confirmation(confirmations_path, &domain.to_lowercase())
+        .ok()
+        .flatten()
 }
 
 fn load_confirmation(path: &Path, domain: &str) -> Result<Option<bool>> {
-    let Ok(text) = std::fs::read_to_string(path) else { return Ok(None) };
-    let Ok(v) = text.parse::<toml::Value>() else { return Ok(None) };
-    Ok(v.get("confirmations").and_then(|c| c.get(domain)).and_then(|x| x.as_bool()))
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let Ok(v) = text.parse::<toml::Value>() else {
+        return Ok(None);
+    };
+    Ok(v.get("confirmations")
+        .and_then(|c| c.get(domain))
+        .and_then(|x| x.as_bool()))
 }
 
 /// Read-merge-write: preserves every other domain's prior answer (and any
@@ -303,12 +337,17 @@ fn persist_confirmation(path: &Path, domain: &str, allowed: bool) -> Result<()> 
         .cloned()
         .unwrap_or_default();
     confirmations.insert(domain.to_string(), toml::Value::Boolean(allowed));
-    root_table.insert("confirmations".to_string(), toml::Value::Table(confirmations));
+    root_table.insert(
+        "confirmations".to_string(),
+        toml::Value::Table(confirmations),
+    );
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    let text = toml::to_string_pretty(&toml::Value::Table(root_table)).context("serializing confirmations")?;
+    let text = toml::to_string_pretty(&toml::Value::Table(root_table))
+        .context("serializing confirmations")?;
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
@@ -376,14 +415,22 @@ pub fn check_resource(cfg: &PermissionConfig, domain: &str, path: &Path) -> Reso
     if let Some(rule) = hardcoded_denial_reason(path) {
         return ResourceDecision {
             allowed: false,
-            reason: format!("hardcoded denial — {rule} — no config, project or global, can override this"),
+            reason: format!(
+                "hardcoded denial — {rule} — no config, project or global, can override this"
+            ),
         };
     }
     if domain_allowed(cfg, domain) {
-        ResourceDecision { allowed: true, reason: format!("domain '{domain}' is allowed") }
+        ResourceDecision {
+            allowed: true,
+            reason: format!("domain '{domain}' is allowed"),
+        }
     } else {
         let (_, source) = resolve_with_source(cfg, &domain.to_lowercase());
-        ResourceDecision { allowed: false, reason: format!("domain '{domain}' is disabled ({source})") }
+        ResourceDecision {
+            allowed: false,
+            reason: format!("domain '{domain}' is disabled ({source})"),
+        }
     }
 }
 
@@ -403,7 +450,10 @@ fn hardcoded_denial_reason(path: &Path) -> Option<String> {
         }
     }
     if let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_lowercase()) {
-        if let Some(p) = FORBIDDEN_FILENAME_PATTERNS.iter().find(|p| name.contains(**p)) {
+        if let Some(p) = FORBIDDEN_FILENAME_PATTERNS
+            .iter()
+            .find(|p| name.contains(**p))
+        {
             return Some(format!("filename matches credential/secret pattern '{p}'"));
         }
     }
@@ -422,10 +472,15 @@ pub fn attribute_allowed(cfg: &PermissionConfig, domain: &str, attribute: &str) 
     if is_structured_domain(&domain_lc) {
         return true;
     }
-    let entry = cfg.project.get(&domain_lc).or_else(|| cfg.global.get(&domain_lc));
+    let entry = cfg
+        .project
+        .get(&domain_lc)
+        .or_else(|| cfg.global.get(&domain_lc));
     match entry.and_then(|e| e.attributes.as_ref()) {
         Some(allowed) => allowed.iter().any(|a| a.eq_ignore_ascii_case(attribute)),
-        None => attribute.eq_ignore_ascii_case("filename") || attribute.eq_ignore_ascii_case("metadata"),
+        None => {
+            attribute.eq_ignore_ascii_case("filename") || attribute.eq_ignore_ascii_case("metadata")
+        }
     }
 }
 
@@ -450,7 +505,10 @@ fn resolve_with_source(cfg: &PermissionConfig, domain: &str) -> (bool, &'static 
 /// see what's blocked regardless of any config.
 pub fn report(cfg: &PermissionConfig) -> serde_json::Value {
     let mut domains = Vec::new();
-    for &d in STRUCTURED_DOMAINS.iter().chain(KNOWN_UNSTRUCTURED_DOMAINS.iter()) {
+    for &d in STRUCTURED_DOMAINS
+        .iter()
+        .chain(KNOWN_UNSTRUCTURED_DOMAINS.iter())
+    {
         let (allowed, source) = resolve_with_source(cfg, d);
         domains.push(serde_json::json!({
             "domain": d,
@@ -475,7 +533,10 @@ mod tests {
     use super::*;
 
     fn tmp_file(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("archietect-permissions-test-{label}-{}.toml", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "archietect-permissions-test-{label}-{}.toml",
+            std::process::id()
+        ))
     }
 
     fn write_toml(path: &Path, contents: &str) {
@@ -515,13 +576,22 @@ mod tests {
     #[test]
     fn project_override_beats_global() {
         let global = tmp_file("global-precedence");
-        let project_dir = std::env::temp_dir().join(format!("archietect-permissions-test-proj-{}", std::process::id()));
+        let project_dir = std::env::temp_dir().join(format!(
+            "archietect-permissions-test-proj-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&project_dir).unwrap();
         write_toml(&global, "[domains]\ndocker = \"enabled\"\n");
-        write_toml(&project_dir.join("archietect.toml"), "[domains]\ndocker = \"disabled\"\n");
+        write_toml(
+            &project_dir.join("archietect.toml"),
+            "[domains]\ndocker = \"disabled\"\n",
+        );
 
         let cfg = load(&global, &project_dir).unwrap();
-        assert!(!domain_allowed(&cfg, "docker"), "project-level disable must beat global enable");
+        assert!(
+            !domain_allowed(&cfg, "docker"),
+            "project-level disable must beat global enable"
+        );
 
         let _ = std::fs::remove_file(&global);
         let _ = std::fs::remove_dir_all(&project_dir);
@@ -531,13 +601,22 @@ mod tests {
     fn hardcoded_denial_wins_even_if_config_tries_to_enable_it() {
         let global = tmp_file("hardcoded-denial");
         write_toml(&global, "[domains]\nfilesystem = \"enabled\"\n");
-        let project_dir = std::env::temp_dir().join(format!("archietect-permissions-test-hc-{}", std::process::id()));
+        let project_dir = std::env::temp_dir().join(format!(
+            "archietect-permissions-test-hc-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&project_dir).unwrap();
         let cfg = load(&global, &project_dir).unwrap();
 
-        assert!(domain_allowed(&cfg, "filesystem"), "sanity: the domain itself is enabled");
+        assert!(
+            domain_allowed(&cfg, "filesystem"),
+            "sanity: the domain itself is enabled"
+        );
         let ssh_key = PathBuf::from("/home/someone/.ssh/id_rsa");
-        assert!(!resource_allowed(&cfg, "filesystem", &ssh_key), "a .ssh path must never be allowed, config or no");
+        assert!(
+            !resource_allowed(&cfg, "filesystem", &ssh_key),
+            "a .ssh path must never be allowed, config or no"
+        );
 
         let _ = std::fs::remove_file(&global);
         let _ = std::fs::remove_dir_all(&project_dir);
@@ -548,8 +627,16 @@ mod tests {
         let empty = PermissionConfig::default();
         let decision = check_resource(&empty, "code", &PathBuf::from("/home/x/.ssh/id_rsa"));
         assert!(!decision.allowed);
-        assert!(decision.reason.contains("hardcoded denial"), "got: {}", decision.reason);
-        assert!(decision.reason.contains(".ssh"), "must name the actual rule matched, got: {}", decision.reason);
+        assert!(
+            decision.reason.contains("hardcoded denial"),
+            "got: {}",
+            decision.reason
+        );
+        assert!(
+            decision.reason.contains(".ssh"),
+            "must name the actual rule matched, got: {}",
+            decision.reason
+        );
     }
 
     #[test]
@@ -557,8 +644,16 @@ mod tests {
         let empty = PermissionConfig::default();
         let decision = check_resource(&empty, "docker", &PathBuf::from("/tmp/whatever/Dockerfile"));
         assert!(!decision.allowed);
-        assert!(decision.reason.contains("disabled"), "got: {}", decision.reason);
-        assert!(decision.reason.contains("default-disabled"), "must name WHY, got: {}", decision.reason);
+        assert!(
+            decision.reason.contains("disabled"),
+            "got: {}",
+            decision.reason
+        );
+        assert!(
+            decision.reason.contains("default-disabled"),
+            "must name WHY, got: {}",
+            decision.reason
+        );
     }
 
     #[test]
@@ -566,7 +661,10 @@ mod tests {
         let empty = PermissionConfig::default();
         let decision = check_resource(&empty, "code", &PathBuf::from("/tmp/whatever/main.rs"));
         assert!(decision.allowed);
-        assert!(!decision.reason.is_empty(), "a reason is owed on allow too, not just on denial");
+        assert!(
+            !decision.reason.is_empty(),
+            "a reason is owed on allow too, not just on denial"
+        );
     }
 
     #[test]
@@ -576,13 +674,18 @@ mod tests {
         let empty = PermissionConfig::default();
 
         // First call, nobody has answered yet, asker says no.
-        let first = domain_allowed_with_confirmation(&empty, &confirmations, "photos", &AlwaysNo).unwrap();
+        let first =
+            domain_allowed_with_confirmation(&empty, &confirmations, "photos", &AlwaysNo).unwrap();
         assert!(!first);
 
         // A second, independent asker that would say yes must NOT be
         // consulted — the "no" from above is already persisted.
-        let second = domain_allowed_with_confirmation(&empty, &confirmations, "photos", &AlwaysYes).unwrap();
-        assert!(!second, "a prior persisted 'no' must not be re-asked and overturned silently");
+        let second =
+            domain_allowed_with_confirmation(&empty, &confirmations, "photos", &AlwaysYes).unwrap();
+        assert!(
+            !second,
+            "a prior persisted 'no' must not be re-asked and overturned silently"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
     }
@@ -593,11 +696,18 @@ mod tests {
         let _ = std::fs::remove_file(&confirmations);
         let empty = PermissionConfig::default();
 
-        let first = domain_allowed_with_confirmation(&empty, &confirmations, "messages", &AlwaysYes).unwrap();
+        let first =
+            domain_allowed_with_confirmation(&empty, &confirmations, "messages", &AlwaysYes)
+                .unwrap();
         assert!(first);
 
-        let second = domain_allowed_with_confirmation(&empty, &confirmations, "messages", &AlwaysNo).unwrap();
-        assert!(second, "a prior persisted 'yes' must not be re-asked and overturned silently");
+        let second =
+            domain_allowed_with_confirmation(&empty, &confirmations, "messages", &AlwaysNo)
+                .unwrap();
+        assert!(
+            second,
+            "a prior persisted 'yes' must not be re-asked and overturned silently"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
     }
@@ -613,15 +723,34 @@ mod tests {
         let _ = std::fs::remove_file(&confirmations);
         let empty = PermissionConfig::default();
 
-        let first = domain_allowed_with_confirmation(&empty, &confirmations, "documents", &NonInteractiveAsker).unwrap();
+        let first = domain_allowed_with_confirmation(
+            &empty,
+            &confirmations,
+            "documents",
+            &NonInteractiveAsker,
+        )
+        .unwrap();
         assert!(!first, "fail closed");
-        assert!(!confirmations.exists() || load_confirmation(&confirmations, "documents").unwrap().is_none(),
-            "a non-interactive 'no' must not be written to disk");
+        assert!(
+            !confirmations.exists()
+                || load_confirmation(&confirmations, "documents")
+                    .unwrap()
+                    .is_none(),
+            "a non-interactive 'no' must not be written to disk"
+        );
 
         // A later run that CAN ask must actually be asked — and its yes sticks.
-        let second = domain_allowed_with_confirmation(&empty, &confirmations, "documents", &AlwaysYes).unwrap();
-        assert!(second, "the interactive run must be asked, not pre-empted by the earlier no-TTY call");
-        assert_eq!(load_confirmation(&confirmations, "documents").unwrap(), Some(true));
+        let second =
+            domain_allowed_with_confirmation(&empty, &confirmations, "documents", &AlwaysYes)
+                .unwrap();
+        assert!(
+            second,
+            "the interactive run must be asked, not pre-empted by the earlier no-TTY call"
+        );
+        assert_eq!(
+            load_confirmation(&confirmations, "documents").unwrap(),
+            Some(true)
+        );
 
         let _ = std::fs::remove_file(&confirmations);
     }
@@ -632,9 +761,17 @@ mod tests {
         let _ = std::fs::remove_file(&confirmations);
         let empty = PermissionConfig::default();
 
-        let allowed =
-            domain_allowed_with_confirmation(&empty, &confirmations, "browser", &NonInteractiveAsker).unwrap();
-        assert!(!allowed, "a non-interactive context must never assume consent");
+        let allowed = domain_allowed_with_confirmation(
+            &empty,
+            &confirmations,
+            "browser",
+            &NonInteractiveAsker,
+        )
+        .unwrap();
+        assert!(
+            !allowed,
+            "a non-interactive context must never assume consent"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
     }
@@ -645,14 +782,21 @@ mod tests {
         let _ = std::fs::remove_file(&confirmations);
         let global = tmp_file("skip-prompt-global");
         write_toml(&global, "[domains]\nphotos = \"enabled\"\n");
-        let project_dir = std::env::temp_dir().join(format!("archietect-permissions-test-skip-{}", std::process::id()));
+        let project_dir = std::env::temp_dir().join(format!(
+            "archietect-permissions-test-skip-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&project_dir).unwrap();
         let cfg = load(&global, &project_dir).unwrap();
 
         // AlwaysNo would deny if actually consulted — proving the explicit
         // config entry is honored WITHOUT calling into the asker at all.
-        let allowed = domain_allowed_with_confirmation(&cfg, &confirmations, "photos", &AlwaysNo).unwrap();
-        assert!(allowed, "an explicit config entry must be honored without prompting");
+        let allowed =
+            domain_allowed_with_confirmation(&cfg, &confirmations, "photos", &AlwaysNo).unwrap();
+        assert!(
+            allowed,
+            "an explicit config entry must be honored without prompting"
+        );
 
         let _ = std::fs::remove_file(&global);
         let _ = std::fs::remove_file(&confirmations);
@@ -664,7 +808,10 @@ mod tests {
         let empty = PermissionConfig::default();
         assert!(attribute_allowed(&empty, "photos", "filename"));
         assert!(attribute_allowed(&empty, "photos", "metadata"));
-        assert!(!attribute_allowed(&empty, "photos", "content"), "silence must never mean 'and also content'");
+        assert!(
+            !attribute_allowed(&empty, "photos", "content"),
+            "silence must never mean 'and also content'"
+        );
         // structured domains: no restriction.
         assert!(attribute_allowed(&empty, "code", "content"));
     }
@@ -676,12 +823,18 @@ mod tests {
             &global,
             "[domains.photos]\nstate = \"enabled\"\nattributes = [\"filename\"]\n",
         );
-        let project_dir = std::env::temp_dir().join(format!("archietect-permissions-test-attr-{}", std::process::id()));
+        let project_dir = std::env::temp_dir().join(format!(
+            "archietect-permissions-test-attr-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&project_dir).unwrap();
         let cfg = load(&global, &project_dir).unwrap();
 
         assert!(attribute_allowed(&cfg, "photos", "filename"));
-        assert!(!attribute_allowed(&cfg, "photos", "metadata"), "an explicit list must exclude anything not named");
+        assert!(
+            !attribute_allowed(&cfg, "photos", "metadata"),
+            "an explicit list must exclude anything not named"
+        );
         assert!(!attribute_allowed(&cfg, "photos", "content"));
 
         let _ = std::fs::remove_file(&global);

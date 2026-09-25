@@ -135,7 +135,10 @@ impl Concept {
         let mut evidence: Vec<Evidence> = self
             .declared_in
             .iter()
-            .map(|(f, k)| Evidence { tier: Tier::Declared, what: format!("{k} declaration in {f}") })
+            .map(|(f, k)| Evidence {
+                tier: Tier::Declared,
+                what: format!("{k} declaration in {f}"),
+            })
             .collect();
         // .take(8): matches the existing cap in query::concept_card, which
         // this method's output replaces verbatim — not a new limit.
@@ -144,8 +147,14 @@ impl Concept {
             what: format!("{k} access in {f}"),
         }));
         let location = match self.declared_in.first() {
-            Some((f, _)) => crate::resource::Location { file: f.clone(), line: None },
-            None => crate::resource::Location { file: String::new(), line: None },
+            Some((f, _)) => crate::resource::Location {
+                file: f.clone(),
+                line: None,
+            },
+            None => crate::resource::Location {
+                file: String::new(),
+                line: None,
+            },
         };
         let mut attributes = BTreeMap::new();
         if let Some(table) = &self.table {
@@ -224,6 +233,14 @@ impl std::str::FromStr for DecisionStatus {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Index {
     pub root: String,
+    /// Wall-clock time when this index was assembled. This is provenance,
+    /// not a freshness claim: callers must compare it with the current tree.
+    #[serde(default)]
+    pub scanned_at_ms: i64,
+    /// Repository HEAD observed when the scan ran. `None` means the root was
+    /// not a git checkout (or git could not resolve HEAD).
+    #[serde(default)]
+    pub source_commit_sha: Option<String>,
     pub files_scanned: usize,
     pub declaration_files: Vec<(String, String)>,
     /// BTreeMap for deterministic output — same repo, same answer, same order.
@@ -318,10 +335,7 @@ pub fn same_word(a: &str, b: &str) -> bool {
     let (ab, bb) = (a.as_bytes(), b.as_bytes());
     let shared = ab.iter().zip(bb).take_while(|(x, y)| x == y).count();
     let shorter = ab.len().min(bb.len());
-    shared >= 4
-        && shared * 10 >= shorter * 7
-        && ab.len() - shared <= 3
-        && bb.len() - shared <= 3
+    shared >= 4 && shared * 10 >= shorter * 7 && ab.len() - shared <= 3 && bb.len() - shared <= 3
 }
 
 /// Split snake_case AND camelCase into tokens ("UserAuditLog" → user, audit, log).
@@ -361,10 +375,29 @@ pub fn name_tokens(name: &str) -> Vec<String> {
 /// identical reason), generalized: a shared GENERIC role word is never, by
 /// itself, evidence of redundancy.
 const GENERIC_ROLE_TOKENS: &[&str] = &[
-    "executor", "manager", "handler", "service", "controller", "factory",
-    "builder", "adapter", "provider", "client", "worker", "engine",
-    "repository", "store", "registry", "gateway", "middleware",
-    "config", "result", "response", "request", "context", "state",
+    "executor",
+    "manager",
+    "handler",
+    "service",
+    "controller",
+    "factory",
+    "builder",
+    "adapter",
+    "provider",
+    "client",
+    "worker",
+    "engine",
+    "repository",
+    "store",
+    "registry",
+    "gateway",
+    "middleware",
+    "config",
+    "result",
+    "response",
+    "request",
+    "context",
+    "state",
 ];
 
 /// Is this token too generic to serve as SOLE evidence of a name collision?

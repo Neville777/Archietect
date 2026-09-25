@@ -1,6 +1,11 @@
 //! Exercise the public CI transport against real staged Git patches.
-use std::{io::Write, path::PathBuf, process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}};
 use serde_json::Value;
+use std::{
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const POLICY: &str = "[policy]\ndecision_required_paths = [\"src\", \"backend\", \"apps\"]\n";
@@ -9,7 +14,11 @@ const DECISION: &str = "\n[[decision]]\nid = \"contribution-storage\"\ndecision 
 struct Repo(PathBuf);
 impl Repo {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("archietect-mutation-cli-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-mutation-cli-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let repo = Self(root);
         repo.git(&["init", "-q"]);
@@ -25,23 +34,67 @@ impl Repo {
         std::fs::write(path, content).unwrap();
     }
     fn git(&self, args: &[&str]) -> String {
-        let out = Command::new("git").arg("-C").arg(&self.0).args(args).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.0)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8(out.stdout).unwrap()
     }
     fn commit_base(&self) {
         self.git(&["add", "."]);
-        self.git(&["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "baseline"]);
+        self.git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "baseline",
+        ]);
     }
-    fn stage(&self, path: &str) { self.git(&["add", path]); }
+    fn stage(&self, path: &str) {
+        self.git(&["add", path]);
+    }
     fn ci(&self) -> (i32, Value) {
-        let diff = self.git(&["diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv"]);
+        let diff = self.git(&[
+            "diff",
+            "--cached",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-textconv",
+        ]);
         let mut child = Command::new(env!("CARGO_BIN_EXE_archietect"))
-            .arg("--root").arg(&self.0).arg("ci")
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(diff.as_bytes()).unwrap();
+            .arg("--root")
+            .arg(&self.0)
+            .arg("ci")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(diff.as_bytes())
+            .unwrap();
         let output = child.wait_with_output().unwrap();
-        let json = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid CLI output: {e}: {} stderr: {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)));
+        let json = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!(
+                "invalid CLI output: {e}: {} stderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
         (output.status.code().unwrap(), json)
     }
     fn contribution(&self) {
@@ -49,15 +102,37 @@ impl Repo {
         self.stage("backend/models.py");
     }
 }
-impl Drop for Repo { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 #[test]
 fn routine_function_body_and_comment_pass() {
     let repo = Repo::new();
-    repo.write("src/lib.rs", "// Fix a routine implementation detail.\nfn helper() -> u32 { 2 }\n");
+    repo.write(
+        "src/lib.rs",
+        "// Fix a routine implementation detail.\nfn helper() -> u32 { 2 }\n",
+    );
     repo.stage("src/lib.rs");
     let (code, out) = repo.ci();
     assert_eq!(code, 0, "{out:#}");
+    assert_eq!(out["pass"], true);
+}
+
+#[test]
+fn routine_django_model_edit_with_multiple_nested_meta_classes_passes() {
+    let repo = Repo::new();
+    repo.write("backend/models.py", "from django.db import models\n\nclass AuditEvent(models.Model):\n    label = models.CharField(max_length=40)\n    class Meta:\n        ordering = ['label']\n\nclass UserNotice(models.Model):\n    message = models.CharField(max_length=40)\n    class Meta:\n        ordering = ['message']\n");
+    repo.commit_base();
+    repo.write("backend/models.py", "from django.db import models\n\nclass AuditEvent(models.Model):\n    # Displayed in the administrative audit list.\n    label = models.CharField(max_length=40)\n    class Meta:\n        ordering = ['label']\n\nclass UserNotice(models.Model):\n    message = models.CharField(max_length=40)\n    class Meta:\n        ordering = ['message']\n");
+    repo.stage("backend/models.py");
+    let (code, out) = repo.ci();
+    assert_eq!(
+        code, 0,
+        "nested Django Meta classes are scoped and must not become duplicate identities: {out:#}"
+    );
     assert_eq!(out["pass"], true);
 }
 
@@ -77,7 +152,10 @@ fn new_django_model_requires_applicable_multiline_decision() {
 #[test]
 fn advisory_mode_reports_without_blocking() {
     let repo = Repo::new();
-    repo.write("archietect.toml", "[policy]\nenforcement = \"advisory\"\ndecision_required_paths = [\"src\", \"backend\"]\n");
+    repo.write(
+        "archietect.toml",
+        "[policy]\nenforcement = \"advisory\"\ndecision_required_paths = [\"src\", \"backend\"]\n",
+    );
     repo.stage("archietect.toml");
     repo.contribution();
     let (code, out) = repo.ci();
@@ -114,27 +192,43 @@ fn malformed_source_cannot_be_classified_safe() {
     repo.stage("src/lib.rs");
     let (code, out) = repo.ci();
     assert_eq!(code, 1, "{out:#}");
-    assert!(out.to_string().contains("unknown_structural_mutation"), "{out:#}");
+    assert!(
+        out.to_string().contains("unknown_structural_mutation"),
+        "{out:#}"
+    );
 }
 
 #[test]
 fn duplicate_symbol_identity_is_unknown() {
     let repo = Repo::new();
-    repo.write("src/lib.rs", "fn helper() -> u32 { 1 }\nfn helper() -> u32 { 2 }\n");
+    repo.write(
+        "src/lib.rs",
+        "fn helper() -> u32 { 1 }\nfn helper() -> u32 { 2 }\n",
+    );
     repo.stage("src/lib.rs");
     let (code, out) = repo.ci();
     assert_eq!(code, 1, "{out:#}");
-    assert!(out.to_string().contains("unknown_structural_mutation"), "{out:#}");
+    assert!(
+        out.to_string().contains("unknown_structural_mutation"),
+        "{out:#}"
+    );
 }
 
 #[test]
 fn cfg_guarded_rust_implementations_are_not_duplicate_mutations() {
     let repo = Repo::new();
-    repo.write("src/lib.rs", "#[cfg(unix)]\nfn platform_hook() {}\n#[cfg(not(unix))]\nfn platform_hook() {}\n");
+    repo.write(
+        "src/lib.rs",
+        "#[cfg(unix)]\nfn platform_hook() {}\n#[cfg(not(unix))]\nfn platform_hook() {}\n",
+    );
     repo.stage("src/lib.rs");
     let (code, out) = repo.ci();
     assert_eq!(code, 0, "{out:#}");
-    assert!(!out.to_string().contains("Duplicate declaration identity 'platform_hook'"), "{out:#}");
+    assert!(
+        !out.to_string()
+            .contains("Duplicate declaration identity 'platform_hook'"),
+        "{out:#}"
+    );
 }
 
 #[test]
@@ -146,9 +240,19 @@ fn pure_file_rename_preserves_structural_identity() {
     repo.git(&["mv", "src/worker.rs", "src/processor.rs"]);
     let (code, out) = repo.ci();
     assert_eq!(code, 0, "{out:#}");
-    let mutations = out["change"]["mutations"].as_array().expect("receipt mutations");
-    assert!(mutations.iter().any(|m| m["kind"] == "renamed" && m["evidence"].to_string().contains("worker.rs")), "{mutations:#?}");
-    assert!(!mutations.iter().any(|m| m["kind"] == "unknown"), "pure rename must not lose identity: {mutations:#?}");
+    let mutations = out["change"]["mutations"]
+        .as_array()
+        .expect("receipt mutations");
+    assert!(
+        mutations
+            .iter()
+            .any(|m| m["kind"] == "renamed" && m["evidence"].to_string().contains("worker.rs")),
+        "{mutations:#?}"
+    );
+    assert!(
+        !mutations.iter().any(|m| m["kind"] == "unknown"),
+        "pure rename must not lose identity: {mutations:#?}"
+    );
 }
 
 #[test]
@@ -165,7 +269,17 @@ fn import_target_change_is_reported_as_relationship_mutations() {
     repo.stage("src/main.rs");
     let (code, out) = repo.ci();
     assert_eq!(code, 0, "{out:#}");
-    let mutations = out["change"]["mutations"].as_array().expect("receipt mutations");
-    assert!(mutations.iter().any(|m| m["kind"] == "relationship_removed"), "{mutations:#?}");
-    assert!(mutations.iter().any(|m| m["kind"] == "relationship_added"), "{mutations:#?}");
+    let mutations = out["change"]["mutations"]
+        .as_array()
+        .expect("receipt mutations");
+    assert!(
+        mutations
+            .iter()
+            .any(|m| m["kind"] == "relationship_removed"),
+        "{mutations:#?}"
+    );
+    assert!(
+        mutations.iter().any(|m| m["kind"] == "relationship_added"),
+        "{mutations:#?}"
+    );
 }

@@ -75,7 +75,9 @@ fn start_progress(root: &Path, all_files: Vec<String>, total: usize) -> Arc<Scan
         all_files,
         pass_counts: Mutex::new(HashMap::new()),
     });
-    map.lock().unwrap().insert(root.display().to_string(), progress.clone());
+    map.lock()
+        .unwrap()
+        .insert(root.display().to_string(), progress.clone());
     progress
 }
 
@@ -99,8 +101,18 @@ pub fn scan_progress(root: &Path) -> Option<ScanProgressSnapshot> {
     let p = map.get(&root.display().to_string())?;
     let counts = p.pass_counts.lock().ok()?;
     let fully_done = |f: &str| counts.get(f).copied().unwrap_or(0) >= PASSES;
-    let done_files: Vec<String> = p.all_files.iter().filter(|f| fully_done(f)).cloned().collect();
-    let remaining_files: Vec<String> = p.all_files.iter().filter(|f| !fully_done(f)).cloned().collect();
+    let done_files: Vec<String> = p
+        .all_files
+        .iter()
+        .filter(|f| fully_done(f))
+        .cloned()
+        .collect();
+    let remaining_files: Vec<String> = p
+        .all_files
+        .iter()
+        .filter(|f| !fully_done(f))
+        .cloned()
+        .collect();
     Some(ScanProgressSnapshot {
         done: p.done.load(Ordering::Relaxed),
         total: p.total.load(Ordering::Relaxed),
@@ -132,7 +144,9 @@ fn system_load_average() -> Option<f64> {
 /// archietect piling onto an already-overloaded machine, without the
 /// complexity of resizing a running rayon pool.
 fn scan_pool_size() -> usize {
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     match system_load_average() {
         Some(load) if load >= cores as f64 => 2.max(cores / 4),
         _ => cores,
@@ -149,11 +163,26 @@ pub const EXTRACTOR_VERSION: u32 = 15; // test-directory and test-file SQL filte
 // scan time and can defeat a path-prefix `exclude` entry that only covers
 // the original location, not its worktree copy.
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
-    ".venv", "venv", ".turbo", "coverage", ".cache", "vendor", ".claude",
+    "node_modules",
+    ".git",
+    ".next",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".turbo",
+    "coverage",
+    ".cache",
+    "vendor",
+    ".claude",
     // Test/CI caches that contain binary blobs — walking into these turns
     // otherwise-ABSENT queries into INSUFFICIENT_COVERAGE because of .pak/.vsix
-    ".vscode-test", ".vscode-server", ".idea", ".metals",
+    ".vscode-test",
+    ".vscode-server",
+    ".idea",
+    ".metals",
 ];
 const MAX_FILE_BYTES: u64 = 2_000_000;
 /// Schema-declaration formats structural.rs has no reason to know about —
@@ -170,8 +199,12 @@ const SCHEMA_ONLY_EXTS: &[&str] = &["prisma", "sql"];
 /// scan path despite its extractor compiling and its unit test passing).
 fn is_scannable_ext(ext: &str) -> bool {
     SCHEMA_ONLY_EXTS.contains(&ext)
-        || structural::LANGUAGES.iter().any(|l| l.extensions.contains(&ext))
-        || structural::KNOWN_UNSUPPORTED.iter().any(|(_, exts)| exts.contains(&ext))
+        || structural::LANGUAGES
+            .iter()
+            .any(|l| l.extensions.contains(&ext))
+        || structural::KNOWN_UNSUPPORTED
+            .iter()
+            .any(|(_, exts)| exts.contains(&ext))
 }
 
 /// Extensions known NOT to be source code — the inverse of `is_scannable_ext`,
@@ -182,30 +215,114 @@ fn is_scannable_ext(ext: &str) -> bool {
 /// which law-014 exists to prevent, this list erring incomplete is safe by
 /// construction).
 const NON_CODE_EXTS: &[&str] = &[
-    "md", "markdown", "txt", "rst", "adoc", "json", "toml", "ini",
-    "cfg", "conf", "lock", "lockb", "env", "editorconfig", "gitignore", "gitattributes",
-    "code-workspace", "tsbuildinfo", // IDE workspace config and TypeScript build metadata
-    "png", "jpg", "jpeg", "gif", "svg", "ico", "bmp", "webp", "avif",
-    "woff", "woff2", "ttf", "eot", "otf",
-    "css", "scss", "sass", "less", "html", "htm", "xml", "csv", "tsv",
-    "log", "map", "pdf", "zip", "tar", "gz", "7z", "rar",
-    "mp3", "mp4", "wav", "mov", "avi", "webm",
-    "wasm", "sh", "bat", "ps1", "makefile", "dockerfile", "license", "lic",
-    "ipynb", "pyc", "class", "o", "so", "dylib", "dll", "a", "exe",
-    "db", "sqlite", "sqlite3", // archietect.db itself, and other embedded DBs
-    "db-wal", "db-shm", "db-journal", // archietect.db's own WAL-mode sidecar files
-    "icns", // macOS application icon bundles are assets, not source languages
-    "bak", "tag", // editor/backup metadata artifacts, not source languages
-    "example", "local", "development", "template", // .env.example/.local/.development — not code
-    "mod", "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
-    "service", "plist", "unit", // systemd/launchd unit files — config, not code
-    "1", "man", "rdoc", "tex", // man pages, RDoc, LaTeX — documentation formats
-    "doc", "docx", "epub", "pptx", "xlsx", // office/ebook document formats
-    "dbml", "jsonl", "patch", "snap", // schema-adjacent/data/diff/test-snapshot formats
-    "desktop", "ru", // Linux .desktop shortcuts, Rack's config.ru — config, not code
+    "md",
+    "markdown",
+    "txt",
+    "rst",
+    "adoc",
+    "json",
+    "toml",
+    "ini",
+    "cfg",
+    "conf",
+    "lock",
+    "lockb",
+    "env",
+    "editorconfig",
+    "gitignore",
+    "gitattributes",
+    "code-workspace",
+    "tsbuildinfo", // IDE workspace config and TypeScript build metadata
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "ico",
+    "bmp",
+    "webp",
+    "avif",
+    "woff",
+    "woff2",
+    "ttf",
+    "eot",
+    "otf",
+    "css",
+    "scss",
+    "sass",
+    "less",
+    "html",
+    "htm",
+    "xml",
+    "csv",
+    "tsv",
+    "log",
+    "map",
+    "pdf",
+    "zip",
+    "tar",
+    "gz",
+    "7z",
+    "rar",
+    "mp3",
+    "mp4",
+    "wav",
+    "mov",
+    "avi",
+    "webm",
+    "wasm",
+    "sh",
+    "bat",
+    "ps1",
+    "makefile",
+    "dockerfile",
+    "license",
+    "lic",
+    "ipynb",
+    "pyc",
+    "class",
+    "o",
+    "so",
+    "dylib",
+    "dll",
+    "a",
+    "exe",
+    "db",
+    "sqlite",
+    "sqlite3", // archietect.db itself, and other embedded DBs
+    "db-wal",
+    "db-shm",
+    "db-journal", // archietect.db's own WAL-mode sidecar files
+    "icns",       // macOS application icon bundles are assets, not source languages
+    "bak",
+    "tag", // editor/backup metadata artifacts, not source languages
+    "example",
+    "local",
+    "development",
+    "template", // .env.example/.local/.development — not code
+    "mod",
+    "sum", // go.mod/go.sum — manifests, not code (Go source itself is .go)
+    "service",
+    "plist",
+    "unit", // systemd/launchd unit files — config, not code
+    "1",
+    "man",
+    "rdoc",
+    "tex", // man pages, RDoc, LaTeX — documentation formats
+    "doc",
+    "docx",
+    "epub",
+    "pptx",
+    "xlsx", // office/ebook document formats
+    "dbml",
+    "jsonl",
+    "patch",
+    "snap", // schema-adjacent/data/diff/test-snapshot formats
+    "desktop",
+    "ru",  // Linux .desktop shortcuts, Rack's config.ru — config, not code
     "mdx", // overwhelmingly prose (docs/blog) in real-world use, like .md
     "erb", // Rails view templates — markup with embedded Ruby CALLS, never
-           // declarations; checked real examples, nothing to extract
+    // declarations; checked real examples, nothing to extract
     // Binary package/archive formats — these are distribution artifacts, not
     // source. Walking into them would cause INSUFFICIENT_COVERAGE noise on
     // repos that ship bundled extensions or packages alongside code.
@@ -215,14 +332,22 @@ const NON_CODE_EXTS: &[&str] = &[
     "asar",  // Electron app archives
     "nupkg", // NuGet packages
     "crx",   // Chrome extension packages
-    "appimage", "deb", "rpm", "msi", "dmg", // installers
-    "bin", "dat", "raw", // generic binary blobs
-    "node",  // native Node.js addons
-    "whl",   // Python wheels
-    "egg",   // Python eggs
-    "jar", "aar", "war", // JVM archives
-    "apk",   // Android packages
-    "ipa",   // iOS packages
+    "appimage",
+    "deb",
+    "rpm",
+    "msi",
+    "dmg", // installers
+    "bin",
+    "dat",
+    "raw",  // generic binary blobs
+    "node", // native Node.js addons
+    "whl",  // Python wheels
+    "egg",  // Python eggs
+    "jar",
+    "aar",
+    "war", // JVM archives
+    "apk", // Android packages
+    "ipa", // iOS packages
 ];
 
 /// Files that exist in this repo but are neither recognized as source
@@ -250,12 +375,19 @@ pub fn unclassified_files(root: &Path, excludes: &[String], limit: usize) -> Vec
         if out.len() >= limit {
             break;
         }
-        let Some(ext) = entry.path().extension().and_then(|x| x.to_str()) else { continue };
+        let Some(ext) = entry.path().extension().and_then(|x| x.to_str()) else {
+            continue;
+        };
         let ext = ext.to_lowercase();
         if is_scannable_ext(&ext) || NON_CODE_EXTS.contains(&ext.as_str()) {
             continue;
         }
-        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path()).display().to_string();
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .display()
+            .to_string();
         out.push((rel, ext));
     }
     out
@@ -292,7 +424,11 @@ fn is_python_venv(e: &walkdir::DirEntry) -> bool {
             .flatten()
             .flatten()
             .any(|entry| {
-                entry.file_name().to_str().map(|n| n.starts_with("python")).unwrap_or(false)
+                entry
+                    .file_name()
+                    .to_str()
+                    .map(|n| n.starts_with("python"))
+                    .unwrap_or(false)
                     && entry.path().join("site-packages").is_dir()
             })
     })
@@ -300,7 +436,12 @@ fn is_python_venv(e: &walkdir::DirEntry) -> bool {
 
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir()
-        && (e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false) || is_python_venv(e))
+        && (e
+            .file_name()
+            .to_str()
+            .map(|n| SKIP_DIRS.contains(&n))
+            .unwrap_or(false)
+            || is_python_venv(e))
 }
 
 /// Returns true if the entry's root-relative path starts with any of the
@@ -329,6 +470,47 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Capture the repository identity at scan time. A commit SHA is useful
+/// provenance, but it is deliberately not treated as the only freshness
+/// signal: an index can be stale while a branch has uncommitted edits.
+pub(crate) fn current_commit_sha(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            &root.display().to_string(),
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
+
+/// Whether tracked files have changed since the persisted index was built.
+/// This is intentionally separate from commit identity: a dirty worktree can
+/// have the same HEAD as the index while containing uncommitted changes.
+pub(crate) fn working_tree_dirty(root: &Path) -> Option<bool> {
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            &root.display().to_string(),
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(!output.stdout.is_empty())
+}
+
 pub fn scan(root: &Path) -> (Index, StructuralGraph) {
     let (schema_prior, graph_prior) = crate::store::load_raw(root);
     scan_with_prior(root, schema_prior, graph_prior)
@@ -342,6 +524,8 @@ pub fn scan_with_prior(
     let prior = prior.filter(|p| p.extractor_version == EXTRACTOR_VERSION);
     let mut idx = Index {
         root: root.display().to_string(),
+        scanned_at_ms: now_ms(),
+        source_commit_sha: current_commit_sha(root),
         extractor_version: EXTRACTOR_VERSION,
         ..Default::default()
     };
@@ -362,7 +546,11 @@ pub fn scan_with_prior(
                     let arr = |k: &str| {
                         d.get(k)
                             .and_then(|x| x.as_array())
-                            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|s| s.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default()
                     };
                     idx.decisions.push(crate::model::Decision {
@@ -372,12 +560,21 @@ pub fn scan_with_prior(
                         rejected: arr("rejected"),
                         links: arr("links"),
                         proposed_by: g("proposed_by"),
-                        status: d.get("status").and_then(|x| x.as_str()).unwrap_or("active").parse().unwrap_or_default(),
-                        superseded_by: d.get("superseded_by").and_then(|x| x.as_str()).map(String::from),
+                        status: d
+                            .get("status")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("active")
+                            .parse()
+                            .unwrap_or_default(),
+                        superseded_by: d
+                            .get("superseded_by")
+                            .and_then(|x| x.as_str())
+                            .map(String::from),
                     });
                 }
             }
-            idx.declaration_files.push(("archietect.toml".into(), "ontology".into()));
+            idx.declaration_files
+                .push(("archietect.toml".into(), "ontology".into()));
         }
     }
 
@@ -407,14 +604,27 @@ pub fn scan_with_prior(
     idx.decision_required_paths = std::fs::read_to_string(root.join("archietect.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Value>().ok())
-        .and_then(|v| v.get("policy").and_then(|p| p.get("decision_required_paths")).cloned())
+        .and_then(|v| {
+            v.get("policy")
+                .and_then(|p| p.get("decision_required_paths"))
+                .cloned()
+        })
         .and_then(|v| v.as_array().cloned())
-        .map(|a| a.into_iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.into_iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     idx.enforcement = std::fs::read_to_string(root.join("archietect.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Value>().ok())
-        .and_then(|v| v.get("policy").and_then(|p| p.get("enforcement")).and_then(|v| v.as_str()).map(|s| s.parse().unwrap_or_default()))
+        .and_then(|v| {
+            v.get("policy")
+                .and_then(|p| p.get("enforcement"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.parse().unwrap_or_default())
+        })
         .unwrap_or_default();
 
     // ── file inventory with metadata ────────────────────────────────────────
@@ -441,8 +651,18 @@ pub fn scan_with_prior(
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            let rel = e.path().strip_prefix(root).unwrap_or(e.path()).display().to_string();
-            Some(ScannableFile { path: e.into_path(), rel, size: m.len(), mtime_ms })
+            let rel = e
+                .path()
+                .strip_prefix(root)
+                .unwrap_or(e.path())
+                .display()
+                .to_string();
+            Some(ScannableFile {
+                path: e.into_path(),
+                rel,
+                size: m.len(),
+                mtime_ms,
+            })
         })
         .collect();
     idx.files_scanned = files.len();
@@ -468,8 +688,10 @@ pub fn scan_with_prior(
         .build()
         .expect("building a scoped rayon pool");
 
-    let prior_facts: BTreeMap<String, FileFacts> =
-        prior.as_ref().map(|p| p.file_facts.clone()).unwrap_or_default();
+    let prior_facts: BTreeMap<String, FileFacts> = prior
+        .as_ref()
+        .map(|p| p.file_facts.clone())
+        .unwrap_or_default();
     let unchanged = |f: &ScannableFile| {
         prior_facts
             .get(&f.rel)
@@ -478,23 +700,30 @@ pub fn scan_with_prior(
     };
 
     // ── pass 1: DECLARATIONS — changed files re-extracted, rest from cache ──
-    let decl_results: Vec<(String, u64, i64, Vec<DeclFragment>, Vec<String>)> = pool.install(|| {
-        files
-            .par_iter()
-            .map(|f| {
-                mark_pass_done(&progress, &f.rel);
-                if unchanged(f) {
-                    let pf = &prior_facts[&f.rel];
-                    return (f.rel.clone(), f.size, f.mtime_ms, pf.decls.clone(), pf.decl_kinds.clone());
-                }
-                let Ok(text) = std::fs::read_to_string(&f.path) else {
-                    return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new());
-                };
-                let (decls, kinds) = extract_declarations(&f.path, &text);
-                (f.rel.clone(), f.size, f.mtime_ms, decls, kinds)
-            })
-            .collect()
-    });
+    let decl_results: Vec<(String, u64, i64, Vec<DeclFragment>, Vec<String>)> =
+        pool.install(|| {
+            files
+                .par_iter()
+                .map(|f| {
+                    mark_pass_done(&progress, &f.rel);
+                    if unchanged(f) {
+                        let pf = &prior_facts[&f.rel];
+                        return (
+                            f.rel.clone(),
+                            f.size,
+                            f.mtime_ms,
+                            pf.decls.clone(),
+                            pf.decl_kinds.clone(),
+                        );
+                    }
+                    let Ok(text) = std::fs::read_to_string(&f.path) else {
+                        return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new());
+                    };
+                    let (decls, kinds) = extract_declarations(&f.path, &text);
+                    (f.rel.clone(), f.size, f.mtime_ms, decls, kinds)
+                })
+                .collect()
+        });
 
     for (rel, size, mtime_ms, decls, decl_kinds) in &decl_results {
         idx.file_facts.insert(
@@ -516,11 +745,14 @@ pub fn scan_with_prior(
     let now = now_ms();
     for (rel, ff) in &idx.file_facts.clone() {
         for d in &ff.decls {
-            let c = idx.concepts.entry(d.name.clone()).or_insert_with(|| Concept {
-                name: d.name.clone(),
-                first_seen_ms: now,
-                ..Default::default()
-            });
+            let c = idx
+                .concepts
+                .entry(d.name.clone())
+                .or_insert_with(|| Concept {
+                    name: d.name.clone(),
+                    first_seen_ms: now,
+                    ..Default::default()
+                });
             c.declared_in.push((rel.clone(), d.kind.clone()));
             if c.fields.is_empty() {
                 c.fields = d.fields.clone();
@@ -583,13 +815,20 @@ pub fn scan_with_prior(
                 .iter()
                 .find(|(n2, c2)| {
                     *n2 != name
-                        && c2.table.as_deref().map(|t| t.eq_ignore_ascii_case(name)).unwrap_or(false)
+                        && c2
+                            .table
+                            .as_deref()
+                            .map(|t| t.eq_ignore_ascii_case(name))
+                            .unwrap_or(false)
                 })
                 .map(|(target, _)| (name.clone(), target.clone()))
         })
         .collect();
 
-    fn resolve_root(start: &str, raw_merges: &std::collections::BTreeMap<String, String>) -> Option<String> {
+    fn resolve_root(
+        start: &str,
+        raw_merges: &std::collections::BTreeMap<String, String>,
+    ) -> Option<String> {
         let mut current = start.to_string();
         let mut seen = std::collections::BTreeSet::new();
         seen.insert(current.clone());
@@ -626,7 +865,9 @@ pub fn scan_with_prior(
         if !idx.concepts.contains_key(&target) {
             continue;
         }
-        let Some(d) = idx.concepts.remove(&dupe) else { continue };
+        let Some(d) = idx.concepts.remove(&dupe) else {
+            continue;
+        };
         let t = idx.concepts.get_mut(&target).expect("checked contains_key above; nothing else can remove from this single-threaded map between the check and this line");
         t.declared_in.extend(d.declared_in);
         if d.first_seen_ms > 0 {
@@ -653,8 +894,10 @@ pub fn scan_with_prior(
         }
         format!("{h:x}")
     };
-    let usage_cache_valid =
-        prior.as_ref().map(|p| p.concepts_sig == idx.concepts_sig).unwrap_or(false);
+    let usage_cache_valid = prior
+        .as_ref()
+        .map(|p| p.concepts_sig == idx.concepts_sig)
+        .unwrap_or(false);
 
     // ── pass 2: USAGE — tree-sitter parse once per file ─────────────────────
     // One matcher per concept holds only what tree-sitter cannot cover:
@@ -737,7 +980,9 @@ pub fn scan_with_prior(
             ff.usage = hits.clone();
         }
         for (concept, kind) in hits {
-            let Some(c) = idx.concepts.get_mut(&concept) else { continue };
+            let Some(c) = idx.concepts.get_mut(&concept) else {
+                continue;
+            };
             if c.declared_in.iter().any(|(f, _)| *f == rel) {
                 continue; // a declaration file "using" its own concept is not usage
             }
@@ -798,10 +1043,12 @@ fn strip_rust_test_modules(text: &str) -> String {
 pub(crate) fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment>, Vec<String>) {
     // Test fixtures may contain literal CREATE TABLE strings and schemas used
     // to exercise the extractor. They are not production ontology declarations.
-    let in_tests = path.components().any(|c| {
-        matches!(c.as_os_str().to_str(), Some("test" | "tests" | "__tests__"))
-    });
-    let in_fixture = path.components().any(|c| c.as_os_str() == std::ffi::OsStr::new("fixtures"));
+    let in_tests = path
+        .components()
+        .any(|c| matches!(c.as_os_str().to_str(), Some("test" | "tests" | "__tests__")));
+    let in_fixture = path
+        .components()
+        .any(|c| c.as_os_str() == std::ffi::OsStr::new("fixtures"));
     let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
     // Strip `#[cfg(test)]` modules from Rust source BEFORE any declaration
@@ -833,7 +1080,9 @@ pub(crate) fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment
     if name == "models.py"
         && (text.contains("models.Model")
             || text.contains("models.")
-            || Regex::new(r"(?m)^class\s+\w+\s*\([^)]*Model[^)]*\):").unwrap().is_match(text))
+            || Regex::new(r"(?m)^class\s+\w+\s*\([^)]*Model[^)]*\):")
+                .unwrap()
+                .is_match(text))
     {
         let before = decls.len();
         extract_django(text, &mut decls);
@@ -884,10 +1133,18 @@ pub(crate) fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment
         let before = decls.len();
         extract_rails(name, text, &mut decls);
         if decls.len() > before {
-            kinds.push(if name == "schema.rb" { "rails-schema".into() } else { "rails".into() });
+            kinds.push(if name == "schema.rb" {
+                "rails-schema".into()
+            } else {
+                "rails".into()
+            });
         }
     }
-    if matches!(ext, "ts" | "js") && (text.contains("pgTable(") || text.contains("sqliteTable(") || text.contains("mysqlTable(")) {
+    if matches!(ext, "ts" | "js")
+        && (text.contains("pgTable(")
+            || text.contains("sqliteTable(")
+            || text.contains("mysqlTable("))
+    {
         let before = decls.len();
         extract_drizzle(text, &mut decls);
         if decls.len() > before {
@@ -899,7 +1156,9 @@ pub(crate) fn extract_declarations(path: &Path, text: &str) -> (Vec<DeclFragment
     // it's present in nearly every Laravel app.
     if ext == "php"
         && text.contains("class ")
-        && (path_has_models_dir(path) || text.contains("extends Model") || text.contains("extends Authenticatable"))
+        && (path_has_models_dir(path)
+            || text.contains("extends Model")
+            || text.contains("extends Authenticatable"))
     {
         let before = decls.len();
         extract_eloquent(text, &mut decls);
@@ -963,7 +1222,11 @@ fn extract_prisma(text: &str, out: &mut Vec<DeclFragment>) {
             if let Some(f) = field_re.captures(line) {
                 fields.push(f[1].to_string());
                 let ftype = &f[2];
-                if ftype.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                if ftype
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_uppercase())
+                    .unwrap_or(false)
                     && !PRISMA_SCALARS.contains(&ftype)
                 {
                     relations.push(ftype.to_string());
@@ -972,8 +1235,10 @@ fn extract_prisma(text: &str, out: &mut Vec<DeclFragment>) {
         }
         relations.sort();
         relations.dedup();
-        let table =
-            map_re.captures(body).map(|m| m[1].to_string()).unwrap_or_else(|| name.to_string());
+        let table = map_re
+            .captures(body)
+            .map(|m| m[1].to_string())
+            .unwrap_or_else(|| name.to_string());
         out.push(DeclFragment {
             name: name.to_string(),
             kind: "prisma".into(),
@@ -1004,9 +1269,15 @@ fn extract_django(text: &str, out: &mut Vec<DeclFragment>) {
         .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
         .collect();
     for (start, name, bases) in starts {
-        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
+        let body_end = top_re
+            .find_at(text, start)
+            .map(|m| m.start())
+            .unwrap_or(text.len());
         let body = &text[start..body_end];
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let fields: Vec<String> = field_re
+            .captures_iter(body)
+            .map(|f| f[1].to_string())
+            .collect();
         let is_model = bases.split(',').any(|b| b.trim().ends_with("Model"))
             || !fields.is_empty()
             || body.contains("class Meta:");
@@ -1022,7 +1293,13 @@ fn extract_django(text: &str, out: &mut Vec<DeclFragment>) {
         relations.dedup();
         // table stays None: Django's real table name needs the app label, and
         // we do not guess.
-        out.push(DeclFragment { name, kind: "django".into(), fields, relations, table: None });
+        out.push(DeclFragment {
+            name,
+            kind: "django".into(),
+            fields,
+            relations,
+            table: None,
+        });
     }
 }
 
@@ -1036,7 +1313,9 @@ mod django_model_tests {
         let mut out = Vec::new();
         extract_django(text, &mut out);
         assert!(out.iter().any(|d| d.name == "Member" && d.kind == "django"));
-        assert!(out.iter().any(|d| d.name == "Contribution" && d.kind == "django"));
+        assert!(out
+            .iter()
+            .any(|d| d.name == "Contribution" && d.kind == "django"));
         assert!(!out.iter().any(|d| d.name == "PlainHelper"));
     }
 
@@ -1050,9 +1329,21 @@ mod django_model_tests {
     #[test]
     fn singular_test_directories_and_test_named_files_do_not_extract_embedded_sql() {
         let sql = "CREATE TABLE ghosts (id INT);";
-        assert!(extract_declarations(std::path::Path::new("/tmp/project/test/setup.ts"), sql).0.is_empty());
-        assert!(extract_declarations(std::path::Path::new("/tmp/project/src/setup.test.ts"), sql).0.is_empty());
-        assert!(!extract_declarations(std::path::Path::new("/tmp/project/test/schema.sql"), sql).0.is_empty());
+        assert!(
+            extract_declarations(std::path::Path::new("/tmp/project/test/setup.ts"), sql)
+                .0
+                .is_empty()
+        );
+        assert!(
+            extract_declarations(std::path::Path::new("/tmp/project/src/setup.test.ts"), sql)
+                .0
+                .is_empty()
+        );
+        assert!(
+            !extract_declarations(std::path::Path::new("/tmp/project/test/schema.sql"), sql)
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1068,15 +1359,24 @@ mod tests {
 }
 "##;
         let (decls, _) = extract_declarations(path, source);
-        assert!(decls.is_empty(), "test-only raw-string SQL leaked: {decls:?}");
+        assert!(
+            decls.is_empty(),
+            "test-only raw-string SQL leaked: {decls:?}"
+        );
     }
 
     #[test]
     fn this_source_has_no_test_sql_declarations_after_stripping() {
         let source = include_str!("scan.rs");
         let (decls, _) = extract_declarations(std::path::Path::new("src/scan.rs"), source);
-        assert!(!decls.iter().any(|d| d.name == "ghosts"), "ghost fixture survived extraction: {decls:?}");
-        assert!(!decls.iter().any(|d| d.name == "widgets"), "widget fixture survived extraction: {decls:?}");
+        assert!(
+            !decls.iter().any(|d| d.name == "ghosts"),
+            "ghost fixture survived extraction: {decls:?}"
+        );
+        assert!(
+            !decls.iter().any(|d| d.name == "widgets"),
+            "widget fixture survived extraction: {decls:?}"
+        );
     }
 }
 
@@ -1096,14 +1396,34 @@ fn extract_pydantic(text: &str, out: &mut Vec<DeclFragment>) {
         if !is_table && !bases.contains("BaseModel") && !bases.contains("SQLModel") {
             continue;
         }
-        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
+        let body_end = top_re
+            .find_at(text, start)
+            .map(|m| m.start())
+            .unwrap_or(text.len());
         let body = &text[start..body_end];
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
-        let kind = if is_table || bases.contains("SQLModel") { "sqlmodel" } else { "pydantic" };
+        let fields: Vec<String> = field_re
+            .captures_iter(body)
+            .map(|f| f[1].to_string())
+            .collect();
+        let kind = if is_table || bases.contains("SQLModel") {
+            "sqlmodel"
+        } else {
+            "pydantic"
+        };
         // SQLModel's default table name is the lowercased class name — a
         // framework-documented rule, not a guess. Contracts get None.
-        let table = if is_table { Some(name.to_lowercase()) } else { None };
-        out.push(DeclFragment { name, kind: kind.into(), fields, relations: Vec::new(), table });
+        let table = if is_table {
+            Some(name.to_lowercase())
+        } else {
+            None
+        };
+        out.push(DeclFragment {
+            name,
+            kind: kind.into(),
+            fields,
+            relations: Vec::new(),
+            table,
+        });
     }
 }
 
@@ -1112,14 +1432,19 @@ fn extract_sqlalchemy(text: &str, out: &mut Vec<DeclFragment>) {
     let tname_re = Regex::new(r#"__tablename__\s*=\s*["']([^"']+)["']"#).unwrap();
     // Matches both the classic `id = Column(...)`/`id = db.Column(...)` form
     // and SQLAlchemy 2.0's annotated form, `id: Mapped[int] = mapped_column(...)`.
-    let field_re = Regex::new(r"(?m)^    (\w+)\s*(?::[^=\n]+)?=\s*(?:db\.)?(?:Column|mapped_column)\(").unwrap();
+    let field_re =
+        Regex::new(r"(?m)^    (\w+)\s*(?::[^=\n]+)?=\s*(?:db\.)?(?:Column|mapped_column)\(")
+            .unwrap();
     let top_re = Regex::new(r"(?m)^\S").unwrap();
     let starts: Vec<(usize, String, String)> = class_re
         .captures_iter(text)
         .map(|c| (c.get(0).unwrap().end(), c[1].to_string(), c[2].to_string()))
         .collect();
     for (start, name, bases) in starts {
-        let body_end = top_re.find_at(text, start).map(|m| m.start()).unwrap_or(text.len());
+        let body_end = top_re
+            .find_at(text, start)
+            .map(|m| m.start())
+            .unwrap_or(text.len());
         let body = &text[start..body_end];
         let tname = tname_re.captures(body).map(|m| m[1].to_string());
         // a SQLAlchemy model states a table OR inherits db.Model; a bare
@@ -1127,7 +1452,10 @@ fn extract_sqlalchemy(text: &str, out: &mut Vec<DeclFragment>) {
         if tname.is_none() && !bases.contains("db.Model") {
             continue;
         }
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).collect();
+        let fields: Vec<String> = field_re
+            .captures_iter(body)
+            .map(|f| f[1].to_string())
+            .collect();
         out.push(DeclFragment {
             name,
             kind: "sqlalchemy".into(),
@@ -1149,7 +1477,10 @@ fn extract_sql(is_sql_file: bool, text: &str, out: &mut Vec<DeclFragment>) {
             .lines()
             .filter(|l| {
                 let t = l.trim_start();
-                !(t.starts_with("//") || t.starts_with('#') || t.starts_with("--") || t.starts_with('*'))
+                !(t.starts_with("//")
+                    || t.starts_with('#')
+                    || t.starts_with("--")
+                    || t.starts_with('*'))
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1194,7 +1525,10 @@ fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
                 .collect()
         })
         .unwrap_or_default();
-    let mut relations: Vec<String> = ref_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = ref_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in model_re.captures_iter(text) {
@@ -1214,10 +1548,14 @@ fn extract_mongoose(text: &str, out: &mut Vec<DeclFragment>) {
     // `MongooseModule.forFeature`). Structurally the same shape as
     // TypeORM's @Entity: a class decorator, then `export class X`, with
     // `@Prop()`-decorated properties instead of `@Column()`.
-    let schema_re = Regex::new(r"@Schema\([\s\S]{0,300}?\)[\s\S]{0,200}?export class (\w+)").unwrap();
+    let schema_re =
+        Regex::new(r"@Schema\([\s\S]{0,300}?\)[\s\S]{0,200}?export class (\w+)").unwrap();
     let collection_prop_re = Regex::new(r#"collection\s*:\s*['"]([^'"]+)['"]"#).unwrap();
     let prop_re = Regex::new(r"(?m)@Prop\([^)]*\)\s*\n\s*(\w+)[?!]?\s*[:;]").unwrap();
-    let decorator_fields: Vec<String> = prop_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let decorator_fields: Vec<String> = prop_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     for cap in schema_re.captures_iter(text) {
         let args = &cap[0];
         let table = collection_prop_re.captures(args).map(|m| m[1].to_string());
@@ -1240,7 +1578,8 @@ fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
     // `name:` property — the default (no name given at all) is a
     // naming-strategy output that varies per project, so table stays None
     // rather than guessed.
-    let ent_re = Regex::new(r"@Entity\(([\s\S]{0,300}?)\)[\s\S]{0,200}?export class (\w+)").unwrap();
+    let ent_re =
+        Regex::new(r"@Entity\(([\s\S]{0,300}?)\)[\s\S]{0,200}?export class (\w+)").unwrap();
     let bare_string_re = Regex::new(r#"^\s*['"]([^'"]+)['"]\s*$"#).unwrap();
     let name_prop_re = Regex::new(r#"name\s*:\s*['"]([^'"]+)['"]"#).unwrap();
     let col_re =
@@ -1249,8 +1588,14 @@ fn extract_typeorm(text: &str, out: &mut Vec<DeclFragment>) {
         r"@(?:ManyToOne|OneToMany|OneToOne|ManyToMany)\(\s*(?:type\s*=>|\(\)\s*=>)\s*(\w+)",
     )
     .unwrap();
-    let fields: Vec<String> = col_re.captures_iter(text).map(|c| c[1].to_string()).collect();
-    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let fields: Vec<String> = col_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
+    let mut relations: Vec<String> = rel_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in ent_re.captures_iter(text) {
@@ -1296,7 +1641,10 @@ fn extract_rails(fname: &str, text: &str, out: &mut Vec<DeclFragment>) {
     let rel_re =
         Regex::new(r"(?m)^\s+(?:belongs_to|has_many|has_one|has_and_belongs_to_many)\s+:(\w+)")
             .unwrap();
-    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = rel_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in class_re.captures_iter(text) {
@@ -1318,7 +1666,10 @@ fn extract_drizzle(text: &str, out: &mut Vec<DeclFragment>) {
     )
     .unwrap();
     let ref_re = Regex::new(r"references\(\s*\(\)\s*=>\s*(\w+)\.").unwrap();
-    let mut relations: Vec<String> = ref_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = ref_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in tbl_re.captures_iter(text) {
@@ -1338,15 +1689,21 @@ fn path_has_models_dir(p: &Path) -> bool {
     // Book extends a project base class (Entity), not Model directly — the
     // directory convention IS the declaration convention in Laravel, and it
     // is a stated framework norm, not a guess.
-    p.components().any(|c| c.as_os_str().to_str() == Some("Models"))
+    p.components()
+        .any(|c| c.as_os_str().to_str() == Some("Models"))
 }
 
 fn extract_eloquent(text: &str, out: &mut Vec<DeclFragment>) {
     let class_re = Regex::new(r"(?m)^(?:abstract\s+)?class\s+(\w+)\s+extends\s+\w+").unwrap();
     let table_re = Regex::new(r#"protected\s+\$table\s*=\s*['"](\w+)['"]"#).unwrap();
-    let rel_re = Regex::new(r"(?:hasMany|belongsTo|hasOne|belongsToMany|morphMany)\(\s*(\w+)::class").unwrap();
+    let rel_re =
+        Regex::new(r"(?:hasMany|belongsTo|hasOne|belongsToMany|morphMany)\(\s*(\w+)::class")
+            .unwrap();
     let table = table_re.captures(text).map(|m| m[1].to_string());
-    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = rel_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in class_re.captures_iter(text) {
@@ -1387,8 +1744,11 @@ fn extract_jpa(text: &str, out: &mut Vec<DeclFragment>) {
     let table_args_re = Regex::new(r"@Table\s*\(([\s\S]{0,200}?)\)").unwrap();
     let table_name_re = Regex::new(r#"name\s*=\s*"(\w+)""#).unwrap();
     let rel_re = Regex::new(r"@(?:ManyToOne|OneToMany|OneToOne|ManyToMany)[\s\S]{0,200}?(?:private|protected)\s+(?:\w+<)?(\w+)>?\s+\w+").unwrap();
-    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string())
-        .filter(|r| !matches!(r.as_str(), "Set" | "List" | "Collection")).collect();
+    let mut relations: Vec<String> = rel_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .filter(|r| !matches!(r.as_str(), "Set" | "List" | "Collection"))
+        .collect();
     relations.sort();
     relations.dedup();
     for cap in ent_re.captures_iter(text) {
@@ -1420,7 +1780,11 @@ fn extract_gorm(text: &str, out: &mut Vec<DeclFragment>) {
         if !body.contains("gorm:") && !body.contains("gorm.Model") {
             continue;
         }
-        let fields: Vec<String> = field_re.captures_iter(body).map(|f| f[1].to_string()).take(30).collect();
+        let fields: Vec<String> = field_re
+            .captures_iter(body)
+            .map(|f| f[1].to_string())
+            .take(30)
+            .collect();
         out.push(DeclFragment {
             name: name.to_string(),
             kind: "gorm".into(),
@@ -1437,13 +1801,18 @@ fn extract_ecto(text: &str, out: &mut Vec<DeclFragment>) {
     let mod_re = Regex::new(r"(?m)^\s*defmodule\s+([\w.]+)\s+do").unwrap();
     let schema_re = Regex::new(r#"(?m)^\s*schema\s+"(\w+)"\s+do"#).unwrap();
     let rel_re = Regex::new(r"(?m)^\s*(?:belongs_to|has_many|has_one)\s+:(\w+)").unwrap();
-    let Some(sc) = schema_re.captures(text) else { return };
+    let Some(sc) = schema_re.captures(text) else {
+        return;
+    };
     let table = sc[1].to_string();
     let name = mod_re
         .captures(text)
         .map(|m| m[1].rsplit('.').next().unwrap_or(&m[1]).to_string())
         .unwrap_or_else(|| table.clone());
-    let mut relations: Vec<String> = rel_re.captures_iter(text).map(|c| c[1].to_string()).collect();
+    let mut relations: Vec<String> = rel_re
+        .captures_iter(text)
+        .map(|c| c[1].to_string())
+        .collect();
     relations.sort();
     relations.dedup();
     out.push(DeclFragment {
@@ -1526,7 +1895,10 @@ mod merge_chain_tests {
     use super::*;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-merge-chain-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-merge-chain-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -1594,10 +1966,22 @@ mod merge_chain_tests {
         let (idx, _graph) = scan(&root);
         let names: Vec<&String> = idx.concepts.keys().collect();
 
-        assert!(names.iter().any(|n| n.as_str() == "A"), "model A must survive, got: {names:?}");
-        assert!(names.iter().any(|n| n.as_str() == "B"), "model B must survive, got: {names:?}");
-        assert!(!names.iter().any(|n| n.as_str() == "b"), "raw sql 'b' must have merged into A, got: {names:?}");
-        assert!(!names.iter().any(|n| n.as_str() == "c"), "raw sql 'c' must have merged into B, got: {names:?}");
+        assert!(
+            names.iter().any(|n| n.as_str() == "A"),
+            "model A must survive, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.as_str() == "B"),
+            "model B must survive, got: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.as_str() == "b"),
+            "raw sql 'b' must have merged into A, got: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.as_str() == "c"),
+            "raw sql 'c' must have merged into B, got: {names:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1624,8 +2008,14 @@ mod tests {
 }
 "#;
         let stripped = strip_rust_test_modules(src);
-        assert!(!stripped.contains("CREATE TABLE"), "test-only SQL text must be stripped, got: {stripped:?}");
-        assert!(stripped.contains("real_production_code"), "real code outside the test module must survive: {stripped:?}");
+        assert!(
+            !stripped.contains("CREATE TABLE"),
+            "test-only SQL text must be stripped, got: {stripped:?}"
+        );
+        assert!(
+            stripped.contains("real_production_code"),
+            "real code outside the test module must survive: {stripped:?}"
+        );
     }
 
     /// Multiple `#[cfg(test)]` modules in one file (a real, common pattern
@@ -1652,7 +2042,12 @@ pub fn c() {}
 "#;
         let stripped = strip_rust_test_modules(src);
         assert!(!stripped.contains("CREATE TABLE"), "got: {stripped:?}");
-        assert!(stripped.contains("pub fn a()") && stripped.contains("pub fn b()") && stripped.contains("pub fn c()"), "got: {stripped:?}");
+        assert!(
+            stripped.contains("pub fn a()")
+                && stripped.contains("pub fn b()")
+                && stripped.contains("pub fn c()"),
+            "got: {stripped:?}"
+        );
     }
 
     /// A brace-like character INSIDE a string literal inside the test
@@ -1677,7 +2072,10 @@ pub fn after() {}
 "#;
         let stripped = strip_rust_test_modules(src);
         assert!(!stripped.contains("CREATE TABLE"), "got: {stripped:?}");
-        assert!(stripped.contains("pub fn after()"), "content after the test module must survive intact: {stripped:?}");
+        assert!(
+            stripped.contains("pub fn after()"),
+            "content after the test module must survive intact: {stripped:?}"
+        );
     }
 
     /// End-to-end through the real scan pipeline, not just the string
@@ -1685,7 +2083,8 @@ pub fn after() {}
     /// `CREATE TABLE` string must produce NO declared concept at all.
     #[test]
     fn end_to_end_scan_does_not_declare_a_concept_from_test_fixture_sql() {
-        let root = std::env::temp_dir().join(format!("archietect-strip-test-e2e-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-strip-test-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -1715,7 +2114,10 @@ mod claude_worktree_skip_tests {
     /// original location.
     #[test]
     fn claude_worktree_directory_is_never_scanned() {
-        let root = std::env::temp_dir().join(format!("archietect-claude-skip-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-claude-skip-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let worktree = root.join(".claude/worktrees/agent-fake/schema.prisma");
         std::fs::create_dir_all(worktree.parent().unwrap()).unwrap();
@@ -1727,7 +2129,11 @@ mod claude_worktree_skip_tests {
         .unwrap();
 
         let (idx, _graph) = scan(&root);
-        assert!(idx.concepts.contains_key("RealTopLevel"), "real top-level content must still be scanned, got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            idx.concepts.contains_key("RealTopLevel"),
+            "real top-level content must still be scanned, got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
         assert!(
             !idx.concepts.contains_key("DuplicatedByWorktree"),
             "content under .claude/ must never be scanned, got: {:?}",
@@ -1762,9 +2168,15 @@ mod typeorm_tests {
         let src = "@Entity({ name: 'departments', schema: 'public' })\nexport class Department {}\n\n@Entity({ schema: 'public', name: 'roles' })\nexport class Role {}\n";
         let mut decls = Vec::new();
         extract_typeorm(src, &mut decls);
-        let dept = decls.iter().find(|d| d.name == "Department").expect("got: {decls:?}");
+        let dept = decls
+            .iter()
+            .find(|d| d.name == "Department")
+            .expect("got: {decls:?}");
         assert_eq!(dept.table.as_deref(), Some("departments"));
-        let role = decls.iter().find(|d| d.name == "Role").expect("got: {decls:?}");
+        let role = decls
+            .iter()
+            .find(|d| d.name == "Role")
+            .expect("got: {decls:?}");
         assert_eq!(role.table.as_deref(), Some("roles"));
     }
 
@@ -1786,12 +2198,19 @@ mod typeorm_tests {
     /// unchanged after generalizing the parenthesized-args capture.
     #[test]
     fn bare_call_and_bare_string_forms_still_work() {
-        let src = "@Entity()\nexport class Widget {}\n\n@Entity('sprockets')\nexport class Sprocket {}\n";
+        let src =
+            "@Entity()\nexport class Widget {}\n\n@Entity('sprockets')\nexport class Sprocket {}\n";
         let mut decls = Vec::new();
         extract_typeorm(src, &mut decls);
-        let widget = decls.iter().find(|d| d.name == "Widget").expect("got: {decls:?}");
+        let widget = decls
+            .iter()
+            .find(|d| d.name == "Widget")
+            .expect("got: {decls:?}");
         assert_eq!(widget.table, None);
-        let sprocket = decls.iter().find(|d| d.name == "Sprocket").expect("got: {decls:?}");
+        let sprocket = decls
+            .iter()
+            .find(|d| d.name == "Sprocket")
+            .expect("got: {decls:?}");
         assert_eq!(sprocket.table.as_deref(), Some("sprockets"));
     }
 
@@ -1799,7 +2218,8 @@ mod typeorm_tests {
     /// function in isolation.
     #[test]
     fn end_to_end_scan_declares_object_literal_entity_as_a_concept() {
-        let root = std::env::temp_dir().join(format!("archietect-typeorm-e2e-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-typeorm-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -1831,7 +2251,11 @@ mod sqlalchemy_tests {
         let mut decls = Vec::new();
         extract_sqlalchemy(src, &mut decls);
         assert_eq!(decls.len(), 1, "got: {decls:?}");
-        assert_eq!(decls[0].fields, vec!["id".to_string(), "name".to_string()], "got: {decls:?}");
+        assert_eq!(
+            decls[0].fields,
+            vec!["id".to_string(), "name".to_string()],
+            "got: {decls:?}"
+        );
     }
 
     /// The 2.0 style without a type annotation (`id = mapped_column(...)`,
@@ -1851,7 +2275,11 @@ mod sqlalchemy_tests {
         let src = "class User(Base):\n    __tablename__ = \"users\"\n    id = Column(Integer, primary_key=True)\n    name = db.Column(db.String(50))\n";
         let mut decls = Vec::new();
         extract_sqlalchemy(src, &mut decls);
-        assert_eq!(decls[0].fields, vec!["id".to_string(), "name".to_string()], "got: {decls:?}");
+        assert_eq!(
+            decls[0].fields,
+            vec!["id".to_string(), "name".to_string()],
+            "got: {decls:?}"
+        );
     }
 }
 
@@ -1911,7 +2339,8 @@ mod mongoose_tests {
     /// extractor's internal regexes, had to change).
     #[test]
     fn end_to_end_scan_declares_nestjs_schema_as_a_concept() {
-        let root = std::env::temp_dir().join(format!("archietect-mongoose-e2e-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-mongoose-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -1951,10 +2380,16 @@ mod jpa_tests {
     /// pattern (schema-per-tenant).
     #[test]
     fn table_name_after_other_attributes_is_extracted() {
-        let src = "@Entity\n@Table(schema = \"public\", name = \"owners\")\npublic class Owner {}\n";
+        let src =
+            "@Entity\n@Table(schema = \"public\", name = \"owners\")\npublic class Owner {}\n";
         let mut decls = Vec::new();
         extract_jpa(src, &mut decls);
-        assert_eq!(decls[0].table.as_deref(), Some("owners"), "got: {:?}", decls);
+        assert_eq!(
+            decls[0].table.as_deref(),
+            Some("owners"),
+            "got: {:?}",
+            decls
+        );
     }
 
     /// No @Table at all: the entity is still found (via @Entity alone),
@@ -2017,7 +2452,8 @@ mod eloquent_tests {
     /// `Model` directly — must still be scanned outside `app/Models/`.
     #[test]
     fn user_model_extending_authenticatable_outside_models_dir_is_scanned() {
-        let root = std::env::temp_dir().join(format!("archietect-eloquent-e2e-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-eloquent-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -2045,7 +2481,8 @@ mod python_venv_skip_tests {
     /// its `pyvenv.cfg` marker rather than a fixed name list.
     #[test]
     fn standard_venv_is_skipped_regardless_of_directory_name() {
-        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-venv-skip-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let venv = root.join("my_custom_env");
         std::fs::create_dir_all(&venv).unwrap();
@@ -2055,10 +2492,18 @@ mod python_venv_skip_tests {
             "model VendoredDependency {\n  id Int @id\n}\n",
         )
         .unwrap();
-        std::fs::write(root.join("schema.prisma"), "model RealApp {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model RealApp {\n  id Int @id\n}\n",
+        )
+        .unwrap();
 
         let (idx, _graph) = scan(&root);
-        assert!(idx.concepts.contains_key("RealApp"), "got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            idx.concepts.contains_key("RealApp"),
+            "got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
         assert!(
             !idx.concepts.contains_key("VendoredDependency"),
             "a differently-named venv must still be skipped, got: {:?}",
@@ -2072,7 +2517,10 @@ mod python_venv_skip_tests {
     /// is still detected via its `lib/pythonX.Y/site-packages` structure.
     #[test]
     fn venv_missing_pyvenv_cfg_is_still_detected_via_site_packages() {
-        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-partial-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-venv-skip-test-partial-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let site_packages = root.join("venvm/lib/python3.10/site-packages");
         std::fs::create_dir_all(&site_packages).unwrap();
@@ -2081,10 +2529,18 @@ mod python_venv_skip_tests {
             "model VendoredDependency {\n  id Int @id\n}\n",
         )
         .unwrap();
-        std::fs::write(root.join("schema.prisma"), "model RealApp {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model RealApp {\n  id Int @id\n}\n",
+        )
+        .unwrap();
 
         let (idx, _graph) = scan(&root);
-        assert!(idx.concepts.contains_key("RealApp"), "got: {:?}", idx.concepts.keys().collect::<Vec<_>>());
+        assert!(
+            idx.concepts.contains_key("RealApp"),
+            "got: {:?}",
+            idx.concepts.keys().collect::<Vec<_>>()
+        );
         assert!(
             !idx.concepts.contains_key("VendoredDependency"),
             "a venv missing pyvenv.cfg must still be detected via its site-packages structure, got: {:?}",
@@ -2098,10 +2554,17 @@ mod python_venv_skip_tests {
     /// inside) must never be mistaken for part of a virtualenv.
     #[test]
     fn unrelated_lib_directory_is_not_mistaken_for_a_venv() {
-        let root = std::env::temp_dir().join(format!("archietect-venv-skip-test-false-positive-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-venv-skip-test-false-positive-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("lib")).unwrap();
-        std::fs::write(root.join("lib/helper.prisma"), "model RealHelper {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("lib/helper.prisma"),
+            "model RealHelper {\n  id Int @id\n}\n",
+        )
+        .unwrap();
 
         let (idx, _graph) = scan(&root);
         assert!(

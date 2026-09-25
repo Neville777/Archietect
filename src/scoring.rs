@@ -64,12 +64,12 @@ const MAX_TIEBREAKER: i32 = MAX_USAGE_FILES + MAX_RELATION_LINKS;
 const TIER_GAP: i32 = MAX_TIEBREAKER + 1; // 601
 
 pub const SCORE_DECLARED_ONTOLOGY: i32 = TIER_GAP * 5; // 3005  (tier 1)
-pub const SCORE_EXACT_ORM: i32 = TIER_GAP * 4;         // 2404  (tier 2)
-pub const SCORE_EXACT_SQL: i32 = TIER_GAP * 3;         // 1803  (tier 3)
-pub const SCORE_TOKEN_ORM: i32 = TIER_GAP * 2;         // 1202  (tier 4)
-pub const SCORE_TOKEN_SQL: i32 = TIER_GAP * 1;         //  601  (tier 5)
-// Tier 6 (Named / filename resemblance) never reaches ranking — it is
-// handled separately in query.rs before the scored path is reached.
+pub const SCORE_EXACT_ORM: i32 = TIER_GAP * 4; // 2404  (tier 2)
+pub const SCORE_EXACT_SQL: i32 = TIER_GAP * 3; // 1803  (tier 3)
+pub const SCORE_TOKEN_ORM: i32 = TIER_GAP * 2; // 1202  (tier 4)
+pub const SCORE_TOKEN_SQL: i32 = TIER_GAP * 1; //  601  (tier 5)
+                                               // Tier 6 (Named / filename resemblance) never reaches ranking — it is
+                                               // handled separately in query.rs before the scored path is reached.
 
 /// Each file that observably accesses this concept. Tie-breaker only.
 pub const USAGE_PER_FILE: i32 = 1;
@@ -104,20 +104,20 @@ impl RankTier {
     fn base_score(&self) -> i32 {
         match self {
             RankTier::DeclaredOntology => SCORE_DECLARED_ONTOLOGY,
-            RankTier::ExactOrm        => SCORE_EXACT_ORM,
-            RankTier::ExactSql        => SCORE_EXACT_SQL,
-            RankTier::TokenOrm        => SCORE_TOKEN_ORM,
-            RankTier::TokenSql        => SCORE_TOKEN_SQL,
+            RankTier::ExactOrm => SCORE_EXACT_ORM,
+            RankTier::ExactSql => SCORE_EXACT_SQL,
+            RankTier::TokenOrm => SCORE_TOKEN_ORM,
+            RankTier::TokenSql => SCORE_TOKEN_SQL,
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             RankTier::DeclaredOntology => "declared-ontology",
-            RankTier::ExactOrm        => "exact-orm",
-            RankTier::ExactSql        => "exact-sql",
-            RankTier::TokenOrm        => "token-orm",
-            RankTier::TokenSql        => "token-sql",
+            RankTier::ExactOrm => "exact-orm",
+            RankTier::ExactSql => "exact-sql",
+            RankTier::TokenOrm => "token-orm",
+            RankTier::TokenSql => "token-sql",
         }
     }
 }
@@ -155,10 +155,10 @@ pub fn tier(name: &str, concept: &Concept, term: &str) -> RankTier {
     let exact = same_word(name, term);
     let orm = concept.declared_in.iter().any(|(_, k)| k != "sql");
     match (exact, orm) {
-        (true, true)  => RankTier::ExactOrm,
+        (true, true) => RankTier::ExactOrm,
         (true, false) => RankTier::ExactSql,
         (false, true) => RankTier::TokenOrm,
-        (false, false)=> RankTier::TokenSql,
+        (false, false) => RankTier::TokenSql,
     }
 }
 
@@ -167,7 +167,8 @@ pub fn score(name: &str, concept: &Concept, term: &str) -> ScoreBreakdown {
     let t = tier(name, concept, term);
     let tier_score = t.base_score();
     let usage_score = (concept.usage.len() as i32).min(MAX_USAGE_FILES) * USAGE_PER_FILE;
-    let relation_score = (concept.relations.len() as i32).min(MAX_RELATION_LINKS) * RELATION_PER_LINK;
+    let relation_score =
+        (concept.relations.len() as i32).min(MAX_RELATION_LINKS) * RELATION_PER_LINK;
     let total = tier_score + usage_score + relation_score;
     ScoreBreakdown {
         tier_label: t.label().to_string(),

@@ -124,9 +124,17 @@ fn regex_symbols_for(rel: &str, text: &str) -> Vec<(String, SymbolKind)> {
 #[allow(dead_code)]
 enum DivergenceKind {
     /// syn found it, regex missed it.
-    ParserWin { name: String, kind: String, reason: &'static str },
+    ParserWin {
+        name: String,
+        kind: String,
+        reason: &'static str,
+    },
     /// regex found it, syn missed it.
-    RegexWin { name: String, kind: String, reason: &'static str },
+    RegexWin {
+        name: String,
+        kind: String,
+        reason: &'static str,
+    },
     /// Investigated and intentional — neither extractor is wrong.
     KnownDiff { name: String, reason: &'static str },
 }
@@ -199,7 +207,6 @@ fn classified_divergences() -> Vec<DivergenceKind> {
             reason: "false positive — `pub fn second()` lives inside the same raw string \
                      literal test fixture in structural.rs. Regex matches it; syn ignores it.",
         },
-
         // ── PARSER_WIN: pub(crate) items that regex's `pub\s+` DOES match ────
         //
         // The `pub fn` regex pattern is `^pub\s+(?:async\s+)?fn\s+` — it DOES
@@ -249,7 +256,11 @@ fn classified_divergences() -> Vec<DivergenceKind> {
 #[test]
 fn regex_vs_syn_on_own_source() {
     let src = src_dir();
-    assert!(src.exists(), "src/ directory not found at {}", src.display());
+    assert!(
+        src.exists(),
+        "src/ directory not found at {}",
+        src.display()
+    );
 
     let mut unclassified: Vec<String> = Vec::new();
     let mut total_files = 0usize;
@@ -276,8 +287,14 @@ fn regex_vs_syn_on_own_source() {
         let mut regex_syms = regex_symbols_for(&rel, &text);
         let mut syn_syms = syn_symbols_for(&rel, &text);
 
-        regex_syms.sort_by(|a, b| a.0.cmp(&b.0).then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1))));
-        syn_syms.sort_by(|a, b| a.0.cmp(&b.0).then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1))));
+        regex_syms.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1)))
+        });
+        syn_syms.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1)))
+        });
 
         total_regex += regex_syms.len();
         total_syn += syn_syms.len();
@@ -357,7 +374,10 @@ pub fn bar(&self) -> u32 { 42 }
 "#;
     let syms = syn_symbols_for("test.rs", src);
     let names: Vec<&str> = syms.iter().map(|(n, _)| n.as_str()).collect();
-    assert!(names.contains(&"Foo"), "syn should find top-level struct Foo");
+    assert!(
+        names.contains(&"Foo"),
+        "syn should find top-level struct Foo"
+    );
     assert!(
         !names.contains(&"bar"),
         "syn must NOT extract impl method `bar` even at column 0 — this is a parser win over regex"
@@ -376,9 +396,18 @@ pub(super) trait SuperTrait {}
 "#;
     let syms = syn_symbols_for("test.rs", src);
     let names: Vec<&str> = syms.iter().map(|(n, _)| n.as_str()).collect();
-    assert!(names.contains(&"Internal"), "syn should extract pub(crate) struct");
-    assert!(names.contains(&"helper"), "syn should extract pub(crate) fn");
-    assert!(names.contains(&"SuperTrait"), "syn should extract pub(super) trait");
+    assert!(
+        names.contains(&"Internal"),
+        "syn should extract pub(crate) struct"
+    );
+    assert!(
+        names.contains(&"helper"),
+        "syn should extract pub(crate) fn"
+    );
+    assert!(
+        names.contains(&"SuperTrait"),
+        "syn should extract pub(super) trait"
+    );
 }
 
 /// Private items must not appear from syn.
@@ -411,7 +440,10 @@ pub struct TopLevel;
 "#;
     let syms = syn_symbols_for("test.rs", src);
     let names: Vec<&str> = syms.iter().map(|(n, _)| n.as_str()).collect();
-    assert!(names.contains(&"TopLevel"), "syn should find top-level TopLevel");
+    assert!(
+        names.contains(&"TopLevel"),
+        "syn should find top-level TopLevel"
+    );
     assert!(
         !names.contains(&"InsideMod"),
         "syn must not extract items from inside a mod block"
@@ -444,8 +476,14 @@ fn syn_line_numbers_are_correct() {
     let mut routes = Vec::new();
     extract_rs_syn("test.rs", src, &mut symbols, &mut imports, &mut routes);
 
-    let foo = symbols.iter().find(|s| s.name == "Foo").expect("Foo not found");
-    let bar = symbols.iter().find(|s| s.name == "bar").expect("bar not found");
+    let foo = symbols
+        .iter()
+        .find(|s| s.name == "Foo")
+        .expect("Foo not found");
+    let bar = symbols
+        .iter()
+        .find(|s| s.name == "bar")
+        .expect("bar not found");
     assert_eq!(foo.line, 3, "Foo should be on line 3");
     assert_eq!(bar.line, 5, "bar should be on line 5");
 }
@@ -473,7 +511,9 @@ pub fn app() -> Router {
     extract_rs_syn("routes.rs", src, &mut symbols, &mut imports, &mut routes);
 
     assert!(
-        routes.iter().any(|r| r.path == "/users" && r.method == "GET"),
+        routes
+            .iter()
+            .any(|r| r.path == "/users" && r.method == "GET"),
         "syn extractor must still surface Axum routes via the regex path, got routes: {:?}",
         routes
     );
@@ -521,7 +561,10 @@ pub(super) trait SuperBound {}
     let mut routes = Vec::new();
     extract_rs_syn("watch.rs", src, &mut symbols, &mut imports, &mut routes);
 
-    assert!(!symbols.is_empty(), "should extract pub(crate)/pub(super) items");
+    assert!(
+        !symbols.is_empty(),
+        "should extract pub(crate)/pub(super) items"
+    );
     for sym in &symbols {
         assert_eq!(
             sym.observation_source,

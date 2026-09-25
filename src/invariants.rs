@@ -74,7 +74,11 @@ fn check_i1_single_storage_identity(idx: &Index, out: &mut Vec<Violation>) {
                     // "sql" entries are folded in by the merge law when they
                     // share the canonical's table — if they still exist
                     // separately here, that IS the violation.
-                    if k != "sql" { None } else { None } // covered below
+                    if k != "sql" {
+                        None
+                    } else {
+                        None
+                    } // covered below
                 })
                 .collect();
             // Primary: use the concept's own table field if set.
@@ -132,8 +136,7 @@ fn check_i3_decisions_link_known(idx: &Index, out: &mut Vec<Violation>) {
             continue;
         }
         let any_known = decision.links.iter().any(|l| {
-            idx.concepts.contains_key(l)
-                || idx.concepts.keys().any(|k| k.eq_ignore_ascii_case(l))
+            idx.concepts.contains_key(l) || idx.concepts.keys().any(|k| k.eq_ignore_ascii_case(l))
         });
         if !any_known {
             out.push(Violation {

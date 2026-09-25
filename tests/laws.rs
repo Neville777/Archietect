@@ -18,16 +18,19 @@ use std::path::PathBuf;
 /// Laws covered by this harness. The conformance test cross-checks this
 /// against the registry — adding a law without extending the suite fails.
 const COVERED: &[&str] = &[
-    "law-001", "law-002", "law-003", "law-004", "law-005",
-    "law-006", "law-007", "law-008", "law-009", "law-010", "law-011", "law-012",
-    "law-013", "law-014", "law-015",
+    "law-001", "law-002", "law-003", "law-004", "law-005", "law-006", "law-007", "law-008",
+    "law-009", "law-010", "law-011", "law-012", "law-013", "law-014", "law-015",
 ];
 
 fn fixture(law: &str) -> archietect::model::Index {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(law);
-    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    assert!(
+        root.exists(),
+        "fixture directory missing: {}",
+        root.display()
+    );
     scan::scan_with_prior(&root, None, None).0
 }
 
@@ -35,11 +38,20 @@ fn fixture(law: &str) -> archietect::model::Index {
 /// the real bug where `guard()` always synthesized an empty
 /// `StructuralGraph` and so could never see a structural-only collision)
 /// need the real graph alongside the index, not just the schema index alone.
-fn fixture_both(law: &str) -> (archietect::model::Index, archietect::structural::StructuralGraph) {
+fn fixture_both(
+    law: &str,
+) -> (
+    archietect::model::Index,
+    archietect::structural::StructuralGraph,
+) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(law);
-    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    assert!(
+        root.exists(),
+        "fixture directory missing: {}",
+        root.display()
+    );
     scan::scan_with_prior(&root, None, None)
 }
 
@@ -50,7 +62,11 @@ fn fixture_sub(law: &str, sub: &str) -> archietect::model::Index {
         .join("tests/fixtures")
         .join(law)
         .join(sub);
-    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    assert!(
+        root.exists(),
+        "fixture directory missing: {}",
+        root.display()
+    );
     scan::scan_with_prior(&root, None, None).0
 }
 
@@ -159,7 +175,10 @@ fn law_008_follower_required() {
         !idx.concepts.contains_key("query"),
         "log-string prose minted a concept"
     );
-    assert!(idx.concepts.contains_key("results"), "real DDL must still extract");
+    assert!(
+        idx.concepts.contains_key("results"),
+        "real DDL must still extract"
+    );
 }
 
 #[test]
@@ -171,7 +190,10 @@ fn law_009_alias_resolution() {
     let g = query::guard(&idx, &graph, "CREATE TABLE episodes (id BIGSERIAL);");
     assert_eq!(g["allowed"], false, "guard must block through the ontology");
     assert!(
-        g["reason"].as_str().unwrap().contains("stories-own-episodes"),
+        g["reason"]
+            .as_str()
+            .unwrap()
+            .contains("stories-own-episodes"),
         "rejection must cite the governing decision, got: {}",
         g["reason"]
     );
@@ -252,7 +274,9 @@ fn law_013_generic_role_token_is_not_collision_evidence() {
         events.iter().any(|(_, kind, concept, _)| kind == "concept_appeared" && concept == "executor_backlog"),
         "the new concept must still be reported as appeared — this law removes a FALSE collision, not the real observation"
     );
-    let collision = events.iter().find(|(_, kind, concept, _)| kind == "duplicate_concept_risk" && concept == "executor_backlog");
+    let collision = events.iter().find(|(_, kind, concept, _)| {
+        kind == "duplicate_concept_risk" && concept == "executor_backlog"
+    });
     assert!(
         collision.is_none(),
         "executor_backlog was flagged as colliding with an unrelated concept via a generic role token: {:?}",
@@ -268,7 +292,11 @@ fn law_014_extractor_language_is_actually_scanned() {
     // anything query.rs does afterward. A regression here must exercise the
     // real scan entry point, the same one the CLI/REST/MCP all call.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/law_014");
-    assert!(root.exists(), "fixture directory missing: {}", root.display());
+    assert!(
+        root.exists(),
+        "fixture directory missing: {}",
+        root.display()
+    );
     let (idx, graph) = scan::scan_with_prior(&root, None, None);
     assert_eq!(
         idx.files_scanned, 1,
@@ -300,7 +328,11 @@ fn law_015_unclassified_language_yields_insufficient_coverage() {
         r
     );
     assert!(
-        r["next_action"]["read"].as_array().unwrap().iter().any(|f| f == "handler.lua"),
+        r["next_action"]["read"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "handler.lua"),
         "next_action must point at the actual unclassified file, got: {}",
         r
     );

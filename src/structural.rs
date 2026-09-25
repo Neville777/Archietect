@@ -190,7 +190,10 @@ impl Symbol {
             id: crate::resource::Identity(self.name.clone()),
             kind: format!("{:?}", self.kind),
             domain: "code".to_string(),
-            location: crate::resource::Location { file: self.file.clone(), line: Some(self.line) },
+            location: crate::resource::Location {
+                file: self.file.clone(),
+                line: Some(self.line),
+            },
             attributes: Default::default(),
             evidence: vec![crate::model::Evidence {
                 tier: crate::model::Tier::Declared,
@@ -202,7 +205,11 @@ impl Symbol {
 
 /// 1-indexed line number containing byte offset `pos` in `text`.
 fn line_of(text: &str, pos: usize) -> usize {
-    text.as_bytes()[..pos.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1
+    text.as_bytes()[..pos.min(text.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+        + 1
 }
 
 /// Extract text from a tree-sitter node.
@@ -291,9 +298,9 @@ fn paths_match(declared: &str, called: &str) -> bool {
     if d.len() != c.len() || d.is_empty() {
         return false;
     }
-    d.iter().zip(c.iter()).all(|(ds, cs)| {
-        is_dynamic(ds) || is_dynamic(cs) || ds.eq_ignore_ascii_case(cs)
-    })
+    d.iter()
+        .zip(c.iter())
+        .all(|(ds, cs)| is_dynamic(ds) || is_dynamic(cs) || ds.eq_ignore_ascii_case(cs))
 }
 
 /// Find outbound HTTP calls in `text` — the literal path passed to a common
@@ -350,16 +357,18 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             // than trying to anchor the receiver — see this fn's own doc for
             // why FastAPI's `@app.get(...)` route declarations are the
             // specific collision this guards against.
-            let re = Regex::new(
-                r#"\.\s*(?:get|post|put|patch|delete)\s*\(\s*f?["']([^"']+)["']"#
-            ).unwrap();
+            let re = Regex::new(r#"\.\s*(?:get|post|put|patch|delete)\s*\(\s*f?["']([^"']+)["']"#)
+                .unwrap();
             for line in text.lines() {
                 if line.trim_start().starts_with('@') {
                     continue;
                 }
                 for cap in re.captures_iter(line) {
                     if looks_like_path(&cap[1]) {
-                        route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                        route_calls.push(RouteCall {
+                            file: rel.to_string(),
+                            path: cap[1].to_string(),
+                        });
                     }
                 }
             }
@@ -370,12 +379,14 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             // renames are common; unambiguous enough on its own that no
             // decorator-line exclusion is needed here (no Python web
             // framework spells a WS route declaration as `.connect(`).
-            let ws_re = Regex::new(
-                r#"(?i)websocket\w*\s*\.\s*connect\s*\(\s*f?["']([^"']+)["']"#
-            ).unwrap();
+            let ws_re =
+                Regex::new(r#"(?i)websocket\w*\s*\.\s*connect\s*\(\s*f?["']([^"']+)["']"#).unwrap();
             for cap in ws_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
-                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    route_calls.push(RouteCall {
+                        file: rel.to_string(),
+                        path: cap[1].to_string(),
+                    });
                 }
             }
         }
@@ -386,7 +397,10 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             let fetch_re = Regex::new(r#"\bfetch\s*\(\s*[`"']([^`"']+)"#).unwrap();
             for cap in fetch_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
-                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    route_calls.push(RouteCall {
+                        file: rel.to_string(),
+                        path: cap[1].to_string(),
+                    });
                 }
             }
             // axios.get('/orders') / apiClient.post(`/orders/${id}`, ...) —
@@ -402,7 +416,10 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             ).unwrap();
             for cap in client_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
-                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    route_calls.push(RouteCall {
+                        file: rel.to_string(),
+                        path: cap[1].to_string(),
+                    });
                 }
             }
             // new WebSocket("ws://host/path") — the standard browser/Node
@@ -411,7 +428,10 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             let ws_re = Regex::new(r#"\bnew\s+WebSocket\s*\(\s*[`"']([^`"']+)"#).unwrap();
             for cap in ws_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
-                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    route_calls.push(RouteCall {
+                        file: rel.to_string(),
+                        path: cap[1].to_string(),
+                    });
                 }
             }
         }
@@ -424,7 +444,10 @@ fn extract_route_calls(rel: &str, ext: &str, text: &str, route_calls: &mut Vec<R
             let ws_re = Regex::new(r#"\bconnect_async\s*\(\s*"([^"]+)""#).unwrap();
             for cap in ws_re.captures_iter(text) {
                 if looks_like_path(&cap[1]) {
-                    route_calls.push(RouteCall { file: rel.to_string(), path: cap[1].to_string() });
+                    route_calls.push(RouteCall {
+                        file: rel.to_string(),
+                        path: cap[1].to_string(),
+                    });
                 }
             }
         }
@@ -633,27 +656,37 @@ pub(crate) fn brace_body_span(text: &str, start: usize, ext: &str) -> Option<(us
 /// not full path calls (foo::bar()) — those are imports, not calls.
 fn extract_call_edges_rs(rel: &str, text: &str, out: &mut Vec<CallEdge>) {
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(tree_sitter_rust::language()).is_err() { return; }
-    let tree = match parser.parse(text, None) { Some(t) => t, None => return };
+    if parser.set_language(tree_sitter_rust::language()).is_err() {
+        return;
+    }
+    let tree = match parser.parse(text, None) {
+        Some(t) => t,
+        None => return,
+    };
     let bytes = text.as_bytes();
 
     // Walk top-level pub fn items, then collect call_expression nodes inside
     let root = tree.root_node();
     let mut cursor = root.walk();
-    if !cursor.goto_first_child() { return; }
+    if !cursor.goto_first_child() {
+        return;
+    }
     loop {
         let node = cursor.node();
         if node.kind() == "function_item" {
             if let Some(name_node) = node.child_by_field_name("name") {
-                let caller = std::str::from_utf8(
-                    &bytes[name_node.start_byte()..name_node.end_byte()]
-                ).unwrap_or("").to_string();
+                let caller =
+                    std::str::from_utf8(&bytes[name_node.start_byte()..name_node.end_byte()])
+                        .unwrap_or("")
+                        .to_string();
                 if !caller.is_empty() {
                     collect_calls_in_node(&node, bytes, rel, &caller, out);
                 }
             }
         }
-        if !cursor.goto_next_sibling() { break; }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
     }
 }
 
@@ -667,14 +700,17 @@ fn collect_calls_in_node(
     if node.kind() == "call_expression" {
         if let Some(func) = node.child_by_field_name("function") {
             let callee = match func.kind() {
-                "identifier" => {
-                    std::str::from_utf8(&bytes[func.start_byte()..func.end_byte()])
-                        .unwrap_or("").to_string()
-                }
+                "identifier" => std::str::from_utf8(&bytes[func.start_byte()..func.end_byte()])
+                    .unwrap_or("")
+                    .to_string(),
                 "field_expression" => {
                     // self.foo() or obj.method() — take the field name
                     func.child_by_field_name("field")
-                        .map(|f| std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()]).unwrap_or("").to_string())
+                        .map(|f| {
+                            std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()])
+                                .unwrap_or("")
+                                .to_string()
+                        })
                         .unwrap_or_default()
                 }
                 _ => String::new(),
@@ -692,7 +728,9 @@ fn collect_calls_in_node(
     if c.goto_first_child() {
         loop {
             collect_calls_in_node(&c.node(), bytes, rel, caller, out);
-            if !c.goto_next_sibling() { break; }
+            if !c.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -707,8 +745,13 @@ fn extract_call_edges_ts(rel: &str, text: &str, out: &mut Vec<CallEdge>) {
         tree_sitter_javascript::language()
     };
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(lang).is_err() { return; }
-    let tree = match parser.parse(text, None) { Some(t) => t, None => return };
+    if parser.set_language(lang).is_err() {
+        return;
+    }
+    let tree = match parser.parse(text, None) {
+        Some(t) => t,
+        None => return,
+    };
     let bytes = text.as_bytes();
     walk_ts_calls(&tree.root_node(), bytes, rel, "global", out, 0);
 }
@@ -721,14 +764,23 @@ fn walk_ts_calls(
     out: &mut Vec<CallEdge>,
     depth: usize,
 ) {
-    if depth > 50 { return; } // guard against pathological nesting
+    if depth > 50 {
+        return;
+    } // guard against pathological nesting
 
     let kind = node.kind();
 
     // Track current function context
-    let new_fn = if matches!(kind, "function_declaration" | "method_definition" | "arrow_function" | "function") {
+    let new_fn = if matches!(
+        kind,
+        "function_declaration" | "method_definition" | "arrow_function" | "function"
+    ) {
         node.child_by_field_name("name")
-            .map(|n| std::str::from_utf8(&bytes[n.start_byte()..n.end_byte()]).unwrap_or("").to_string())
+            .map(|n| {
+                std::str::from_utf8(&bytes[n.start_byte()..n.end_byte()])
+                    .unwrap_or("")
+                    .to_string()
+            })
             .filter(|s| !s.is_empty())
     } else {
         None
@@ -738,16 +790,27 @@ fn walk_ts_calls(
     if kind == "call_expression" {
         let callee = match node.child_by_field_name("function") {
             Some(f) => match f.kind() {
-                "identifier" => std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()]).unwrap_or("").to_string(),
-                "member_expression" => f.child_by_field_name("property")
-                    .map(|p| std::str::from_utf8(&bytes[p.start_byte()..p.end_byte()]).unwrap_or("").to_string())
+                "identifier" => std::str::from_utf8(&bytes[f.start_byte()..f.end_byte()])
+                    .unwrap_or("")
+                    .to_string(),
+                "member_expression" => f
+                    .child_by_field_name("property")
+                    .map(|p| {
+                        std::str::from_utf8(&bytes[p.start_byte()..p.end_byte()])
+                            .unwrap_or("")
+                            .to_string()
+                    })
                     .unwrap_or_default(),
                 _ => String::new(),
             },
             None => String::new(),
         };
         if !callee.is_empty() && callee != fn_ctx && callee != "require" {
-            out.push(CallEdge { from_file: rel.to_string(), caller: fn_ctx.to_string(), callee });
+            out.push(CallEdge {
+                from_file: rel.to_string(),
+                caller: fn_ctx.to_string(),
+                callee,
+            });
         }
     }
 
@@ -755,7 +818,9 @@ fn walk_ts_calls(
     if c.goto_first_child() {
         loop {
             walk_ts_calls(&c.node(), bytes, rel, fn_ctx, out, depth + 1);
-            if !c.goto_next_sibling() { break; }
+            if !c.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -771,19 +836,28 @@ fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<Funct
                 if let Some((s, e)) = brace_body_span(text, end, ext) {
                     let literals = literals_in(&text[s..e], ext);
                     if !literals.is_empty() {
-                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                        out.push(FunctionBody {
+                            file: rel.to_string(),
+                            name: cap[1].to_string(),
+                            literals,
+                        });
                     }
                 }
             }
             let const_re = Regex::new(
-                r"(?m)^(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\("
-            ).unwrap();
+                r"(?m)^(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\(",
+            )
+            .unwrap();
             for cap in const_re.captures_iter(text) {
                 let end = cap.get(0).unwrap().end();
                 if let Some((s, e)) = brace_body_span(text, end, ext) {
                     let literals = literals_in(&text[s..e], ext);
                     if !literals.is_empty() {
-                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                        out.push(FunctionBody {
+                            file: rel.to_string(),
+                            name: cap[1].to_string(),
+                            literals,
+                        });
                     }
                 }
             }
@@ -795,7 +869,11 @@ fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<Funct
                 if let Some((s, e)) = brace_body_span(text, end, ext) {
                     let literals = literals_in(&text[s..e], ext);
                     if !literals.is_empty() {
-                        out.push(FunctionBody { file: rel.to_string(), name: cap[1].to_string(), literals });
+                        out.push(FunctionBody {
+                            file: rel.to_string(),
+                            name: cap[1].to_string(),
+                            literals,
+                        });
                     }
                 }
             }
@@ -806,7 +884,8 @@ fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<Funct
             for cap in re.captures_iter(text) {
                 let name = cap[1].to_string();
                 let def_line_start = line_of(text, cap.get(0).unwrap().start()) - 1; // 0-indexed
-                let def_indent = lines[def_line_start].len() - lines[def_line_start].trim_start().len();
+                let def_indent =
+                    lines[def_line_start].len() - lines[def_line_start].trim_start().len();
                 let mut body_lines = Vec::new();
                 for line in lines.iter().skip(def_line_start + 1) {
                     if line.trim().is_empty() {
@@ -820,7 +899,11 @@ fn extract_function_bodies(rel: &str, ext: &str, text: &str, out: &mut Vec<Funct
                 }
                 let literals = literals_in(&body_lines.join("\n"), ext);
                 if !literals.is_empty() {
-                    out.push(FunctionBody { file: rel.to_string(), name, literals });
+                    out.push(FunctionBody {
+                        file: rel.to_string(),
+                        name,
+                        literals,
+                    });
                 }
             }
         }
@@ -848,14 +931,19 @@ pub struct SuspectedDuplicateLogic {
 /// `duplicates()` needed it, for the same reason: this is exactly the kind
 /// of pairwise comparison that gets slow fast once a real repo has
 /// thousands of functions).
-pub fn suspected_duplicate_logic(graph: &StructuralGraph, min_shared: usize) -> Vec<SuspectedDuplicateLogic> {
-    let mut literal_index: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+pub fn suspected_duplicate_logic(
+    graph: &StructuralGraph,
+    min_shared: usize,
+) -> Vec<SuspectedDuplicateLogic> {
+    let mut literal_index: std::collections::HashMap<&str, Vec<usize>> =
+        std::collections::HashMap::new();
     for (i, f) in graph.function_bodies.iter().enumerate() {
         for lit in &f.literals {
             literal_index.entry(lit.as_str()).or_default().push(i);
         }
     }
-    let mut shared_counts: std::collections::HashMap<(usize, usize), Vec<&str>> = std::collections::HashMap::new();
+    let mut shared_counts: std::collections::HashMap<(usize, usize), Vec<&str>> =
+        std::collections::HashMap::new();
     for (_, indices) in literal_index.iter() {
         if indices.len() < 2 || indices.len() > 15 {
             // A literal shared by more than 15 functions is common
@@ -885,7 +973,12 @@ pub fn suspected_duplicate_logic(graph: &StructuralGraph, min_shared: usize) -> 
     for (a, b) in shared_counts.keys() {
         let fa = &graph.function_bodies[*a];
         let fb = &graph.function_bodies[*b];
-        let shared: Vec<String> = fa.literals.iter().filter(|l| fb.literals.contains(l)).cloned().collect();
+        let shared: Vec<String> = fa
+            .literals
+            .iter()
+            .filter(|l| fb.literals.contains(l))
+            .cloned()
+            .collect();
         if shared.len() >= min_shared {
             out.push(SuspectedDuplicateLogic {
                 a_file: fa.file.clone(),
@@ -896,7 +989,9 @@ pub fn suspected_duplicate_logic(graph: &StructuralGraph, min_shared: usize) -> 
             });
         }
     }
-    out.sort_by(|x, y| (x.a_file.as_str(), x.a_name.as_str()).cmp(&(y.a_file.as_str(), y.a_name.as_str())));
+    out.sort_by(|x, y| {
+        (x.a_file.as_str(), x.a_name.as_str()).cmp(&(y.a_file.as_str(), y.a_name.as_str()))
+    });
     out
 }
 
@@ -920,7 +1015,11 @@ impl Route {
                     self.handler, self.file, concept_name
                 ),
             }
-        } else if self.path.to_lowercase().contains(&concept_name.to_lowercase()) {
+        } else if self
+            .path
+            .to_lowercase()
+            .contains(&concept_name.to_lowercase())
+        {
             Evidence {
                 tier: Tier::Named,
                 what: format!(
@@ -986,8 +1085,17 @@ impl Import {
     /// strategy for an external package without a real, language-specific
     /// package resolver, and guessing one would reintroduce exactly the
     /// fuzzy-match risk this method exists to avoid.
-    pub fn relationship(&self, known_files: &std::collections::BTreeSet<String>, workspace_packages: &BTreeMap<String, String>) -> Option<crate::resource::Relationship> {
-        let resolved = resolve_relative_import(&self.from_file, &self.to_module, known_files, workspace_packages)?;
+    pub fn relationship(
+        &self,
+        known_files: &std::collections::BTreeSet<String>,
+        workspace_packages: &BTreeMap<String, String>,
+    ) -> Option<crate::resource::Relationship> {
+        let resolved = resolve_relative_import(
+            &self.from_file,
+            &self.to_module,
+            known_files,
+            workspace_packages,
+        )?;
         Some(crate::resource::Relationship {
             from: crate::resource::Identity(self.from_file.clone()),
             kind: "imports".to_string(),
@@ -1084,7 +1192,9 @@ fn resolve_relative_import(
         return None;
     }
 
-    let from_dir = std::path::Path::new(from_file).parent().unwrap_or_else(|| std::path::Path::new(""));
+    let from_dir = std::path::Path::new(from_file)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
     let mut components: Vec<String> = from_dir
         .components()
         .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
@@ -1218,25 +1328,97 @@ pub const STRUCTURAL_EXTRACTOR_VERSION: u32 = 24; // TSX grammar for JSX-bearing
 /// Uncertainty is returned separately: an empty observation is not proof that
 /// unsupported or malformed source contains no architectural objects.
 pub(crate) fn extract_snapshot(rel: &str, text: &str) -> (StructuralFileFacts, Vec<String>) {
-    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let ext = std::path::Path::new(rel)
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("");
     let (symbols, imports, routes) = extract_file(rel, ext, text);
-    let mut facts = StructuralFileFacts { size: text.len() as u64, symbols, imports, routes, ..Default::default() };
+    let mut facts = StructuralFileFacts {
+        size: text.len() as u64,
+        symbols,
+        imports,
+        routes,
+        ..Default::default()
+    };
     extract_route_calls(rel, ext, text, &mut facts.route_calls);
     extract_function_bodies(rel, ext, text, &mut facts.function_bodies);
     if ext == "rs" {
         extract_call_edges_rs(rel, text, &mut facts.call_edges);
-    } else if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts") {
+    } else if matches!(
+        ext,
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts"
+    ) {
         extract_call_edges_ts(rel, text, &mut facts.call_edges);
     }
-    let uncertainty = match snapshot_tree(rel, text) {
+    let validation = if ext == "prisma" {
+        prisma_snapshot_valid(text).map(|_| ())
+    } else {
+        snapshot_tree(rel, text).map(|_| ())
+    };
+    let uncertainty = match validation {
         Ok(_) => Vec::new(),
         Err(reason) => vec![reason],
     };
     (facts, uncertainty)
 }
 
+/// Prisma has no Tree-sitter grammar in this binary, but it is a supported
+/// declarative schema language with a dedicated extractor. Validate the outer
+/// grammar that determines declaration completeness rather than discarding a
+/// reliable model addition as merely lexical. Field-level semantic errors are
+/// still left to Prisma itself; unclosed strings/braces or malformed blocks
+/// remain UNKNOWN and fail closed.
+fn prisma_snapshot_valid(text: &str) -> Result<(), String> {
+    let mut braces = 0i32;
+    let mut quote = false;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quote = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => quote = true,
+            '{' => braces += 1,
+            '}' => {
+                braces -= 1;
+                if braces < 0 {
+                    return Err("Prisma schema has an unmatched closing brace".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    if quote {
+        return Err("Prisma schema has an unterminated string literal".into());
+    }
+    if braces != 0 {
+        return Err("Prisma schema has an unmatched declaration brace".into());
+    }
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if matches!(
+            trimmed.split_whitespace().next(),
+            Some("model" | "enum" | "datasource" | "generator")
+        ) && !trimmed.contains('{')
+        {
+            return Err("Prisma declaration lacks an opening brace".into());
+        }
+    }
+    Ok(())
+}
+
 fn snapshot_tree(rel: &str, text: &str) -> Result<tree_sitter::Tree, String> {
-    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let ext = std::path::Path::new(rel)
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("");
     let language = match ext {
         "rs" => {
             syn::parse_file(text).map_err(|e| format!("Cannot establish Rust structure in {rel}: {e}"))?;
@@ -1251,10 +1433,16 @@ fn snapshot_tree(rel: &str, text: &str) -> Result<tree_sitter::Tree, String> {
         _ => return Err(format!("No AST snapshot validation for {rel}; lexical observations cannot establish structural completeness")),
     };
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(language).map_err(|e| format!("Cannot load parser for {rel}: {e}"))?;
-    let tree = parser.parse(text, None).ok_or_else(|| format!("Parser returned no tree for {rel}"))?;
+    parser
+        .set_language(language)
+        .map_err(|e| format!("Cannot load parser for {rel}: {e}"))?;
+    let tree = parser
+        .parse(text, None)
+        .ok_or_else(|| format!("Parser returned no tree for {rel}"))?;
     if tree.root_node().has_error() {
-        return Err(format!("Syntax errors prevent establishing complete structure in {rel}"));
+        return Err(format!(
+            "Syntax errors prevent establishing complete structure in {rel}"
+        ));
     }
     Ok(tree)
 }
@@ -1263,40 +1451,80 @@ fn snapshot_tree(rel: &str, text: &str) -> Result<tree_sitter::Tree, String> {
 /// comments outside literals do not alter these sequences. Missing entries
 /// mean the extractor's symbol could not be tied to an unambiguous AST node.
 pub(crate) fn symbol_sources(rel: &str, text: &str) -> BTreeMap<String, String> {
-    let Ok(tree) = snapshot_tree(rel, text) else { return BTreeMap::new() };
-    let ext = std::path::Path::new(rel).extension().and_then(|x| x.to_str()).unwrap_or("");
+    let Ok(tree) = snapshot_tree(rel, text) else {
+        return BTreeMap::new();
+    };
+    let ext = std::path::Path::new(rel)
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("");
     let (symbols, _, _) = extract_file(rel, ext, text);
     fn tokens(node: tree_sitter::Node, bytes: &[u8], out: &mut Vec<String>) {
-        if node.kind().contains("comment") { return; }
+        if node.kind().contains("comment") {
+            return;
+        }
         // Preserve literal contents, including whitespace inside strings.
-        if node.child_count() == 0 || node.kind().contains("string") || node.kind().contains("literal") {
+        if node.child_count() == 0
+            || node.kind().contains("string")
+            || node.kind().contains("literal")
+        {
             out.push(format!("{}:{}", node.kind(), ts_text(node, bytes)));
             return;
         }
-        for child in node.children(&mut node.walk()) { tokens(child, bytes, out); }
+        for child in node.children(&mut node.walk()) {
+            tokens(child, bytes, out);
+        }
     }
-    fn visit(node: tree_sitter::Node, bytes: &[u8], symbols: &[Symbol], found: &mut BTreeMap<String, Vec<String>>) {
+    fn visit(
+        node: tree_sitter::Node,
+        bytes: &[u8],
+        symbols: &[Symbol],
+        found: &mut BTreeMap<String, Vec<String>>,
+    ) {
         if let Some(name) = node.child_by_field_name("name") {
             let name_text = ts_text(name, bytes);
-            if symbols.iter().any(|s| s.name == name_text && s.line == name.start_position().row + 1) {
+            if symbols
+                .iter()
+                .any(|s| s.name == name_text && s.line == name.start_position().row + 1)
+            {
                 let mut declaration = node;
                 while let Some(parent) = declaration.parent() {
-                    if matches!(parent.kind(), "export_statement" | "decorated_definition" | "lexical_declaration" | "variable_declaration") {
+                    if matches!(
+                        parent.kind(),
+                        "export_statement"
+                            | "decorated_definition"
+                            | "lexical_declaration"
+                            | "variable_declaration"
+                    ) {
                         declaration = parent;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 let mut sequence = Vec::new();
                 tokens(declaration, bytes, &mut sequence);
-                found.entry(name_text).or_default().push(serde_json::to_string(&sequence).unwrap());
+                found
+                    .entry(name_text)
+                    .or_default()
+                    .push(serde_json::to_string(&sequence).unwrap());
             }
         }
-        for child in node.named_children(&mut node.walk()) { visit(child, bytes, symbols, found); }
+        for child in node.named_children(&mut node.walk()) {
+            visit(child, bytes, symbols, found);
+        }
     }
     let mut found = BTreeMap::new();
     visit(tree.root_node(), text.as_bytes(), &symbols, &mut found);
-    found.into_iter().filter_map(|(name, mut nodes)| {
-        if nodes.len() == 1 { Some((name, nodes.remove(0))) } else { None }
-    }).collect()
+    found
+        .into_iter()
+        .filter_map(|(name, mut nodes)| {
+            if nodes.len() == 1 {
+                Some((name, nodes.remove(0)))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1306,7 +1534,10 @@ mod snapshot_tests {
     #[test]
     fn snapshot_tokens_ignore_trivia_but_preserve_implementation_and_literal_changes() {
         let before = symbol_sources("src/lib.rs", "pub fn value() -> &'static str { \"a b\" }");
-        let formatted = symbol_sources("src/lib.rs", "// heading\npub fn value() -> &'static str {\n // note\n \"a b\"\n}");
+        let formatted = symbol_sources(
+            "src/lib.rs",
+            "// heading\npub fn value() -> &'static str {\n // note\n \"a b\"\n}",
+        );
         let changed = symbol_sources("src/lib.rs", "pub fn value() -> &'static str { \"ab\" }");
         assert!(before.contains_key("value"));
         assert_eq!(before, formatted);
@@ -1315,23 +1546,122 @@ mod snapshot_tests {
 
     #[test]
     fn snapshots_report_invalid_and_lexical_source_as_uncertain() {
-        for (path, source) in [("bad.rs", "pub fn broken( {"), ("bad.py", "class Member(:"), ("schema.sql", "CREATE TABLE Member (id INT);")] {
+        for (path, source) in [
+            ("bad.rs", "pub fn broken( {"),
+            ("bad.py", "class Member(:"),
+            ("schema.sql", "CREATE TABLE Member (id INT);"),
+        ] {
             assert!(!extract_snapshot(path, source).1.is_empty(), "{path}");
             assert!(symbol_sources(path, source).is_empty(), "{path}");
         }
     }
 
     #[test]
+    fn prisma_schema_has_supported_snapshot_validation() {
+        let (_, valid_uncertainty) = extract_snapshot(
+            "api/prisma/schema.prisma",
+            "model Contribution {\n id Int @id\n member Member\n}\n",
+        );
+        assert!(valid_uncertainty.is_empty(), "{valid_uncertainty:?}");
+        let (_, invalid_uncertainty) = extract_snapshot(
+            "api/prisma/schema.prisma",
+            "model Contribution {\n id Int @id\n",
+        );
+        assert!(
+            !invalid_uncertainty.is_empty(),
+            "unclosed Prisma model must remain unknown"
+        );
+    }
+
+    #[test]
     fn snapshots_preserve_python_and_typed_react_declarations() {
         for (path, source, name) in [
-            ("backend/models.py", "class Member:\n    name = 1\n", "Member"),
-            ("apps/page.tsx", "export const SignUpPage: React.FC = () => <div>Hello</div>;", "SignUpPage"),
+            (
+                "backend/models.py",
+                "class Member:\n    name = 1\n",
+                "Member",
+            ),
+            (
+                "apps/page.tsx",
+                "export const SignUpPage: React.FC = () => <div>Hello</div>;",
+                "SignUpPage",
+            ),
         ] {
             let (facts, uncertainty) = extract_snapshot(path, source);
             assert!(uncertainty.is_empty(), "{uncertainty:?}");
             assert!(facts.symbols.iter().any(|s| s.name == name), "{path}");
             assert!(symbol_sources(path, source).contains_key(name), "{path}");
         }
+    }
+
+    #[test]
+    fn next_app_router_and_middleware_are_structured() {
+        let (page, page_uncertainty) = extract_snapshot(
+            "app/(marketing)/projects/[id]/page.tsx",
+            "export default function Page() { return null }",
+        );
+        assert!(page_uncertainty.is_empty());
+        assert!(page.routes.iter().any(|r| r.method == "GET" && r.path == "/projects/:id"));
+
+        let (api, _) = extract_snapshot(
+            "app/api/projects/route.ts",
+            "export async function GET() { return Response.json({}) }\nexport async function POST() { return Response.json({}) }",
+        );
+        assert!(api.routes.iter().any(|r| r.method == "GET" && r.path == "/api/projects"));
+        assert!(api.routes.iter().any(|r| r.method == "POST" && r.path == "/api/projects"));
+
+        let (middleware, _) = extract_snapshot(
+            "src/middleware.ts",
+            "export function middleware(request: Request) { return NextResponse.next() }",
+        );
+        assert!(middleware.symbols.iter().any(|s| s.name == "middleware"));
+    }
+
+    #[test]
+    fn prisma_and_sql_migrations_produce_model_and_relation_edges() {
+        let (schema, uncertainty) = extract_snapshot(
+            "prisma/schema.prisma",
+            "model User {\n id String @id\n orders Order[]\n}\nmodel Order {\n id String @id\n user User\n}\n",
+        );
+        assert!(uncertainty.is_empty(), "{uncertainty:?}");
+        assert!(schema.symbols.iter().any(|s| s.name == "User"));
+        assert!(schema.symbols.iter().any(|s| s.name == "Order"));
+        assert!(schema.imports.iter().any(|i| i.to_module == "Order" && i.names == ["User.orders"]));
+        assert!(schema.imports.iter().any(|i| i.to_module == "User" && i.names == ["Order.user"]));
+
+        let (migration, migration_uncertainty) = extract_snapshot(
+            "prisma/migrations/001_init/migration.sql",
+            "CREATE TABLE `orders` (id TEXT, user_id TEXT, FOREIGN KEY (user_id) REFERENCES `users`(id));",
+        );
+        // SQL migrations are intentionally lexical today; the declarations
+        // are still useful, but the absence of a SQL AST keeps the result
+        // explicitly uncertain rather than overstating confidence.
+        assert!(!migration_uncertainty.is_empty());
+        assert!(migration.symbols.iter().any(|s| s.name == "orders"));
+        assert!(migration.imports.iter().any(|i| i.to_module == "users"));
+    }
+
+    #[test]
+    fn yaml_infrastructure_extractors_capture_services_jobs_and_unknowns() {
+        let (compose, _) = extract_snapshot(
+            "docker-compose.yml",
+            "services:\n  web:\n    image: app\n    depends_on:\n      - db\n  db:\n    image: postgres\n",
+        );
+        assert!(compose.symbols.iter().any(|s| s.name == "Service.web"));
+        assert!(compose.imports.iter().any(|i| i.to_module == "Service.db"));
+
+        let (workflow, _) = extract_snapshot(
+            ".github/workflows/ci.yml",
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n  deploy:\n    needs: [test]\n    runs-on: ubuntu-latest\n",
+        );
+        assert!(workflow.symbols.iter().any(|s| s.name == "Job.deploy"));
+        assert!(workflow.imports.iter().any(|i| i.to_module == "Job.test"));
+
+        // Shell is present in the explicit unsupported registry; it must not
+        // silently look like an empty, successfully analyzed source file.
+        assert!(KNOWN_UNSUPPORTED.iter().any(|(name, exts)| {
+            *name == "Shell" && exts.contains(&"sh")
+        }));
     }
 }
 
@@ -1349,10 +1679,21 @@ pub fn extract(
     let prior_facts: BTreeMap<String, StructuralFileFacts> =
         prior.map(|p| p.file_facts.clone()).unwrap_or_default();
 
-    let prior_version_matches =
-        prior.map(|p| p.extractor_version == STRUCTURAL_EXTRACTOR_VERSION).unwrap_or(false);
+    let prior_version_matches = prior
+        .map(|p| p.extractor_version == STRUCTURAL_EXTRACTOR_VERSION)
+        .unwrap_or(false);
 
-    let results: Vec<(String, u64, i64, Vec<Symbol>, Vec<Import>, Vec<Route>, Vec<RouteCall>, Vec<FunctionBody>, Vec<CallEdge>)> = files
+    let results: Vec<(
+        String,
+        u64,
+        i64,
+        Vec<Symbol>,
+        Vec<Import>,
+        Vec<Route>,
+        Vec<RouteCall>,
+        Vec<FunctionBody>,
+        Vec<CallEdge>,
+    )> = files
         .par_iter()
         .map(|f| {
             let unchanged = prior_version_matches
@@ -1377,7 +1718,17 @@ pub fn extract(
             }
 
             let Ok(text) = std::fs::read_to_string(&f.path) else {
-                return (f.rel.clone(), f.size, f.mtime_ms, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                return (
+                    f.rel.clone(),
+                    f.size,
+                    f.mtime_ms,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
             };
 
             let ext = f.path.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -1389,10 +1740,23 @@ pub fn extract(
             let mut call_edges = Vec::new();
             if ext == "rs" {
                 extract_call_edges_rs(&f.rel, &text, &mut call_edges);
-            } else if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts") {
+            } else if matches!(
+                ext,
+                "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts"
+            ) {
                 extract_call_edges_ts(&f.rel, &text, &mut call_edges);
             }
-            (f.rel.clone(), f.size, f.mtime_ms, symbols, imports, routes, route_calls, function_bodies, call_edges)
+            (
+                f.rel.clone(),
+                f.size,
+                f.mtime_ms,
+                symbols,
+                imports,
+                routes,
+                route_calls,
+                function_bodies,
+                call_edges,
+            )
         })
         .collect();
 
@@ -1402,18 +1766,26 @@ pub fn extract(
         ..Default::default()
     };
 
-    for (rel, size, mtime_ms, symbols, imports, routes, route_calls, function_bodies, call_edges) in results {
+    for (rel, size, mtime_ms, symbols, imports, routes, route_calls, function_bodies, call_edges) in
+        results
+    {
         graph.file_facts.insert(
             rel.clone(),
             StructuralFileFacts {
-                size, mtime_ms,
-                symbols: symbols.clone(), imports: imports.clone(), routes: routes.clone(),
-                route_calls: route_calls.clone(), function_bodies: function_bodies.clone(),
+                size,
+                mtime_ms,
+                symbols: symbols.clone(),
+                imports: imports.clone(),
+                routes: routes.clone(),
+                route_calls: route_calls.clone(),
+                function_bodies: function_bodies.clone(),
                 call_edges: call_edges.clone(),
             },
         );
         for s in &symbols {
-            graph.symbols.insert(format!("{}::{}", rel, s.name), s.clone());
+            graph
+                .symbols
+                .insert(format!("{}::{}", rel, s.name), s.clone());
         }
         graph.imports.extend(imports);
         graph.routes.extend(routes);
@@ -1493,12 +1865,16 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
     // When dbt is at the repo root (target/manifest.json), the dbt project
     // dir IS root — prefix is "" — paths pass through unchanged.
     let dbt_project_prefix: String = manifest_path
-        .parent()                               // .../target/ or .../dbt/
-        .and_then(|p| p.parent())              // the dbt project root
+        .parent() // .../target/ or .../dbt/
+        .and_then(|p| p.parent()) // the dbt project root
         .and_then(|p| p.strip_prefix(root).ok())
         .map(|p| {
             let s = p.to_string_lossy().to_string();
-            if s.is_empty() { s } else { format!("{}/", s) }
+            if s.is_empty() {
+                s
+            } else {
+                format!("{}/", s)
+            }
         })
         .unwrap_or_default();
 
@@ -1532,12 +1908,19 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
     };
 
     for (_node_id, node) in nodes {
-        let resource_type = node.get("resource_type").and_then(|r| r.as_str()).unwrap_or("");
+        let resource_type = node
+            .get("resource_type")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
         if !matches!(resource_type, "model" | "source") {
             continue;
         }
 
-        let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+        let name = node
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             continue;
         }
@@ -1569,7 +1952,11 @@ fn ingest_dbt_manifest(root: &std::path::Path, graph: &mut StructuralGraph) {
         let linked_concept: Option<String> = node
             .get("relation_name")
             .and_then(|r| r.as_str())
-            .and_then(|r| r.split('.').last().map(|s| s.trim_matches('"').to_lowercase()))
+            .and_then(|r| {
+                r.split('.')
+                    .last()
+                    .map(|s| s.trim_matches('"').to_lowercase())
+            })
             .or_else(|| Some(name.to_lowercase()));
 
         let sym_key = format!("{}::{}", file, name);
@@ -1634,7 +2021,9 @@ fn read_workspace_packages(root: &std::path::Path) -> BTreeMap<String, String> {
                 .unwrap_or_default();
 
             for pattern in patterns {
-                let Some(pat) = pattern.as_str() else { continue };
+                let Some(pat) = pattern.as_str() else {
+                    continue;
+                };
                 // Expand glob patterns like "packages/*" or "apps/*"
                 let prefix = pat.trim_end_matches("/*").trim_end_matches('*');
                 if let Ok(entries) = std::fs::read_dir(root.join(prefix)) {
@@ -1663,7 +2052,8 @@ fn read_workspace_packages(root: &std::path::Path) -> BTreeMap<String, String> {
     let cargo_toml = root.join("Cargo.toml");
     if let Ok(text) = std::fs::read_to_string(&cargo_toml) {
         if let Ok(val) = text.parse::<toml::Value>() {
-            if let Some(members) = val.get("workspace")
+            if let Some(members) = val
+                .get("workspace")
                 .and_then(|w| w.get("members"))
                 .and_then(|m| m.as_array())
             {
@@ -1676,7 +2066,8 @@ fn read_workspace_packages(root: &std::path::Path) -> BTreeMap<String, String> {
                             let member_toml = dir.join("Cargo.toml");
                             if let Ok(mtext) = std::fs::read_to_string(&member_toml) {
                                 if let Ok(mv) = mtext.parse::<toml::Value>() {
-                                    if let Some(name) = mv.get("package")
+                                    if let Some(name) = mv
+                                        .get("package")
                                         .and_then(|p| p.get("name"))
                                         .and_then(|n| n.as_str())
                                     {
@@ -1715,7 +2106,10 @@ pub fn link_to_concepts(
 
     for symbol in graph.symbols.values_mut() {
         // Only link classes/interfaces/routes — functions are too noisy.
-        if !matches!(symbol.kind, SymbolKind::Class | SymbolKind::Interface | SymbolKind::Route | SymbolKind::Event) {
+        if !matches!(
+            symbol.kind,
+            SymbolKind::Class | SymbolKind::Interface | SymbolKind::Route | SymbolKind::Event
+        ) {
             continue;
         }
         // Find the best-matching concept by name token overlap.
@@ -1724,7 +2118,9 @@ pub fn link_to_concepts(
             .keys()
             .find(|cname| *cname == &symbol.name)
             .or_else(|| {
-                concepts.keys().find(|cname| names_concept(&symbol.name, cname))
+                concepts
+                    .keys()
+                    .find(|cname| names_concept(&symbol.name, cname))
             });
         symbol.linked_concept = linked.cloned();
     }
@@ -1732,10 +2128,7 @@ pub fn link_to_concepts(
 
 /// Return all symbols in `graph` that are linked to `concept_name`, sorted
 /// by kind then name. Used by `query::concept()` to enrich the concept card.
-pub fn symbols_for_concept<'a>(
-    graph: &'a StructuralGraph,
-    concept_name: &str,
-) -> Vec<&'a Symbol> {
+pub fn symbols_for_concept<'a>(graph: &'a StructuralGraph, concept_name: &str) -> Vec<&'a Symbol> {
     let mut out: Vec<&Symbol> = graph
         .symbols
         .values()
@@ -1789,7 +2182,10 @@ pub fn structural_dependents(
     // relative imports without resolving them.
     let mut reverse: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for imp in &graph.imports {
-        reverse.entry(imp.to_module.clone()).or_default().push(imp.from_file.clone());
+        reverse
+            .entry(imp.to_module.clone())
+            .or_default()
+            .push(imp.from_file.clone());
     }
 
     // Build a reverse call index: callee_name → (from_file, caller_name).
@@ -1798,22 +2194,24 @@ pub fn structural_dependents(
     // imports the owner file directly.
     let mut reverse_calls: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for edge in &graph.call_edges {
-        reverse_calls.entry(edge.callee.clone())
+        reverse_calls
+            .entry(edge.callee.clone())
             .or_default()
             .push((edge.from_file.clone(), edge.caller.clone()));
     }
 
     // Helper: given a set of file paths, which other files import any of them?
-    let importers_of = |targets: &std::collections::HashSet<String>| -> std::collections::HashSet<String> {
-        let mut result = std::collections::HashSet::new();
-        for imp in &graph.imports {
-            // Match if the to_module ends with the target file stem.
-            let matches_any = targets.iter().any(|target| {
-                let stem = std::path::Path::new(target)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(target);
-                imp.to_module.ends_with(stem)
+    let importers_of =
+        |targets: &std::collections::HashSet<String>| -> std::collections::HashSet<String> {
+            let mut result = std::collections::HashSet::new();
+            for imp in &graph.imports {
+                // Match if the to_module ends with the target file stem.
+                let matches_any = targets.iter().any(|target| {
+                    let stem = std::path::Path::new(target)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(target);
+                    imp.to_module.ends_with(stem)
                     || imp.to_module.ends_with(target.as_str())
                     || imp.names.iter().any(|n| crate::model::names_concept(n, stem))
                     // Symbol-name imports (Terraform, Kubernetes, dbt): the
@@ -1827,13 +2225,13 @@ pub fn structural_dependents(
                             && (imp.to_module == s.name
                                 || imp.to_module.ends_with(&format!(".{}", s.name)))
                     })
-            });
-            if matches_any && !targets.contains(&imp.from_file) {
-                result.insert(imp.from_file.clone());
+                });
+                if matches_any && !targets.contains(&imp.from_file) {
+                    result.insert(imp.from_file.clone());
+                }
             }
-        }
-        result
-    };
+            result
+        };
 
     let mut seen: std::collections::HashSet<String> = owner_files.clone();
     let mut frontier = owner_files.clone();
@@ -1904,10 +2302,7 @@ pub struct StructuralDependent {
 /// `Route::relationship_to` (see resource.rs::Relationship /
 /// SYSTEM_MEMORY.md) — same predicate as before, now an explicit evidenced
 /// edge instead of an inline, disposable boolean.
-pub fn routes_for_concept<'a>(
-    graph: &'a StructuralGraph,
-    concept_name: &str,
-) -> Vec<&'a Route> {
+pub fn routes_for_concept<'a>(graph: &'a StructuralGraph, concept_name: &str) -> Vec<&'a Route> {
     graph
         .routes
         .iter()
@@ -1939,7 +2334,10 @@ pub struct RouteCallDependent {
 /// callers that walk can't, and only those; a caller reachable by both
 /// signals shows up in both, which is fine, not a duplicate to dedupe away
 /// (they're different evidence, arrived at differently).
-pub fn route_call_dependents(graph: &StructuralGraph, concept_name: &str) -> Vec<RouteCallDependent> {
+pub fn route_call_dependents(
+    graph: &StructuralGraph,
+    concept_name: &str,
+) -> Vec<RouteCallDependent> {
     let routes = routes_for_concept(graph, concept_name);
     if routes.is_empty() {
         return Vec::new();
@@ -2194,8 +2592,8 @@ pub const LANGUAGES: &[LanguageSpec] = &[
         // `swagger:`) are handled by the same dispatch function.
         extensions: &["yaml", "yml"],
         extractor: extract_yaml,
-        symbol_support: "Kubernetes resources as {Kind}.{metadata.name} symbols; cross-resource references as import edges. OpenAPI/Swagger: each path+method as a Route symbol, request/response $ref schema names as import edges",
-        frameworks: &["Kubernetes", "OpenAPI 3.x", "Swagger 2.x"],
+        symbol_support: "Kubernetes resources as {Kind}.{metadata.name} symbols; Docker Compose services and depends_on edges; GitHub Actions jobs and needs edges; OpenAPI/Swagger paths+methods as Routes and $ref schema imports",
+        frameworks: &["Kubernetes", "Docker Compose", "GitHub Actions", "OpenAPI 3.x", "Swagger 2.x"],
     },
 ];
 
@@ -2203,7 +2601,9 @@ pub const LANGUAGES: &[LanguageSpec] = &[
 /// listed explicitly so the coverage report can say "present, unsupported"
 /// instead of silently omitting them. A language absent from BOTH tables is
 /// simply not something this list anticipated; the report says so too.
-pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[];
+pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[
+    ("Shell", &["sh", "bash", "zsh", "fish"]),
+];
 
 /// Per-language, per-framework structural coverage for the files actually
 /// present in this scan — the honest answer to "does Archietect understand
@@ -2212,7 +2612,10 @@ pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[];
 pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> serde_json::Value {
     let mut ext_counts: BTreeMap<String, usize> = BTreeMap::new();
     for rel in graph.file_facts.keys() {
-        if let Some(ext) = std::path::Path::new(rel).extension().and_then(|x| x.to_str()) {
+        if let Some(ext) = std::path::Path::new(rel)
+            .extension()
+            .and_then(|x| x.to_str())
+        {
             *ext_counts.entry(ext.to_lowercase()).or_default() += 1;
         }
     }
@@ -2221,14 +2624,20 @@ pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> se
     // all, so it's otherwise invisible even to this report. Live walk,
     // extension-only, no content reads.
     let mut unclassified_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for (_rel, ext) in crate::scan::unclassified_files(std::path::Path::new(&idx.root), &idx.excludes, 5000) {
+    for (_rel, ext) in
+        crate::scan::unclassified_files(std::path::Path::new(&idx.root), &idx.excludes, 5000)
+    {
         *unclassified_counts.entry(ext).or_default() += 1;
     }
 
     let supported: Vec<serde_json::Value> = LANGUAGES
         .iter()
         .filter_map(|lang| {
-            let files: usize = lang.extensions.iter().filter_map(|e| ext_counts.get(*e)).sum();
+            let files: usize = lang
+                .extensions
+                .iter()
+                .filter_map(|e| ext_counts.get(*e))
+                .sum();
             (files > 0).then(|| {
                 serde_json::json!({
                     "language": lang.name,
@@ -2260,16 +2669,16 @@ pub fn coverage_report(idx: &crate::model::Index, graph: &StructuralGraph) -> se
 
 // ── Per-file extraction ───────────────────────────────────────────────────────
 
-fn extract_file(
-    rel: &str,
-    ext: &str,
-    text: &str,
-) -> (Vec<Symbol>, Vec<Import>, Vec<Route>) {
+fn extract_file(rel: &str, ext: &str, text: &str) -> (Vec<Symbol>, Vec<Import>, Vec<Route>) {
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
     let mut routes = Vec::new();
 
-    if let Some(lang) = LANGUAGES.iter().find(|l| l.extensions.contains(&ext)) {
+    if ext == "prisma" {
+        extract_prisma_structural(rel, text, &mut symbols, &mut imports);
+    } else if ext == "sql" {
+        extract_sql_structural(rel, text, &mut symbols, &mut imports);
+    } else if let Some(lang) = LANGUAGES.iter().find(|l| l.extensions.contains(&ext)) {
         (lang.extractor)(rel, text, &mut symbols, &mut imports, &mut routes);
     }
 
@@ -2278,6 +2687,79 @@ fn extract_file(
     symbols.dedup_by(|a, b| a.name == b.name && a.kind == b.kind);
 
     (symbols, imports, routes)
+}
+
+/// Extract Prisma models and their explicit relation fields into the
+/// structural graph. The schema/concept extractor in `scan.rs` owns the
+/// semantic model (fields, table mappings, evidence tiers); this deliberately
+/// records only source-level declarations and edges so `impact` can traverse
+/// a schema without conflating it with ORM usage.
+fn extract_prisma_structural(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+) {
+    let model_re = Regex::new(r"(?ms)^\s*model\s+(\w+)\s*\{(.*?)^\s*\}").unwrap();
+    let field_re = Regex::new(r"(?m)^\s*(\w+)\s+([A-Z][A-Za-z0-9_]*)(\[\])?(?:\s|$)").unwrap();
+    let scalars = [
+        "String", "Int", "BigInt", "Float", "Decimal", "Boolean", "DateTime", "Json",
+        "Bytes",
+    ];
+    for cap in model_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        let start = cap.get(0).map(|m| m.start()).unwrap_or(0);
+        symbols.push(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: Some(name.clone()),
+            line: line_of(text, start),
+            observation_source: ObservationSource::Lexical,
+        });
+        for field in field_re.captures_iter(&cap[2]) {
+            let target = field[2].to_string();
+            if !scalars.contains(&target.as_str()) {
+                imports.push(Import {
+                    from_file: rel.to_string(),
+                    to_module: target,
+                    names: vec![format!("{}.{}", name, &field[1])],
+                });
+            }
+        }
+    }
+}
+
+/// Record SQL migration tables and FK references as structural declarations
+/// and edges. This is intentionally conservative: only explicit `CREATE
+/// TABLE`/`REFERENCES` syntax is observed; prose and arbitrary SQL expressions
+/// do not become architecture facts.
+fn extract_sql_structural(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+) {
+    let create_re = Regex::new(r#"(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#).unwrap();
+    let reference_re = Regex::new(r#"(?i)\bREFERENCES\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#).unwrap();
+    for cap in create_re.captures_iter(text) {
+        let name = cap[1].to_string();
+        symbols.push(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: Some(name),
+            line: line_of(text, cap.get(0).map(|m| m.start()).unwrap_or(0)),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
+    for cap in reference_re.captures_iter(text) {
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: vec!["REFERENCES".to_string()],
+        });
+    }
 }
 
 // ── TypeScript / JavaScript ───────────────────────────────────────────────────
@@ -2311,6 +2793,37 @@ fn extract_ts_js(
     // string nodes. TODO: migrate to tree-sitter argument-node extraction.
     extract_ts_routes(rel, text, routes);
     extract_ts_events(rel, text, symbols);
+    extract_next_middleware(rel, text, symbols);
+}
+
+/// Next.js middleware/proxy files are framework entrypoints even when their
+/// exported function uses the conventional lowercase `middleware` name. The
+/// normal TypeScript symbol extractor intentionally keeps lowercase helpers
+/// out of the graph, so handle these two reserved filenames explicitly.
+fn extract_next_middleware(rel: &str, text: &str, symbols: &mut Vec<Symbol>) {
+    let file = std::path::Path::new(rel)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if !matches!(file, "middleware.ts" | "middleware.js" | "proxy.ts" | "proxy.js") {
+        return;
+    }
+    let function_re = Regex::new(r"(?m)\b(?:export\s+default\s+|export\s+)?(?:async\s+)?function\s+(middleware|proxy)\s*\(").unwrap();
+    let const_re = Regex::new(r"(?m)\b(?:export\s+)?const\s+(middleware|proxy)\s*=").unwrap();
+    for cap in function_re.captures_iter(text).chain(const_re.captures_iter(text)) {
+        let name = cap[1].to_string();
+        if symbols.iter().any(|s| s.name == name && s.file == rel) {
+            continue;
+        }
+        symbols.push(Symbol {
+            name,
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).map(|m| m.start()).unwrap_or(0)),
+            observation_source: ObservationSource::Lexical,
+        });
+    }
 }
 
 fn walk_ts_js(
@@ -2350,7 +2863,12 @@ fn walk_ts_js(
             if let Some(n) = node.child_by_field_name("name") {
                 let name = ts_text(n, bytes);
                 // PascalCase only — same convention as the old regex
-                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                if name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+                {
                     symbols.push(Symbol {
                         name,
                         kind: SymbolKind::Class,
@@ -2379,7 +2897,12 @@ fn walk_ts_js(
                 if let Some(n) = node.child_by_field_name("name") {
                     let name = ts_text(n, bytes);
                     // PascalCase only — lowercase functions are private helpers
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    if name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
                         symbols.push(Symbol {
                             name,
                             kind: SymbolKind::Function,
@@ -2405,7 +2928,12 @@ fn walk_ts_js(
                                 let val_kind = val.kind();
                                 if val_kind == "object" {
                                     // PascalCase only for object namespaces
-                                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                    if name
+                                        .chars()
+                                        .next()
+                                        .map(|c| c.is_uppercase())
+                                        .unwrap_or(false)
+                                    {
                                         symbols.push(Symbol {
                                             name,
                                             kind: SymbolKind::Class,
@@ -2417,7 +2945,12 @@ fn walk_ts_js(
                                     }
                                 } else if matches!(val_kind, "arrow_function" | "function") {
                                     // PascalCase only — lowercase consts are helpers
-                                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                    if name
+                                        .chars()
+                                        .next()
+                                        .map(|c| c.is_uppercase())
+                                        .unwrap_or(false)
+                                    {
                                         symbols.push(Symbol {
                                             name,
                                             kind: SymbolKind::Function,
@@ -2436,14 +2969,18 @@ fn walk_ts_js(
                             let _ = pat_node; // handled in call_expression arm
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
         // require() calls — handles const x = require(), const { x } = require(), require() bare
         "call_expression" if depth == 0 => {
             let func = node.child_by_field_name("function");
-            let is_require = func.map(|f| ts_text(f, bytes) == "require").unwrap_or(false);
+            let is_require = func
+                .map(|f| ts_text(f, bytes) == "require")
+                .unwrap_or(false);
             if is_require {
                 if let Some(args) = node.child_by_field_name("arguments") {
                     // Extract the module path from the first string argument
@@ -2458,22 +2995,33 @@ fn walk_ts_js(
                                     .to_string();
                                 break;
                             }
-                            if !ac.goto_next_sibling() { break; }
+                            if !ac.goto_next_sibling() {
+                                break;
+                            }
                         }
                     }
                     if !module.is_empty() {
                         // Walk up to find the variable_declarator that contains this require()
                         // to extract the binding names
                         let names = extract_require_names(node, bytes);
-                        imports.push(Import { from_file: rel.to_string(), to_module: module, names });
+                        imports.push(Import {
+                            from_file: rel.to_string(),
+                            to_module: module,
+                            names,
+                        });
                     }
                 }
             }
         }
         "import_statement" => {
             // import { X, Y } from './module' or import X from './module'
-            let source = node.child_by_field_name("source")
-                .map(|n| ts_text(n, bytes).trim_matches(|c| c == '\'' || c == '"').to_string())
+            let source = node
+                .child_by_field_name("source")
+                .map(|n| {
+                    ts_text(n, bytes)
+                        .trim_matches(|c| c == '\'' || c == '"')
+                        .to_string()
+                })
                 .unwrap_or_default();
             let mut names = Vec::new();
             let mut cursor = node.walk();
@@ -2494,33 +3042,48 @@ fn walk_ts_js(
                                                 loop {
                                                     let spec = ni.node();
                                                     if spec.kind() == "import_specifier" {
-                                                        if let Some(n) = spec.child_by_field_name("name") {
+                                                        if let Some(n) =
+                                                            spec.child_by_field_name("name")
+                                                        {
                                                             names.push(ts_text(n, bytes));
                                                         }
                                                     }
-                                                    if !ni.goto_next_sibling() { break; }
+                                                    if !ni.goto_next_sibling() {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
                                         _ => {}
                                     }
-                                    if !ic.goto_next_sibling() { break; }
+                                    if !ic.goto_next_sibling() {
+                                        break;
+                                    }
                                 }
                             }
                         }
                         _ => {}
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
             if !source.is_empty() {
-                imports.push(Import { from_file: rel.to_string(), to_module: source, names });
+                imports.push(Import {
+                    from_file: rel.to_string(),
+                    to_module: source,
+                    names,
+                });
             }
         }
         _ => {}
     }
 
-    let child_depth = if matches!(node.kind(), "class_declaration" | "function_declaration" | "arrow_function" | "function") {
+    let child_depth = if matches!(
+        node.kind(),
+        "class_declaration" | "function_declaration" | "arrow_function" | "function"
+    ) {
         depth + 1
     } else {
         depth
@@ -2529,7 +3092,9 @@ fn walk_ts_js(
     if cursor.goto_first_child() {
         loop {
             walk_ts_js(&cursor.node(), bytes, rel, symbols, imports, child_depth);
-            if !cursor.goto_next_sibling() { break; }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -2543,7 +3108,11 @@ fn walk_ts_js(
 fn extract_require_names(require_call: &tree_sitter::Node, bytes: &[u8]) -> Vec<String> {
     // Walk up: call_expression → variable_declarator → (name field)
     let declarator = match require_call.parent().and_then(|p| {
-        if p.kind() == "variable_declarator" { Some(p) } else { None }
+        if p.kind() == "variable_declarator" {
+            Some(p)
+        } else {
+            None
+        }
     }) {
         Some(d) => d,
         None => return Vec::new(), // bare require()
@@ -2571,7 +3140,9 @@ fn extract_require_names(require_call: &tree_sitter::Node, bytes: &[u8]) -> Vec<
                             names.push(ts_text(key, bytes));
                         }
                     }
-                    if !c.goto_next_sibling() { break; }
+                    if !c.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
             names
@@ -2614,7 +3185,11 @@ fn extract_ts_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
 }
 
 /// Collect top-level `const NAME = "/string"` declarations for route prefix resolution.
-fn collect_string_consts(node: &tree_sitter::Node, bytes: &[u8], out: &mut BTreeMap<String, String>) {
+fn collect_string_consts(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    out: &mut BTreeMap<String, String>,
+) {
     if node.kind() == "lexical_declaration" || node.kind() == "variable_declaration" {
         let mut c = node.walk();
         if c.goto_first_child() {
@@ -2636,7 +3211,9 @@ fn collect_string_consts(node: &tree_sitter::Node, bytes: &[u8], out: &mut BTree
                         }
                     }
                 }
-                if !c.goto_next_sibling() { break; }
+                if !c.goto_next_sibling() {
+                    break;
+                }
             }
         }
     }
@@ -2644,14 +3221,20 @@ fn collect_string_consts(node: &tree_sitter::Node, bytes: &[u8], out: &mut BTree
     if c.goto_first_child() {
         loop {
             collect_string_consts(&c.node(), bytes, out);
-            if !c.goto_next_sibling() { break; }
+            if !c.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
 
 /// Resolve a route path argument node to a string, substituting known constants.
 /// Handles: string literals, template literals with `${VAR}` substitution.
-fn resolve_route_path(node: &tree_sitter::Node, bytes: &[u8], consts: &BTreeMap<String, String>) -> Option<String> {
+fn resolve_route_path(
+    node: &tree_sitter::Node,
+    bytes: &[u8],
+    consts: &BTreeMap<String, String>,
+) -> Option<String> {
     match node.kind() {
         "string" => {
             let raw = ts_text(*node, bytes);
@@ -2675,7 +3258,11 @@ fn resolve_route_path(node: &tree_sitter::Node, bytes: &[u8], consts: &BTreeMap<
             });
             result = resolved.to_string();
             // Only return if meaningful (contains at least a slash)
-            if result.contains('/') { Some(result) } else { None }
+            if result.contains('/') {
+                Some(result)
+            } else {
+                None
+            }
         }
         "identifier" => {
             // Plain const reference: path = API_PREFIX
@@ -2685,7 +3272,8 @@ fn resolve_route_path(node: &tree_sitter::Node, bytes: &[u8], consts: &BTreeMap<
             // String concatenation: PREFIX + "/users"
             let left = node.child_by_field_name("left");
             let right = node.child_by_field_name("right");
-            let op = node.children(&mut node.walk())
+            let op = node
+                .children(&mut node.walk())
                 .find(|n| n.kind() == "+")
                 .map(|_| "+");
             if op.is_some() {
@@ -2701,10 +3289,18 @@ fn resolve_route_path(node: &tree_sitter::Node, bytes: &[u8], consts: &BTreeMap<
     }
 }
 
-const TS_ROUTE_METHODS: &[&str] = &["get", "post", "put", "delete", "patch", "options", "head", "all"];
+const TS_ROUTE_METHODS: &[&str] = &[
+    "get", "post", "put", "delete", "patch", "options", "head", "all",
+];
 const NESTJS_DECORATORS: &[(&str, &str)] = &[
-    ("Get", "GET"), ("Post", "POST"), ("Put", "PUT"), ("Delete", "DELETE"),
-    ("Patch", "PATCH"), ("Options", "OPTIONS"), ("Head", "HEAD"), ("All", "ANY"),
+    ("Get", "GET"),
+    ("Post", "POST"),
+    ("Put", "PUT"),
+    ("Delete", "DELETE"),
+    ("Patch", "PATCH"),
+    ("Options", "OPTIONS"),
+    ("Head", "HEAD"),
+    ("All", "ANY"),
 ];
 
 /// Walk the AST looking for:
@@ -2725,7 +3321,8 @@ fn walk_ts_routes(
             //                      → arguments: arguments
             if let Some(func) = node.child_by_field_name("function") {
                 if func.kind() == "member_expression" {
-                    let prop = func.child_by_field_name("property")
+                    let prop = func
+                        .child_by_field_name("property")
                         .map(|n| ts_text(n, bytes))
                         .unwrap_or_default();
                     let prop_lower = prop.to_lowercase();
@@ -2749,12 +3346,17 @@ fn walk_ts_routes(
                                     } else if arg_idx == 1 {
                                         if arg.kind() == "identifier" {
                                             handler = ts_text(arg, bytes);
-                                        } else if matches!(arg.kind(), "arrow_function" | "function") {
+                                        } else if matches!(
+                                            arg.kind(),
+                                            "arrow_function" | "function"
+                                        ) {
                                             handler = prop_lower.clone();
                                         }
                                         arg_idx += 1;
                                     }
-                                    if !arg_cursor.goto_next_sibling() { break; }
+                                    if !arg_cursor.goto_next_sibling() {
+                                        break;
+                                    }
                                 }
                             }
                             if let Some(p) = path {
@@ -2787,7 +3389,9 @@ fn walk_ts_routes(
                                     if ac.goto_first_child() {
                                         loop {
                                             let a = ac.node();
-                                            if let Some(path) = resolve_route_path(&a, bytes, consts) {
+                                            if let Some(path) =
+                                                resolve_route_path(&a, bytes, consts)
+                                            {
                                                 routes.push(Route {
                                                     method: method.to_string(),
                                                     path,
@@ -2796,12 +3400,16 @@ fn walk_ts_routes(
                                                 });
                                                 break;
                                             }
-                                            if !ac.goto_next_sibling() { break; }
+                                            if !ac.goto_next_sibling() {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                             }
-                            if !dec_cursor.goto_next_sibling() { break; }
+                            if !dec_cursor.goto_next_sibling() {
+                                break;
+                            }
                         }
                     }
                 }
@@ -2814,7 +3422,9 @@ fn walk_ts_routes(
     if cursor.goto_first_child() {
         loop {
             walk_ts_routes(&cursor.node(), bytes, rel, routes, consts, None);
-            if !cursor.goto_next_sibling() { break; }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -2842,11 +3452,13 @@ fn walk_ts_routes(
 /// route.
 fn angular_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
     let path_then_component = Regex::new(
-        r#"\{\s*path\s*:\s*['"]([^'"]*)['"][^{}]*?component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)"#
-    ).unwrap();
+        r#"\{\s*path\s*:\s*['"]([^'"]*)['"][^{}]*?component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)"#,
+    )
+    .unwrap();
     let component_then_path = Regex::new(
-        r#"\{\s*component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)[^{}]*?path\s*:\s*['"]([^'"]*)['"]"#
-    ).unwrap();
+        r#"\{\s*component\s*:\s*([A-Za-z_][A-Za-z0-9_]*)[^{}]*?path\s*:\s*['"]([^'"]*)['"]"#,
+    )
+    .unwrap();
     for cap in path_then_component.captures_iter(text) {
         routes.push(Route {
             method: "ANY".to_string(),
@@ -2900,9 +3512,17 @@ fn nuxt_server_api_route(rel: &str, routes: &mut Vec<Route>) {
     } else {
         return;
     };
-    let Some(after) = rel.split(marker).nth(1) else { return };
-    let stem = std::path::Path::new(after).file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let dir = std::path::Path::new(after).parent().and_then(|p| p.to_str()).unwrap_or("");
+    let Some(after) = rel.split(marker).nth(1) else {
+        return;
+    };
+    let stem = std::path::Path::new(after)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let dir = std::path::Path::new(after)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or("");
 
     let known = ["get", "post", "put", "delete", "patch", "head", "options"];
     let (name, method) = match stem.rsplit_once('.') {
@@ -2924,7 +3544,12 @@ fn nuxt_server_api_route(rel: &str, routes: &mut Vec<Route>) {
         path.push_str(name);
     }
 
-    routes.push(Route { method, path, handler: stem.to_string(), file: rel.to_string() });
+    routes.push(Route {
+        method,
+        path,
+        handler: stem.to_string(),
+        file: rel.to_string(),
+    });
 }
 
 // ── Vue / Nuxt ────────────────────────────────────────────────────────────────
@@ -2940,9 +3565,19 @@ fn extract_vue(
     // explicit name; identity is the filename itself (PascalCase), the same
     // convention Vue's own devtools/ESLint/IDE tooling already uses.
     // `index.vue` names nothing on its own (its directory does) — skipped.
-    if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+    if let Some(stem) = std::path::Path::new(rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+    {
         if stem.to_lowercase() != "index" {
-            symbols.push(Symbol { name: to_pascal_case(stem), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: 1 , observation_source: ObservationSource::Lexical });
+            symbols.push(Symbol {
+                name: to_pascal_case(stem),
+                kind: SymbolKind::Class,
+                file: rel.to_string(),
+                linked_concept: None,
+                line: 1,
+                observation_source: ObservationSource::Lexical,
+            });
         }
     }
 
@@ -2952,7 +3587,10 @@ fn extract_vue(
     if let Some(after) = rel.split("pages/").nth(1) {
         let no_ext = after.trim_end_matches(".vue");
         let mut path = String::new();
-        for seg in no_ext.split('/').filter(|s| !s.is_empty() && s.to_lowercase() != "index") {
+        for seg in no_ext
+            .split('/')
+            .filter(|s| !s.is_empty() && s.to_lowercase() != "index")
+        {
             path.push('/');
             path.push_str(seg);
         }
@@ -2966,10 +3604,17 @@ fn extract_vue(
         let bracket_re = Regex::new(r"\[\.\.\.([A-Za-z0-9_]+)\]|\[([A-Za-z0-9_]+)\]").unwrap();
         let path = bracket_re
             .replace_all(&path, |c: &regex::Captures| {
-                c.get(1).map(|g| format!("*{}", g.as_str())).unwrap_or_else(|| format!(":{}", &c[2]))
+                c.get(1)
+                    .map(|g| format!("*{}", g.as_str()))
+                    .unwrap_or_else(|| format!(":{}", &c[2]))
             })
             .to_string();
-        routes.push(Route { method: "GET".to_string(), path, handler: "default".to_string(), file: rel.to_string() });
+        routes.push(Route {
+            method: "GET".to_string(),
+            path,
+            handler: "default".to_string(),
+            file: rel.to_string(),
+        });
     }
 
     // <script>/<script setup> is ordinary TS/JS underneath. Reuse that
@@ -3005,7 +3650,9 @@ fn to_pascal_case(s: &str) -> String {
 /// permanent fact for every Next.js App Router project rather than a gap
 /// worth closing.
 fn next_app_router_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
-    let Some(app_pos) = rel.find("app/") else { return };
+    let Some(app_pos) = rel.find("app/") else {
+        return;
+    };
     if app_pos != 0 && rel.as_bytes().get(app_pos - 1) != Some(&b'/') {
         return;
     }
@@ -3042,23 +3689,42 @@ fn next_app_router_routes(rel: &str, text: &str, routes: &mut Vec<Route>) {
     }
 
     if is_page {
-        routes.push(Route { method: "GET".to_string(), path, handler: "default".to_string(), file: rel.to_string() });
+        routes.push(Route {
+            method: "GET".to_string(),
+            path,
+            handler: "default".to_string(),
+            file: rel.to_string(),
+        });
         return;
     }
-    let method_re = Regex::new(r"(?m)^export\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(").unwrap();
+    let method_re = Regex::new(
+        r"(?m)^export\s+(?:async\s+)?function\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(",
+    )
+    .unwrap();
     let mut any = false;
     for cap in method_re.captures_iter(text) {
         any = true;
-        routes.push(Route { method: cap[1].to_string(), path: path.clone(), handler: cap[1].to_string(), file: rel.to_string() });
+        routes.push(Route {
+            method: cap[1].to_string(),
+            path: path.clone(),
+            handler: cap[1].to_string(),
+            file: rel.to_string(),
+        });
     }
     if !any {
-        routes.push(Route { method: "ANY".to_string(), path, handler: "unknown".to_string(), file: rel.to_string() });
+        routes.push(Route {
+            method: "ANY".to_string(),
+            path,
+            handler: "unknown".to_string(),
+            file: rel.to_string(),
+        });
     }
 }
 
 fn extract_ts_events(rel: &str, text: &str, symbols: &mut Vec<Symbol>) {
     // EventEmitter2 / NestJS: emit('event.name') or @OnEvent('event.name')
-    let emit_re = Regex::new(r#"(?:emit|@OnEvent)\s*\(\s*['"]([A-Za-z][A-Za-z0-9._-]*)['"]"#).unwrap();
+    let emit_re =
+        Regex::new(r#"(?:emit|@OnEvent)\s*\(\s*['"]([A-Za-z][A-Za-z0-9._-]*)['"]"#).unwrap();
     for cap in emit_re.captures_iter(text) {
         let raw = &cap[1];
         // Convert kebab-case and dot-notation to PascalCase for the name
@@ -3131,7 +3797,12 @@ fn walk_py(
                 if let Some(n) = node.child_by_field_name("name") {
                     let name = ts_text(n, bytes);
                     // Only lowercase-starting names (PEP-8 functions), not test fixtures.
-                    if name.chars().next().map(|c| c.is_lowercase() || c == '_').unwrap_or(false) {
+                    if name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_lowercase() || c == '_')
+                        .unwrap_or(false)
+                    {
                         symbols.push(Symbol {
                             name,
                             kind: SymbolKind::Function,
@@ -3146,7 +3817,8 @@ fn walk_py(
         }
         "import_from_statement" => {
             // from module import X, Y [as Z]
-            let module = node.child_by_field_name("module_name")
+            let module = node
+                .child_by_field_name("module_name")
                 .map(|n| ts_text(n, bytes))
                 .unwrap_or_default();
             let mut names = Vec::new();
@@ -3156,7 +3828,8 @@ fn walk_py(
                     let ch = cursor.node();
                     if ch.kind() == "dotted_name" || ch.kind() == "identifier" {
                         // skip the module_name child
-                        if Some(ch.id()) != node.child_by_field_name("module_name").map(|n| n.id()) {
+                        if Some(ch.id()) != node.child_by_field_name("module_name").map(|n| n.id())
+                        {
                             names.push(ts_text(ch, bytes));
                         }
                     } else if ch.kind() == "aliased_import" {
@@ -3164,11 +3837,17 @@ fn walk_py(
                             names.push(ts_text(n, bytes));
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
             if !module.is_empty() {
-                imports.push(Import { from_file: rel.to_string(), to_module: module, names });
+                imports.push(Import {
+                    from_file: rel.to_string(),
+                    to_module: module,
+                    names,
+                });
             }
         }
         "decorated_definition" => {
@@ -3189,11 +3868,15 @@ fn walk_py(
                                     // Extract method from function: attribute node
                                     if let Some(func) = inner.child_by_field_name("function") {
                                         if func.kind() == "attribute" {
-                                            let attr = func.child_by_field_name("attribute")
+                                            let attr = func
+                                                .child_by_field_name("attribute")
                                                 .map(|n| ts_text(n, bytes))
                                                 .unwrap_or_default();
                                             let attr_lower = attr.to_lowercase();
-                                            if matches!(attr_lower.as_str(), "get" | "post" | "put" | "delete" | "patch") {
+                                            if matches!(
+                                                attr_lower.as_str(),
+                                                "get" | "post" | "put" | "delete" | "patch"
+                                            ) {
                                                 decorator_method = Some(attr_lower.to_uppercase());
                                             }
                                         }
@@ -3207,7 +3890,8 @@ fn walk_py(
                                                 if a.kind() == "string" {
                                                     // Strip quotes from Python string
                                                     let raw = ts_text(a, bytes);
-                                                    let path = raw.trim_matches(|c| c == '"' || c == '\'')
+                                                    let path = raw
+                                                        .trim_matches(|c| c == '"' || c == '\'')
                                                         .trim_matches(|c| c == '"' || c == '\'')
                                                         .to_string();
                                                     if !path.is_empty() {
@@ -3215,17 +3899,22 @@ fn walk_py(
                                                         break;
                                                     }
                                                 }
-                                                if !ac.goto_next_sibling() { break; }
+                                                if !ac.goto_next_sibling() {
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                if !dc.goto_next_sibling() { break; }
+                                if !dc.goto_next_sibling() {
+                                    break;
+                                }
                             }
                         }
                     } else if ch.kind() == "function_definition" {
                         if let (Some(method), Some(path)) = (&decorator_method, &decorator_path) {
-                            let handler = ch.child_by_field_name("name")
+                            let handler = ch
+                                .child_by_field_name("name")
                                 .map(|n| ts_text(n, bytes))
                                 .unwrap_or_else(|| "unknown".to_string());
                             routes.push(Route {
@@ -3236,7 +3925,9 @@ fn walk_py(
                             });
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
@@ -3252,8 +3943,18 @@ fn walk_py(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            walk_py(&cursor.node(), bytes, rel, symbols, imports, routes, child_depth);
-            if !cursor.goto_next_sibling() { break; }
+            walk_py(
+                &cursor.node(),
+                bytes,
+                rel,
+                symbols,
+                imports,
+                routes,
+                child_depth,
+            );
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -3322,7 +4023,11 @@ fn extract_rs(
                     .collect()
             })
             .unwrap_or_default();
-        imports.push(Import { from_file: rel.to_string(), to_module, names });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module,
+            names,
+        });
     }
 
     // Rust had NO web-framework route recognition at all before this — an
@@ -3345,9 +4050,8 @@ fn extract_rs(
     let axum_route_re = Regex::new(
         r#"\.route\s*\(\s*"([^"]+)"\s*,\s*((?:(?:get|post|put|patch|delete)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)(?:\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))*))\s*\)"#
     ).unwrap();
-    let verb_handler_re = Regex::new(
-        r"(get|post|put|patch|delete)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
-    ).unwrap();
+    let verb_handler_re =
+        Regex::new(r"(get|post|put|patch|delete)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)").unwrap();
     for cap in axum_route_re.captures_iter(text) {
         let path = cap[1].to_string();
         for vh in verb_handler_re.captures_iter(&cap[2]) {
@@ -3366,13 +4070,16 @@ fn extract_rs(
     // "an annotation names the path; the very next function is the
     // handler" conventions, just Rust attribute syntax instead of a Python
     // decorator.
-    let attr_route_re = Regex::new(
-        r#"(?m)^\s*#\[\s*(get|post|put|patch|delete)\s*\(\s*"([^"]+)"\s*\)\s*\]"#
-    ).unwrap();
+    let attr_route_re =
+        Regex::new(r#"(?m)^\s*#\[\s*(get|post|put|patch|delete)\s*\(\s*"([^"]+)"\s*\)\s*\]"#)
+            .unwrap();
     for cap in attr_route_re.captures_iter(text) {
         let after = &text[cap.get(0).unwrap().end()..];
         let fn_re = Regex::new(r"(?m)^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
-        let handler = fn_re.captures(after).map(|c| c[1].to_string()).unwrap_or_else(|| "unknown".to_string());
+        let handler = fn_re
+            .captures(after)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         routes.push(Route {
             method: cap[1].to_string().to_uppercase(),
             path: cap[2].to_string(),
@@ -3537,7 +4244,11 @@ pub fn extract_rs_syn(
 
     match syn::parse_file(text) {
         Ok(ast) => {
-            let mut visitor = RsVisitor { rel, symbols, depth: 0 };
+            let mut visitor = RsVisitor {
+                rel,
+                symbols,
+                depth: 0,
+            };
             syn::visit::visit_file(&mut visitor, &ast);
         }
         Err(_) => {
@@ -3592,7 +4303,12 @@ fn walk_go(
                         if let Some(name_node) = ch.child_by_field_name("name") {
                             let name = ts_text(name_node, bytes);
                             // Exported = uppercase first char
-                            if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                            if name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false)
+                            {
                                 let type_node = ch.child_by_field_name("type");
                                 let kind = match type_node.map(|n| n.kind()) {
                                     Some("interface_type") => SymbolKind::Interface,
@@ -3609,14 +4325,21 @@ fn walk_go(
                             }
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
         "function_declaration" | "method_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = ts_text(name_node, bytes);
-                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                if name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+                {
                     symbols.push(Symbol {
                         name,
                         kind: SymbolKind::Function,
@@ -3645,7 +4368,9 @@ fn walk_go(
                             });
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
@@ -3656,7 +4381,9 @@ fn walk_go(
     if cursor.goto_first_child() {
         loop {
             walk_go(&cursor.node(), bytes, rel, symbols, imports);
-            if !cursor.goto_next_sibling() { break; }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -3689,8 +4416,16 @@ fn extract_java(
 
 /// Lexical fallback for Kotlin — tree-sitter-java cannot parse Kotlin syntax.
 /// Extracts top-level `fun` declarations and classes/interfaces.
-fn extract_kotlin_lexical(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &mut Vec<Import>) {
-    let class_re = Regex::new(r"(?m)^(?:(?:public|internal|abstract|open|data|sealed)\s+)*class\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+fn extract_kotlin_lexical(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+) {
+    let class_re = Regex::new(
+        r"(?m)^(?:(?:public|internal|abstract|open|data|sealed)\s+)*class\s+([A-Z][A-Za-z0-9_]*)",
+    )
+    .unwrap();
     for cap in class_re.captures_iter(text) {
         symbols.push(Symbol {
             name: cap[1].to_string(),
@@ -3701,7 +4436,8 @@ fn extract_kotlin_lexical(rel: &str, text: &str, symbols: &mut Vec<Symbol>, impo
             observation_source: ObservationSource::Lexical,
         });
     }
-    let iface_re = Regex::new(r"(?m)^(?:(?:public|internal)\s+)?interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
+    let iface_re =
+        Regex::new(r"(?m)^(?:(?:public|internal)\s+)?interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in iface_re.captures_iter(text) {
         symbols.push(Symbol {
             name: cap[1].to_string(),
@@ -3713,7 +4449,10 @@ fn extract_kotlin_lexical(rel: &str, text: &str, symbols: &mut Vec<Symbol>, impo
         });
     }
     // Top-level functions: `fun foo(...)` not indented inside a class
-    let fun_re = Regex::new(r"(?m)^(?:(?:public|internal|private|suspend)\s+)*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
+    let fun_re = Regex::new(
+        r"(?m)^(?:(?:public|internal|private|suspend)\s+)*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    )
+    .unwrap();
     for cap in fun_re.captures_iter(text) {
         symbols.push(Symbol {
             name: cap[1].to_string(),
@@ -3727,7 +4466,11 @@ fn extract_kotlin_lexical(rel: &str, text: &str, symbols: &mut Vec<Symbol>, impo
     // import statements
     let import_re = Regex::new(r"import\s+([\w.]+(?:\.\*)?)").unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -3788,16 +4531,21 @@ fn walk_java(
                                 if ann.kind() == "annotation" || ann.kind() == "marker_annotation" {
                                     let ann_text = ts_text(ann, bytes);
                                     for (prefix, method) in &[
-                                        ("GetMapping", "GET"), ("PostMapping", "POST"),
-                                        ("PutMapping", "PUT"), ("DeleteMapping", "DELETE"),
+                                        ("GetMapping", "GET"),
+                                        ("PostMapping", "POST"),
+                                        ("PutMapping", "PUT"),
+                                        ("DeleteMapping", "DELETE"),
                                         ("PatchMapping", "PATCH"),
                                     ] {
                                         if ann_text.contains(prefix) {
-                                            let path_re = Regex::new(r#"["']([^"']+)["']"#).unwrap();
-                                            let path = path_re.captures(&ann_text)
+                                            let path_re =
+                                                Regex::new(r#"["']([^"']+)["']"#).unwrap();
+                                            let path = path_re
+                                                .captures(&ann_text)
                                                 .map(|c| c[1].to_string())
                                                 .unwrap_or_else(|| "/".to_string());
-                                            let handler = node.child_by_field_name("name")
+                                            let handler = node
+                                                .child_by_field_name("name")
                                                 .map(|n| ts_text(n, bytes))
                                                 .unwrap_or_else(|| "unknown".to_string());
                                             routes.push(Route {
@@ -3809,11 +4557,15 @@ fn walk_java(
                                         }
                                     }
                                 }
-                                if !mc.goto_next_sibling() { break; }
+                                if !mc.goto_next_sibling() {
+                                    break;
+                                }
                             }
                         }
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
@@ -3824,7 +4576,9 @@ fn walk_java(
     if cursor.goto_first_child() {
         loop {
             walk_java(&cursor.node(), bytes, rel, symbols, imports, routes);
-            if !cursor.goto_next_sibling() { break; }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -3871,7 +4625,14 @@ fn extract_rb(
     // noise (private helpers) for actually finding real methods.
     let method_re = Regex::new(r"(?m)^\s*def\s+(?:self\.)?([a-z_][A-Za-z0-9_?!=]*)").unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // require / require_relative
@@ -3885,9 +4646,8 @@ fn extract_rb(
     }
 
     // Rails routes.rb: get '/path', to: 'controller#action'
-    let route_re = Regex::new(
-        r#"(?m)^\s*(get|post|put|delete|patch|resources?)\s+['"]([^'"]+)['"]"#
-    ).unwrap();
+    let route_re =
+        Regex::new(r#"(?m)^\s*(get|post|put|delete|patch|resources?)\s+['"]([^'"]+)['"]"#).unwrap();
     for cap in route_re.captures_iter(text) {
         let method = cap[1].to_string().to_uppercase();
         routes.push(Route {
@@ -3935,11 +4695,23 @@ end
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_rb("config/routes.rb", src, &mut symbols, &mut imports, &mut routes);
+        extract_rb(
+            "config/routes.rb",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/articles"));
-        assert!(routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/user"));
-        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/health"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "RESOURCES" && r.path == "/articles"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "RESOURCES" && r.path == "/user"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/health"));
     }
 }
 
@@ -3970,7 +4742,14 @@ fn extract_ex(
     // deliberately excluded: `def\s+` cannot match inside the word `defp`.
     let fn_re = Regex::new(r"(?m)^\s*def\s+([a-z_][A-Za-z0-9_?!]*)").unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // alias / import / use
@@ -3984,9 +4763,7 @@ fn extract_ex(
     }
 
     // Phoenix routes: get "/path", Controller, :action
-    let route_re = Regex::new(
-        r#"(?m)^\s*(get|post|put|delete|patch)\s+["']([^"']+)["']"#
-    ).unwrap();
+    let route_re = Regex::new(r#"(?m)^\s*(get|post|put|delete|patch)\s+["']([^"']+)["']"#).unwrap();
     for cap in route_re.captures_iter(text) {
         routes.push(Route {
             method: cap[1].to_string().to_uppercase(),
@@ -4007,12 +4784,15 @@ fn extract_php(
     _routes: &mut Vec<Route>,
 ) {
     // class Foo / interface Foo
-    let class_re = Regex::new(
-        r"(?m)^(?:abstract\s+)?(?:class|interface)\s+([A-Za-z][A-Za-z0-9_]*)"
-    ).unwrap();
+    let class_re =
+        Regex::new(r"(?m)^(?:abstract\s+)?(?:class|interface)\s+([A-Za-z][A-Za-z0-9_]*)").unwrap();
     for cap in class_re.captures_iter(text) {
         let matched = cap.get(0).unwrap().as_str();
-        let kind = if matched.contains("interface") { SymbolKind::Interface } else { SymbolKind::Class };
+        let kind = if matched.contains("interface") {
+            SymbolKind::Interface
+        } else {
+            SymbolKind::Class
+        };
         symbols.push(Symbol {
             name: cap[1].to_string(),
             kind,
@@ -4027,7 +4807,14 @@ fn extract_php(
     // code). Class methods are indented and excluded by the `^` anchor.
     let fn_re = Regex::new(r"(?m)^function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // use Foo\Bar\Baz;
@@ -4059,8 +4846,19 @@ fn extract_cs(
         r"(?m)^\s*public\s+(?:abstract\s+|sealed\s+|static\s+|partial\s+)*(class|interface|record)\s+([A-Za-z_][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in type_re.captures_iter(text) {
-        let kind = if &cap[1] == "interface" { SymbolKind::Interface } else { SymbolKind::Class };
-        symbols.push(Symbol { name: cap[2].to_string(), kind, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        let kind = if &cap[1] == "interface" {
+            SymbolKind::Interface
+        } else {
+            SymbolKind::Class
+        };
+        symbols.push(Symbol {
+            name: cap[2].to_string(),
+            kind,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // public methods (and constructors, which share the same shape minus a
@@ -4070,26 +4868,42 @@ fn extract_cs(
         r"(?m)^\s*public\s+(?:static\s+|virtual\s+|override\s+|async\s+|sealed\s+)*[\w<>\[\],\.\?]+\s+([A-Z][A-Za-z0-9_]*)\s*\("
     ).unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // using Namespace.Sub;
     let using_re = Regex::new(r"(?m)^using\s+([\w.]+);").unwrap();
     for cap in using_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 
     // ASP.NET Core: [HttpGet("path")], [HttpPost("path")], [Route("path")]
-    let route_re = Regex::new(
-        r#"\[Http(Get|Post|Put|Delete|Patch)(?:\s*\(\s*"([^"]*)"\s*\))?\]"#
-    ).unwrap();
+    let route_re =
+        Regex::new(r#"\[Http(Get|Post|Put|Delete|Patch)(?:\s*\(\s*"([^"]*)"\s*\))?\]"#).unwrap();
     for cap in route_re.captures_iter(text) {
         let after = &text[cap.get(0).unwrap().end()..];
         let handler_re = Regex::new(r"(?m)^\s*(?:public\s+)?(?:static\s+|async\s+)*[\w<>\[\],\.\?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
-        let handler = handler_re.captures(after).map(|c| c[1].to_string()).unwrap_or_else(|| "unknown".to_string());
+        let handler = handler_re
+            .captures(after)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         routes.push(Route {
             method: cap[1].to_string().to_uppercase(),
-            path: cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default(),
+            path: cap
+                .get(2)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default(),
             handler,
             file: rel.to_string(),
         });
@@ -4126,11 +4940,23 @@ public interface IAuthService
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_cs("Auth/AuthController.cs", src, &mut symbols, &mut imports, &mut routes);
+        extract_cs(
+            "Auth/AuthController.cs",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "AuthController" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "IAuthService" && s.kind == SymbolKind::Interface));
-        assert!(symbols.iter().any(|s| s.name == "Authenticate" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "AuthController" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "IAuthService" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Authenticate" && s.kind == SymbolKind::Function));
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].method, "POST");
         assert_eq!(routes[0].path, "/login");
@@ -4151,24 +4977,44 @@ fn extract_swift(
     // prefixes). A method or nested type inside a class body is indented and
     // therefore excluded, the same top-level-only rule Rust/PHP use above to
     // keep a class's own members from flooding the symbol set.
-    let class_re = Regex::new(
-        r"(?m)^(?:public\s+|open\s+|internal\s+|final\s+)*class\s+([A-Z][A-Za-z0-9_]*)"
-    ).unwrap();
+    let class_re =
+        Regex::new(r"(?m)^(?:public\s+|open\s+|internal\s+|final\s+)*class\s+([A-Z][A-Za-z0-9_]*)")
+            .unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
-    let struct_re = Regex::new(
-        r"(?m)^(?:public\s+|internal\s+)*struct\s+([A-Z][A-Za-z0-9_]*)"
-    ).unwrap();
+    let struct_re =
+        Regex::new(r"(?m)^(?:public\s+|internal\s+)*struct\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in struct_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // protocol — Swift's interface equivalent.
     let protocol_re = Regex::new(r"(?m)^(?:public\s+)?protocol\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in protocol_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // func — top-level only, same noise tradeoff as everywhere else in this
@@ -4178,16 +5024,29 @@ fn extract_swift(
         r"(?m)^(?:public\s+|open\s+|internal\s+|private\s+|fileprivate\s+|static\s+|final\s+)*func\s+([A-Za-z_][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in fn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     let import_re = Regex::new(r"(?m)^import\s+([A-Za-z_][A-Za-z0-9_.]*)").unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 
     // Vapor: app.get("path") { req in ... }, router.post("path", use: handler)
-    let vapor_re = Regex::new(r#"\b(?:app|router|routes)\.(get|post|put|delete|patch)\s*\(\s*"([^"]*)""#).unwrap();
+    let vapor_re =
+        Regex::new(r#"\b(?:app|router|routes)\.(get|post|put|delete|patch)\s*\(\s*"([^"]*)""#)
+            .unwrap();
     for cap in vapor_re.captures_iter(text) {
         routes.push(Route {
             method: cap[1].to_string().to_uppercase(),
@@ -4232,13 +5091,29 @@ app.get("invoices") { req in
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_swift("Billing/Invoice.swift", src, &mut symbols, &mut imports, &mut routes);
+        extract_swift(
+            "Billing/Invoice.swift",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "Invoice" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Money" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Payable" && s.kind == SymbolKind::Interface));
-        assert!(symbols.iter().any(|s| s.name == "formatCurrency" && s.kind == SymbolKind::Function));
-        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/invoices"));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Invoice" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Money" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Payable" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "formatCurrency" && s.kind == SymbolKind::Function));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/invoices"));
         assert!(
             !symbols.iter().any(|s| s.name == "total"),
             "indented method should not be extracted under the top-level-only rule"
@@ -4261,17 +5136,38 @@ fn extract_objc(
     // resulting duplicate Class symbol down to one.
     let iface_re = Regex::new(r"(?m)^@interface\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in iface_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
     let impl_re = Regex::new(r"(?m)^@implementation\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in impl_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // @protocol Name — Objective-C's interface equivalent.
     let proto_re = Regex::new(r"(?m)^@protocol\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in proto_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // - (ReturnType)methodName / + (ReturnType)methodName. Top-level only
@@ -4280,13 +5176,24 @@ fn extract_objc(
     // methods without needing Ruby's indentation-tolerant rule.
     let method_re = Regex::new(r"(?m)^[-+]\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in method_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // #import "Header.h" / #import <Framework/Framework.h>
     let import_re = Regex::new(r#"#import\s+[<"]([^">]+)[">]"#).unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -4322,13 +5229,29 @@ mod objc_tests {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_objc("Payment/PaymentProcessor.m", src, &mut symbols, &mut imports, &mut routes);
+        extract_objc(
+            "Payment/PaymentProcessor.m",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "PaymentProcessor" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "PaymentDelegate" && s.kind == SymbolKind::Interface));
-        assert!(symbols.iter().any(|s| s.name == "chargeAmount" && s.kind == SymbolKind::Function));
-        assert!(symbols.iter().any(|s| s.name == "sharedProcessor" && s.kind == SymbolKind::Function));
-        assert!(imports.iter().any(|i| i.to_module == "Foundation/Foundation.h"));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "PaymentProcessor" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "PaymentDelegate" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "chargeAmount" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "sharedProcessor" && s.kind == SymbolKind::Function));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module == "Foundation/Foundation.h"));
     }
 }
 
@@ -4353,13 +5276,27 @@ fn extract_c(
 
     let struct_re = Regex::new(r"(?m)^(?:typedef\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in struct_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     if is_cpp {
         let class_re = Regex::new(r"(?m)^class\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
         for cap in class_re.captures_iter(text) {
-            symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+            symbols.push(Symbol {
+                name: cap[1].to_string(),
+                kind: SymbolKind::Class,
+                file: rel.to_string(),
+                linked_concept: None,
+                line: line_of(text, cap.get(0).unwrap().start()),
+                observation_source: ObservationSource::Lexical,
+            });
         }
     }
 
@@ -4371,16 +5308,30 @@ fn extract_c(
     ).unwrap();
     for cap in fn_re.captures_iter(text) {
         let name = cap[1].to_string();
-        if matches!(name.as_str(), "if" | "for" | "while" | "switch" | "catch" | "return" | "sizeof") {
+        if matches!(
+            name.as_str(),
+            "if" | "for" | "while" | "switch" | "catch" | "return" | "sizeof"
+        ) {
             continue;
         }
-        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name,
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // #include "foo.h" / #include <foo.h>
     let include_re = Regex::new(r#"#include\s+[<"]([^">]+)[">]"#).unwrap();
     for cap in include_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -4411,9 +5362,15 @@ int main(int argc, char *argv[]) {
         let mut routes = Vec::new();
         extract_c("util.c", src, &mut symbols, &mut imports, &mut routes);
 
-        assert!(symbols.iter().any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "add" && s.kind == SymbolKind::Function));
-        assert!(symbols.iter().any(|s| s.name == "main" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Point" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "add" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "main" && s.kind == SymbolKind::Function));
         assert!(imports.iter().any(|i| i.to_module == "stdio.h"));
     }
 
@@ -4424,10 +5381,18 @@ int main(int argc, char *argv[]) {
         let mut symbols_c = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_c("Widget.cpp", src, &mut symbols_cpp, &mut imports, &mut routes);
+        extract_c(
+            "Widget.cpp",
+            src,
+            &mut symbols_cpp,
+            &mut imports,
+            &mut routes,
+        );
         extract_c("Widget.c", src, &mut symbols_c, &mut imports, &mut routes);
 
-        assert!(symbols_cpp.iter().any(|s| s.name == "Widget" && s.kind == SymbolKind::Class));
+        assert!(symbols_cpp
+            .iter()
+            .any(|s| s.name == "Widget" && s.kind == SymbolKind::Class));
         assert!(
             !symbols_c.iter().any(|s| s.name == "Widget"),
             "a .c file has no classes — C++ class syntax must not leak into it"
@@ -4444,23 +5409,44 @@ fn extract_scala(
     imports: &mut Vec<Import>,
     _routes: &mut Vec<Route>,
 ) {
-    let class_re = Regex::new(
-        r"(?m)^(?:sealed\s+|abstract\s+|final\s+|case\s+)*class\s+([A-Z][A-Za-z0-9_]*)"
-    ).unwrap();
+    let class_re =
+        Regex::new(r"(?m)^(?:sealed\s+|abstract\s+|final\s+|case\s+)*class\s+([A-Z][A-Za-z0-9_]*)")
+            .unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // object — Scala's singleton; treated as a Class for impact purposes,
     // same call the TypeScript extractor makes for enums above.
     let object_re = Regex::new(r"(?m)^(?:case\s+)?object\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in object_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     let trait_re = Regex::new(r"(?m)^(?:sealed\s+)?trait\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in trait_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // def — top-level only (a module-level def, e.g. in a `package object`
@@ -4470,12 +5456,23 @@ fn extract_scala(
         r"(?m)^(?:private(?:\[\w+\])?\s+|protected\s+|final\s+|override\s+)*def\s+([a-zA-Z_][A-Za-z0-9_]*)"
     ).unwrap();
     for cap in def_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     let import_re = Regex::new(r"(?m)^import\s+([\w.{}, ]+)").unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].trim().to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].trim().to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -4505,17 +5502,33 @@ def describe(shape: Shape): String = shape.toString
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_scala("shapes/Shape.scala", src, &mut symbols, &mut imports, &mut routes);
+        extract_scala(
+            "shapes/Shape.scala",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "Circle" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "ShapeFactory" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Shape" && s.kind == SymbolKind::Interface));
-        assert!(symbols.iter().any(|s| s.name == "describe" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Circle" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "ShapeFactory" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Shape" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "describe" && s.kind == SymbolKind::Function));
         assert!(
             !symbols.iter().any(|s| s.name == "makeCircle"),
             "indented method should not be extracted under the top-level-only rule"
         );
-        assert!(imports.iter().any(|i| i.to_module.contains("scala.collection.mutable.ListBuffer")));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module.contains("scala.collection.mutable.ListBuffer")));
     }
 }
 
@@ -4530,7 +5543,14 @@ fn extract_dart(
 ) {
     let class_re = Regex::new(r"(?m)^(?:abstract\s+)?class\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // Top-level functions only — a signature ending in a body brace (never a
@@ -4544,13 +5564,24 @@ fn extract_dart(
         if matches!(name.as_str(), "if" | "for" | "while" | "switch" | "catch") {
             continue;
         }
-        symbols.push(Symbol { name, kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name,
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // import 'package:foo/foo.dart'; / import 'dart:core';
     let import_re = Regex::new(r#"import\s+['"]([^'"]+)['"]"#).unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -4579,15 +5610,27 @@ void main() {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_dart("lib/todo.dart", src, &mut symbols, &mut imports, &mut routes);
+        extract_dart(
+            "lib/todo.dart",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "TodoItem" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "main" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "TodoItem" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "main" && s.kind == SymbolKind::Function));
         assert!(
             !symbols.iter().any(|s| s.name == "toggle"),
             "indented method should not be extracted under the top-level-only rule"
         );
-        assert!(imports.iter().any(|i| i.to_module == "package:flutter/material.dart"));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module == "package:flutter/material.dart"));
     }
 }
 
@@ -4605,14 +5648,28 @@ fn extract_haskell(
     // thing recorded as SymbolKind::Class here.
     let data_re = Regex::new(r"(?m)^(?:data|newtype)\s+([A-Z][A-Za-z0-9_']*)").unwrap();
     for cap in data_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // class — a typeclass, Haskell's interface equivalent: a contract types
     // opt into, not a value's own type.
     let class_re = Regex::new(r"(?m)^class\s+(?:.*=>\s*)?([A-Z][A-Za-z0-9_']*)").unwrap();
     for cap in class_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // Top-level type signature lines: `name :: Type`. This is the most
@@ -4622,13 +5679,24 @@ fn extract_haskell(
     // function, so the signature line is taken as the sole extraction.
     let sig_re = Regex::new(r"(?m)^([a-z_][A-Za-z0-9_']*)\s*::").unwrap();
     for cap in sig_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // import Module.Path
     let import_re = Regex::new(r"(?m)^import\s+(?:qualified\s+)?([A-Z][A-Za-z0-9_.]*)").unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 
     // Yesod: routes declared in a `[parseRoutes| ... |]` quasi-quote block,
@@ -4642,23 +5710,39 @@ fn extract_haskell(
         let body_start = block_start + "[parseRoutes|".len();
         if let Some(rel_end) = text[body_start..].find("|]") {
             let block = &text[body_start..body_start + rel_end];
-            let line_re = Regex::new(r"(?m)^\s*(/\S*)\s+([A-Za-z][A-Za-z0-9_']*)(?:\s+(.*))?$").unwrap();
+            let line_re =
+                Regex::new(r"(?m)^\s*(/\S*)\s+([A-Za-z][A-Za-z0-9_']*)(?:\s+(.*))?$").unwrap();
             for cap in line_re.captures_iter(block) {
                 let path = cap[1].to_string();
                 let name = cap[2].to_string();
                 let methods: Vec<String> = cap
                     .get(3)
-                    .map(|m| m.as_str().split_whitespace().map(|s| s.to_string()).collect())
+                    .map(|m| {
+                        m.as_str()
+                            .split_whitespace()
+                            .map(|s| s.to_string())
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let known: Vec<String> = methods
                     .into_iter()
                     .filter(|m| ["GET", "POST", "PUT", "DELETE", "PATCH"].contains(&m.as_str()))
                     .collect();
                 if known.is_empty() {
-                    routes.push(Route { method: "ANY".to_string(), path, handler: name, file: rel.to_string() });
+                    routes.push(Route {
+                        method: "ANY".to_string(),
+                        path,
+                        handler: name,
+                        file: rel.to_string(),
+                    });
                 } else {
                     for m in known {
-                        routes.push(Route { method: m, path: path.clone(), handler: name.clone(), file: rel.to_string() });
+                        routes.push(Route {
+                            method: m,
+                            path: path.clone(),
+                            handler: name.clone(),
+                            file: rel.to_string(),
+                        });
                     }
                 }
             }
@@ -4694,13 +5778,25 @@ mkYesod "App" [parseRoutes|
         let mut routes = Vec::new();
         extract_haskell("Shapes.hs", src, &mut symbols, &mut imports, &mut routes);
 
-        assert!(symbols.iter().any(|s| s.name == "Shape" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Describable" && s.kind == SymbolKind::Interface));
-        assert!(symbols.iter().any(|s| s.name == "area" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Shape" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Describable" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "area" && s.kind == SymbolKind::Function));
         assert!(imports.iter().any(|i| i.to_module == "Data.List"));
-        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes"));
-        assert!(routes.iter().any(|r| r.method == "POST" && r.path == "/shapes"));
-        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes/#ShapeId"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/shapes"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "POST" && r.path == "/shapes"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/shapes/#ShapeId"));
     }
 }
 
@@ -4718,19 +5814,40 @@ fn extract_clojure(
     // `defn-`, the same public-only convention as excluding Elixir's `defp`.
     let defn_re = Regex::new(r"\(defn\s+([A-Za-z][A-Za-z0-9_\-!?*+<>=]*)").unwrap();
     for cap in defn_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // defrecord / deftype — Clojure's closest equivalent to a class.
     let record_re = Regex::new(r"\((?:defrecord|deftype)\s+([A-Za-z][A-Za-z0-9_\-]*)").unwrap();
     for cap in record_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // defprotocol — Clojure's interface equivalent.
     let protocol_re = Regex::new(r"\(defprotocol\s+([A-Za-z][A-Za-z0-9_\-]*)").unwrap();
     for cap in protocol_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // Compojure: (GET "/path" [] ...), (POST "/path" [] ...), etc.
@@ -4774,17 +5891,33 @@ mod clojure_tests {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_clojure("src/myapp/core.clj", src, &mut symbols, &mut imports, &mut routes);
+        extract_clojure(
+            "src/myapp/core.clj",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "compute-area" && s.kind == SymbolKind::Function));
-        assert!(symbols.iter().any(|s| s.name == "Circle" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Shape" && s.kind == SymbolKind::Interface));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "compute-area" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Circle" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Shape" && s.kind == SymbolKind::Interface));
         assert!(
             !symbols.iter().any(|s| s.name == "helper"),
             "defn- is private and must not be extracted"
         );
-        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/shapes"));
-        assert!(routes.iter().any(|r| r.method == "POST" && r.path == "/shapes"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/shapes"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "POST" && r.path == "/shapes"));
     }
 }
 
@@ -4800,19 +5933,34 @@ fn extract_graphql(
     // type Foo { ... } / input Foo { ... } / enum Foo { ... }
     let type_re = Regex::new(r"(?m)^(?:type|input|enum)\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in type_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     let interface_re = Regex::new(r"(?m)^interface\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in interface_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Interface, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Interface,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // Named operations: `query GetUser { ... }`, `mutation CreateUser { ... }`,
     // `subscription OnMessage { ... }` — reported as a Route (method =
     // operation type, path = operation name) so "does a GetUser query
     // already exist" is answerable the same way an HTTP route is.
-    let op_re = Regex::new(r"(?m)^\s*(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let op_re =
+        Regex::new(r"(?m)^\s*(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     for cap in op_re.captures_iter(text) {
         routes.push(Route {
             method: cap[1].to_string().to_uppercase(),
@@ -4854,12 +6002,26 @@ mutation CreateUser {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_graphql("schema.graphql", src, &mut symbols, &mut imports, &mut routes);
+        extract_graphql(
+            "schema.graphql",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "User" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "Node" && s.kind == SymbolKind::Interface));
-        assert!(routes.iter().any(|r| r.method == "QUERY" && r.path == "GetUser"));
-        assert!(routes.iter().any(|r| r.method == "MUTATION" && r.path == "CreateUser"));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "User" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "Node" && s.kind == SymbolKind::Interface));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "QUERY" && r.path == "GetUser"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "MUTATION" && r.path == "CreateUser"));
     }
 
     #[test]
@@ -4876,9 +6038,17 @@ export const GET_USER = gql`
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("src/queries.ts", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "src/queries.ts",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(routes.iter().any(|r| r.method == "QUERY" && r.path == "GetUser"));
+        assert!(routes
+            .iter()
+            .any(|r| r.method == "QUERY" && r.path == "GetUser"));
     }
 
     #[test]
@@ -4889,10 +6059,18 @@ const { createApp } = require('./app');
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "server/index.js",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
         assert!(
-            imports.iter().any(|i| i.to_module == "./app" && i.names == vec!["createApp"]),
+            imports
+                .iter()
+                .any(|i| i.to_module == "./app" && i.names == vec!["createApp"]),
             "expected an Import for './app' with names=[createApp], got: {imports:?}"
         );
     }
@@ -4905,7 +6083,13 @@ const app = require('./app');
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "server/index.js",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
         assert!(
             imports.iter().any(|i| i.to_module == "./app" && i.names.is_empty()),
@@ -4920,7 +6104,13 @@ const app = require('./app');
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "server/index.js",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
         assert!(
             imports.iter().any(|i| i.to_module == "./polyfills"),
@@ -4939,10 +6129,18 @@ const { Router: createRouter } = require('express');
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("server/index.js", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "server/index.js",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
         assert!(
-            imports.iter().any(|i| i.to_module == "express" && i.names == vec!["Router"]),
+            imports
+                .iter()
+                .any(|i| i.to_module == "express" && i.names == vec!["Router"]),
             "expected an Import for 'express' with names=[Router], got: {imports:?}"
         );
     }
@@ -4960,8 +6158,12 @@ const { createApp } = require('./app');
         let mut routes = Vec::new();
         extract_ts_js("src/mixed.ts", src, &mut symbols, &mut imports, &mut routes);
 
-        assert!(imports.iter().any(|i| i.to_module == "react" && i.names == vec!["useState"]));
-        assert!(imports.iter().any(|i| i.to_module == "./app" && i.names == vec!["createApp"]));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module == "react" && i.names == vec!["useState"]));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module == "./app" && i.names == vec!["createApp"]));
     }
 }
 
@@ -4976,7 +6178,14 @@ fn extract_proto(
 ) {
     let message_re = Regex::new(r"(?m)^message\s+([A-Z][A-Za-z0-9_]*)").unwrap();
     for cap in message_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 
     // Services and their rpc methods: rpc methods only belong to the
@@ -4988,12 +6197,28 @@ fn extract_proto(
     let service_re = Regex::new(r"(?m)^service\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{").unwrap();
     let services: Vec<(String, usize, usize)> = service_re
         .captures_iter(text)
-        .map(|c| (c[1].to_string(), c.get(0).unwrap().start(), c.get(0).unwrap().end()))
+        .map(|c| {
+            (
+                c[1].to_string(),
+                c.get(0).unwrap().start(),
+                c.get(0).unwrap().end(),
+            )
+        })
         .collect();
     let rpc_re = Regex::new(r"rpc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap();
     for (i, (name, start, body_start)) in services.iter().enumerate() {
-        symbols.push(Symbol { name: name.clone(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, *start) , observation_source: ObservationSource::Lexical });
-        let body_end = services.get(i + 1).map(|(_, s, _)| *s).unwrap_or(text.len());
+        symbols.push(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, *start),
+            observation_source: ObservationSource::Lexical,
+        });
+        let body_end = services
+            .get(i + 1)
+            .map(|(_, s, _)| *s)
+            .unwrap_or(text.len());
         for cap in rpc_re.captures_iter(&text[*body_start..body_end]) {
             routes.push(Route {
                 method: "RPC".to_string(),
@@ -5006,7 +6231,11 @@ fn extract_proto(
 
     let import_re = Regex::new(r#"import\s+"([^"]+)""#).unwrap();
     for cap in import_re.captures_iter(text) {
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[1].to_string(), names: Vec::new() });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[1].to_string(),
+            names: Vec::new(),
+        });
     }
 }
 
@@ -5040,9 +6269,15 @@ service AdminService {
         let mut routes = Vec::new();
         extract_proto("user.proto", src, &mut symbols, &mut imports, &mut routes);
 
-        assert!(symbols.iter().any(|s| s.name == "User" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "UserService" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "AdminService" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "User" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "UserService" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "AdminService" && s.kind == SymbolKind::Class));
         assert!(routes.iter().any(|r| r.path == "/UserService/GetUser"));
         assert!(routes.iter().any(|r| r.path == "/UserService/CreateUser"));
         assert!(routes.iter().any(|r| r.path == "/AdminService/DeleteUser"));
@@ -5050,7 +6285,9 @@ service AdminService {
             !routes.iter().any(|r| r.path == "/AdminService/GetUser"),
             "rpc method leaked across service boundaries"
         );
-        assert!(imports.iter().any(|i| i.to_module == "google/protobuf/empty.proto"));
+        assert!(imports
+            .iter()
+            .any(|i| i.to_module == "google/protobuf/empty.proto"));
     }
 }
 
@@ -5069,11 +6306,25 @@ fn extract_gherkin(
     // corpus check had a Chinese-language Feature/Scenario pair).
     let feature_re = Regex::new(r"(?m)^\s*Feature:\s*(.+)$").unwrap();
     for cap in feature_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Class, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].trim().to_string(),
+            kind: SymbolKind::Class,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
     let scenario_re = Regex::new(r"(?m)^\s*Scenario(?:\s+Outline)?:\s*(.+)$").unwrap();
     for cap in scenario_re.captures_iter(text) {
-        symbols.push(Symbol { name: cap[1].trim().to_string(), kind: SymbolKind::Function, file: rel.to_string(), linked_concept: None, line: line_of(text, cap.get(0).unwrap().start()) , observation_source: ObservationSource::Lexical });
+        symbols.push(Symbol {
+            name: cap[1].trim().to_string(),
+            kind: SymbolKind::Function,
+            file: rel.to_string(),
+            linked_concept: None,
+            line: line_of(text, cap.get(0).unwrap().start()),
+            observation_source: ObservationSource::Lexical,
+        });
     }
 }
 
@@ -5102,7 +6353,10 @@ fn extract_gdscript(
             line: line_of(text, cap.get(0).unwrap().start()),
             observation_source: ObservationSource::Lexical,
         });
-    } else if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+    } else if let Some(stem) = std::path::Path::new(rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+    {
         symbols.push(Symbol {
             name: to_pascal_case(stem),
             kind: SymbolKind::Class,
@@ -5164,7 +6418,10 @@ fn extract_tscn(
     // (`res://.../ThisFile.tscn`), so the filename is what's actually
     // reliable to key on — same reasoning extract_vue/extract_gdscript's
     // own class_name-less fallback already use.
-    if let Some(stem) = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()) {
+    if let Some(stem) = std::path::Path::new(rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+    {
         symbols.push(Symbol {
             name: to_pascal_case(stem),
             kind: SymbolKind::Class,
@@ -5197,10 +6454,15 @@ fn extract_tscn(
     // ext_resource declaration). A single PackedScene can be instanced by
     // more than one node in the same scene, so ids map to a list of names.
     let instance_re =
-        Regex::new(r#"(?m)^\[node\s+name="([^"]+)"[^\]]*\binstance=ExtResource\("([^"]+)"\)"#).unwrap();
-    let mut instances_by_id: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+        Regex::new(r#"(?m)^\[node\s+name="([^"]+)"[^\]]*\binstance=ExtResource\("([^"]+)"\)"#)
+            .unwrap();
+    let mut instances_by_id: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
     for cap in instance_re.captures_iter(text) {
-        instances_by_id.entry(cap.get(2).unwrap().as_str()).or_default().push(cap[1].to_string());
+        instances_by_id
+            .entry(cap.get(2).unwrap().as_str())
+            .or_default()
+            .push(cap[1].to_string());
     }
     for cap in ext_resource_re.captures_iter(text) {
         let kind = &cap[1];
@@ -5210,7 +6472,11 @@ fn extract_tscn(
         } else {
             Vec::new()
         };
-        imports.push(Import { from_file: rel.to_string(), to_module: cap[2].to_string(), names });
+        imports.push(Import {
+            from_file: rel.to_string(),
+            to_module: cap[2].to_string(),
+            names,
+        });
     }
 }
 
@@ -5228,7 +6494,9 @@ fn extract_project_godot(
     _imports: &mut Vec<Import>,
     _routes: &mut Vec<Route>,
 ) {
-    let Some(section_start) = text.find("[autoload]") else { return };
+    let Some(section_start) = text.find("[autoload]") else {
+        return;
+    };
     let body_start = section_start + "[autoload]".len();
     let body_end = text[body_start..]
         .find("\n[")
@@ -5238,7 +6506,8 @@ fn extract_project_godot(
 
     // `Name="*res://path/To.gd"` — the leading `*` marks the autoload as
     // enabled and is tolerated but not required.
-    let autoload_re = Regex::new(r#"(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"\*?res://[^"]+""#).unwrap();
+    let autoload_re =
+        Regex::new(r#"(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"\*?res://[^"]+""#).unwrap();
     for cap in autoload_re.captures_iter(body) {
         symbols.push(Symbol {
             name: cap[1].to_string(),
@@ -5274,11 +6543,24 @@ Feature: OIDC Device Flow 原生表单提交
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_gherkin("features/oidc.feature", src, &mut symbols, &mut imports, &mut routes);
+        extract_gherkin(
+            "features/oidc.feature",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
-        assert!(symbols.iter().any(|s| s.name == "OIDC Device Flow 原生表单提交" && s.kind == SymbolKind::Class));
-        assert!(symbols.iter().any(|s| s.name == "loading 状态不会阻断设备授权表单提交" && s.kind == SymbolKind::Function));
-        assert!(symbols.iter().any(|s| s.name == "retry with <count> attempts" && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "OIDC Device Flow 原生表单提交" && s.kind == SymbolKind::Class));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "loading 状态不会阻断设备授权表单提交"
+                && s.kind == SymbolKind::Function));
+        assert!(symbols
+            .iter()
+            .any(|s| s.name == "retry with <count> attempts" && s.kind == SymbolKind::Function));
     }
 }
 
@@ -5298,10 +6580,30 @@ mod gdscript_tests {
     fn finds_class_name_top_level_functions_and_signals() {
         let src = "extends CharacterBody3D\n\nclass_name FirstPersonController\n\nsignal interacted(id: String)\n\nfunc _ready() -> void:\n    pass\n\nfunc _handle_jump() -> void:\n    pass\n";
         let symbols = extract("player/FirstPersonController.gd", src);
-        assert!(symbols.iter().any(|s| s.name == "FirstPersonController" && s.kind == SymbolKind::Class), "got: {symbols:?}");
-        assert!(symbols.iter().any(|s| s.name == "_ready" && s.kind == SymbolKind::Function), "got: {symbols:?}");
-        assert!(symbols.iter().any(|s| s.name == "_handle_jump" && s.kind == SymbolKind::Function), "got: {symbols:?}");
-        assert!(symbols.iter().any(|s| s.name == "interacted" && s.kind == SymbolKind::Function), "got: {symbols:?}");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "FirstPersonController" && s.kind == SymbolKind::Class),
+            "got: {symbols:?}"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "_ready" && s.kind == SymbolKind::Function),
+            "got: {symbols:?}"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "_handle_jump" && s.kind == SymbolKind::Function),
+            "got: {symbols:?}"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "interacted" && s.kind == SymbolKind::Function),
+            "got: {symbols:?}"
+        );
     }
 
     /// The common real-world case: most GDScript files attached to a node
@@ -5312,7 +6614,12 @@ mod gdscript_tests {
     fn falls_back_to_pascal_case_filename_when_no_class_name() {
         let src = "extends Node\n\nfunc _ready() -> void:\n    pass\n";
         let symbols = extract("tests/unit/test_replay_engine.gd", src);
-        assert!(symbols.iter().any(|s| s.name == "TestReplayEngine" && s.kind == SymbolKind::Class), "got: {symbols:?}");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "TestReplayEngine" && s.kind == SymbolKind::Class),
+            "got: {symbols:?}"
+        );
     }
 
     /// A `func` indented inside a nested `class` block (GDScript supports
@@ -5323,15 +6630,22 @@ mod gdscript_tests {
     fn indented_func_inside_a_nested_class_is_not_extracted() {
         let src = "extends Node\n\nclass Inner:\n    func helper() -> void:\n        pass\n\nfunc _ready() -> void:\n    pass\n";
         let symbols = extract("world/Nested.gd", src);
-        assert!(!symbols.iter().any(|s| s.name == "helper"), "got: {symbols:?}");
-        assert!(symbols.iter().any(|s| s.name == "_ready"), "got: {symbols:?}");
+        assert!(
+            !symbols.iter().any(|s| s.name == "helper"),
+            "got: {symbols:?}"
+        );
+        assert!(
+            symbols.iter().any(|s| s.name == "_ready"),
+            "got: {symbols:?}"
+        );
     }
 
     /// End-to-end through the real scan pipeline: a .gd file must become a
     /// declared concept, not show up as an unclassified/unsupported language.
     #[test]
     fn end_to_end_scan_declares_a_concept_for_a_gd_file() {
-        let root = std::env::temp_dir().join(format!("archietect-gdscript-e2e-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-gdscript-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -5342,12 +6656,18 @@ mod gdscript_tests {
 
         let (idx, graph) = crate::scan::scan(&root);
         assert!(
-            graph.symbols.values().any(|s| s.name == "Player" && s.kind == SymbolKind::Class),
+            graph
+                .symbols
+                .values()
+                .any(|s| s.name == "Player" && s.kind == SymbolKind::Class),
             "got symbols: {:?}",
             graph.symbols.values().collect::<Vec<_>>()
         );
         let unclassified = crate::scan::unclassified_files(&root, &idx.excludes, 100);
-        assert!(!unclassified.iter().any(|(_, ext)| ext == "gd"), "got: {unclassified:?}");
+        assert!(
+            !unclassified.iter().any(|(_, ext)| ext == "gd"),
+            "got: {unclassified:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5369,9 +6689,16 @@ mod tscn_tests {
     fn scene_becomes_a_symbol_and_its_script_becomes_an_import() {
         let src = "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://ui/WorkbenchCanvas.gd\" id=\"1\"]\n\n[node name=\"WorkbenchCanvas\" type=\"Control\"]\nscript = ExtResource(\"1\")\n";
         let (symbols, imports) = extract("ui/WorkbenchCanvas.tscn", src);
-        assert!(symbols.iter().any(|s| s.name == "WorkbenchCanvas" && s.kind == SymbolKind::Class), "got: {symbols:?}");
         assert!(
-            imports.iter().any(|i| i.to_module == "res://ui/WorkbenchCanvas.gd"),
+            symbols
+                .iter()
+                .any(|s| s.name == "WorkbenchCanvas" && s.kind == SymbolKind::Class),
+            "got: {symbols:?}"
+        );
+        assert!(
+            imports
+                .iter()
+                .any(|i| i.to_module == "res://ui/WorkbenchCanvas.gd"),
             "got: {imports:?}"
         );
     }
@@ -5384,7 +6711,9 @@ mod tscn_tests {
         let src = "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://player/FirstPersonController.tscn\" id=\"2\"]\n\n[node name=\"Zone\" type=\"Node3D\"]\n\n[node name=\"Player\" parent=\".\" instance=ExtResource(\"2\")]\n";
         let (_, imports) = extract("world/zones/Zone.tscn", src);
         assert!(
-            imports.iter().any(|i| i.to_module == "res://player/FirstPersonController.tscn"),
+            imports
+                .iter()
+                .any(|i| i.to_module == "res://player/FirstPersonController.tscn"),
             "got: {imports:?}"
         );
     }
@@ -5399,10 +6728,23 @@ mod tscn_tests {
     fn composed_child_scene_records_which_node_instances_it() {
         let src = "[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"Script\" path=\"res://world/ZoneTransition.gd\" id=\"1\"]\n[ext_resource type=\"PackedScene\" path=\"res://player/FirstPersonController.tscn\" id=\"2\"]\n\n[node name=\"Zone\" type=\"Node3D\"]\n\n[node name=\"Player\" parent=\".\" instance=ExtResource(\"2\")]\n";
         let (_, imports) = extract("world/zones/Zone.tscn", src);
-        let script_import = imports.iter().find(|i| i.to_module == "res://world/ZoneTransition.gd").unwrap();
-        assert!(script_import.names.is_empty(), "a script attachment isn't instanced by a node: {script_import:?}");
-        let scene_import = imports.iter().find(|i| i.to_module == "res://player/FirstPersonController.tscn").unwrap();
-        assert_eq!(scene_import.names, vec!["Player".to_string()], "got: {scene_import:?}");
+        let script_import = imports
+            .iter()
+            .find(|i| i.to_module == "res://world/ZoneTransition.gd")
+            .unwrap();
+        assert!(
+            script_import.names.is_empty(),
+            "a script attachment isn't instanced by a node: {script_import:?}"
+        );
+        let scene_import = imports
+            .iter()
+            .find(|i| i.to_module == "res://player/FirstPersonController.tscn")
+            .unwrap();
+        assert_eq!(
+            scene_import.names,
+            vec!["Player".to_string()],
+            "got: {scene_import:?}"
+        );
     }
 
     /// A `[sub_resource ...]` block (materials, meshes, shapes — real
@@ -5437,11 +6779,16 @@ mod tscn_tests {
 
         let (_idx, graph) = crate::scan::scan(&root);
         assert!(
-            graph.symbols.values().any(|s| s.name == "Player" && s.kind == SymbolKind::Class && s.file.ends_with(".tscn")),
+            graph.symbols.values().any(|s| s.name == "Player"
+                && s.kind == SymbolKind::Class
+                && s.file.ends_with(".tscn")),
             "the scene itself must be a symbol, got: {:?}",
             graph.symbols.values().collect::<Vec<_>>()
         );
-        let scene_import = graph.imports.iter().find(|i| i.from_file == "player/Player.tscn");
+        let scene_import = graph
+            .imports
+            .iter()
+            .find(|i| i.from_file == "player/Player.tscn");
         assert!(scene_import.is_some(), "got imports: {:?}", graph.imports);
         assert_eq!(scene_import.unwrap().to_module, "res://player/Player.gd");
 
@@ -5465,8 +6812,16 @@ mod project_godot_tests {
     fn autoload_entries_become_symbols() {
         let src = "config_version=5\n\n[application]\n\nconfig/name=\"Operator Ziwani\"\nconfig/icon=\"res://assets/icon.svg\"\n\n[autoload]\n\nEventBus=\"*res://core/EventBus.gd\"\nGameState=\"*res://core/GameState.gd\"\n\n[application]\n\nrun/main_scene=\"res://world/Main.tscn\"\n";
         let symbols = extract("project.godot", src);
-        assert!(symbols.iter().any(|s| s.name == "EventBus" && s.kind == SymbolKind::Class), "got: {symbols:?}");
-        assert!(symbols.iter().any(|s| s.name == "GameState"), "got: {symbols:?}");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "EventBus" && s.kind == SymbolKind::Class),
+            "got: {symbols:?}"
+        );
+        assert!(
+            symbols.iter().any(|s| s.name == "GameState"),
+            "got: {symbols:?}"
+        );
         assert_eq!(symbols.len(), 2, "got: {symbols:?}");
     }
 
@@ -5478,7 +6833,10 @@ mod project_godot_tests {
     fn tolerates_missing_enabled_marker() {
         let src = "[autoload]\n\nTelemetryRecorder=\"res://core/TelemetryRecorder.gd\"\n";
         let symbols = extract("project.godot", src);
-        assert!(symbols.iter().any(|s| s.name == "TelemetryRecorder"), "got: {symbols:?}");
+        assert!(
+            symbols.iter().any(|s| s.name == "TelemetryRecorder"),
+            "got: {symbols:?}"
+        );
     }
 
     /// A `key="res://..."` assignment outside `[autoload]` (e.g.
@@ -5505,7 +6863,10 @@ mod project_godot_tests {
     /// the script file, is authoritative for that name.
     #[test]
     fn end_to_end_scan_declares_a_concept_for_an_autoload_singleton() {
-        let root = std::env::temp_dir().join(format!("archietect-godot-autoload-e2e-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-godot-autoload-e2e-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("core")).unwrap();
         std::fs::write(
@@ -5521,7 +6882,9 @@ mod project_godot_tests {
 
         let (_idx, graph) = crate::scan::scan(&root);
         assert!(
-            graph.symbols.values().any(|s| s.name == "EventBus" && s.kind == SymbolKind::Class && s.file == "project.godot"),
+            graph.symbols.values().any(|s| s.name == "EventBus"
+                && s.kind == SymbolKind::Class
+                && s.file == "project.godot"),
             "got: {:?}",
             graph.symbols.values().collect::<Vec<_>>()
         );
@@ -5544,8 +6907,10 @@ mod structural_dependents_structural_only_tests {
     /// imports it by relative path, nothing declared in any schema.
     #[test]
     fn finds_importers_of_a_structural_only_class() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-structdeps-structural-only-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-structdeps-structural-only-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("services")).unwrap();
         std::fs::write(
@@ -5566,7 +6931,10 @@ mod structural_dependents_structural_only_tests {
             "sanity: must be structural-only, with no schema concept behind it"
         );
         assert!(
-            graph.symbols.values().any(|s| s.name == "NotificationClient" && s.linked_concept.is_none()),
+            graph
+                .symbols
+                .values()
+                .any(|s| s.name == "NotificationClient" && s.linked_concept.is_none()),
             "sanity: the symbol exists and is NOT linked to any schema concept"
         );
 
@@ -5619,7 +6987,9 @@ const config = () => ({});
         extract_ts_js("src/App.tsx", src, &mut symbols, &mut imports, &mut routes);
 
         assert!(
-            symbols.iter().any(|s| s.name == "Dashboard" && s.kind == SymbolKind::Function),
+            symbols
+                .iter()
+                .any(|s| s.name == "Dashboard" && s.kind == SymbolKind::Function),
             "unexported PascalCase `function Dashboard()` must be captured, got: {symbols:?}"
         );
         assert!(
@@ -5642,8 +7012,19 @@ const config = () => ({});
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("src/SignUpPage.tsx", src, &mut symbols, &mut imports, &mut routes);
-        assert!(symbols.iter().any(|s| s.name == "SignUpPage" && s.kind == SymbolKind::Function), "{symbols:?}");
+        extract_ts_js(
+            "src/SignUpPage.tsx",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "SignUpPage" && s.kind == SymbolKind::Function),
+            "{symbols:?}"
+        );
     }
 
     /// An exported PascalCase function must not be recorded twice (once by
@@ -5660,7 +7041,11 @@ const config = () => ({});
         let mut routes = Vec::new();
         extract_ts_js("src/App.tsx", src, &mut symbols, &mut imports, &mut routes);
         let hits: Vec<&Symbol> = symbols.iter().filter(|s| s.name == "Dashboard").collect();
-        assert_eq!(hits.len(), 1, "exported Dashboard must appear exactly once before dedup even runs, got: {symbols:?}");
+        assert_eq!(
+            hits.len(),
+            1,
+            "exported Dashboard must appear exactly once before dedup even runs, got: {symbols:?}"
+        );
     }
 
     /// Found investigating a real Angular SPA: `type View = 'dashboard' |
@@ -5685,7 +7070,9 @@ type helperAlias = string;
         let mut routes = Vec::new();
         extract_ts_js("src/app.ts", src, &mut symbols, &mut imports, &mut routes);
         assert!(
-            symbols.iter().any(|s| s.name == "View" && s.kind == SymbolKind::Class),
+            symbols
+                .iter()
+                .any(|s| s.name == "View" && s.kind == SymbolKind::Class),
             "exported PascalCase type alias must be captured, got: {symbols:?}"
         );
         assert!(
@@ -5719,13 +7106,23 @@ export const routes: Routes = [
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "src/app.routes.ts",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
         assert!(
-            routes.iter().any(|r| r.path == "dashboard" && r.handler == "DashboardComponent"),
+            routes
+                .iter()
+                .any(|r| r.path == "dashboard" && r.handler == "DashboardComponent"),
             "got: {routes:?}"
         );
         assert!(
-            routes.iter().any(|r| r.path == "candidates/:id" && r.handler == "CandidateDetailComponent"),
+            routes
+                .iter()
+                .any(|r| r.path == "candidates/:id" && r.handler == "CandidateDetailComponent"),
             "got: {routes:?}"
         );
     }
@@ -5744,9 +7141,17 @@ export const routes: Routes = [
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
+        extract_ts_js(
+            "src/app.routes.ts",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
         assert!(
-            routes.iter().any(|r| r.path == "pipeline" && r.handler == "PipelineComponent"),
+            routes
+                .iter()
+                .any(|r| r.path == "pipeline" && r.handler == "PipelineComponent"),
             "got: {routes:?}"
         );
     }
@@ -5765,11 +7170,29 @@ export const routes: Routes = [
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let mut routes = Vec::new();
-        extract_ts_js("src/app.routes.ts", src, &mut symbols, &mut imports, &mut routes);
-        assert!(routes.iter().any(|r| r.path == "a" && r.handler == "AComponent"), "got: {routes:?}");
-        assert!(routes.iter().any(|r| r.path == "b" && r.handler == "BComponent"), "got: {routes:?}");
+        extract_ts_js(
+            "src/app.routes.ts",
+            src,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
         assert!(
-            !routes.iter().any(|r| r.path == "a" && r.handler == "BComponent"),
+            routes
+                .iter()
+                .any(|r| r.path == "a" && r.handler == "AComponent"),
+            "got: {routes:?}"
+        );
+        assert!(
+            routes
+                .iter()
+                .any(|r| r.path == "b" && r.handler == "BComponent"),
+            "got: {routes:?}"
+        );
+        assert!(
+            !routes
+                .iter()
+                .any(|r| r.path == "a" && r.handler == "BComponent"),
             "route A's path must never pair with route B's component, got: {routes:?}"
         );
     }
@@ -5814,11 +7237,18 @@ function moveStage(record: Record, nextStage: string) {
         extract_function_bodies("src/app/service.ts", "ts", ts_src, &mut bodies);
         assert_eq!(bodies.len(), 2, "got: {bodies:?}");
 
-        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let graph = StructuralGraph {
+            function_bodies: bodies,
+            ..Default::default()
+        };
         let dups = suspected_duplicate_logic(&graph, 2);
         assert_eq!(dups.len(), 1, "got: {dups:?}");
-        assert!(dups[0].shared_literals.contains(&"Passed Screening".to_string()));
-        assert!(dups[0].shared_literals.contains(&"Candidate Hired".to_string()));
+        assert!(dups[0]
+            .shared_literals
+            .contains(&"Passed Screening".to_string()));
+        assert!(dups[0]
+            .shared_literals
+            .contains(&"Candidate Hired".to_string()));
     }
 
     /// Two functions in the SAME file sharing literals is not this
@@ -5839,7 +7269,10 @@ function b() {
 "#;
         let mut bodies = Vec::new();
         extract_function_bodies("one.js", "js", src, &mut bodies);
-        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let graph = StructuralGraph {
+            function_bodies: bodies,
+            ..Default::default()
+        };
         let dups = suspected_duplicate_logic(&graph, 1);
         assert!(dups.is_empty(), "got: {dups:?}");
     }
@@ -5854,9 +7287,15 @@ function b() {
         let mut bodies = Vec::new();
         extract_function_bodies("a.js", "js", a_src, &mut bodies);
         extract_function_bodies("b.js", "js", b_src, &mut bodies);
-        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let graph = StructuralGraph {
+            function_bodies: bodies,
+            ..Default::default()
+        };
         let dups = suspected_duplicate_logic(&graph, 2);
-        assert!(dups.is_empty(), "one shared literal must not clear a threshold of 2, got: {dups:?}");
+        assert!(
+            dups.is_empty(),
+            "one shared literal must not clear a threshold of 2, got: {dups:?}"
+        );
     }
 
     /// A literal shared by a large number of functions (generic boilerplate
@@ -5870,7 +7309,10 @@ function b() {
             let src = format!("function f{i}() {{\n  return 'Generic Value';\n}}\n");
             extract_function_bodies(&format!("file{i}.js"), "js", &src, &mut bodies);
         }
-        let graph = StructuralGraph { function_bodies: bodies, ..Default::default() };
+        let graph = StructuralGraph {
+            function_bodies: bodies,
+            ..Default::default()
+        };
         let dups = suspected_duplicate_logic(&graph, 1);
         assert!(
             dups.is_empty(),
@@ -5911,11 +7353,16 @@ function build() {
         let py_src = "def approve(record):\n    if record.stage == 'Passed Screening':\n        return 'Candidate Hired'\n    return None\n\ndef unrelated():\n    return 1\n";
         let mut bodies = Vec::new();
         extract_function_bodies("service.py", "py", py_src, &mut bodies);
-        let approve = bodies.iter().find(|b| b.name == "approve").expect("got: {bodies:?}");
+        let approve = bodies
+            .iter()
+            .find(|b| b.name == "approve")
+            .expect("got: {bodies:?}");
         assert!(approve.literals.contains(&"Passed Screening".to_string()));
         assert!(approve.literals.contains(&"Candidate Hired".to_string()));
         assert!(
-            !bodies.iter().any(|b| b.name == "unrelated" && !b.literals.is_empty()),
+            !bodies
+                .iter()
+                .any(|b| b.name == "unrelated" && !b.literals.is_empty()),
             "unrelated()'s trivial body (no literal >=10 chars) must not spuriously match anything"
         );
     }
@@ -5942,15 +7389,26 @@ pub fn second() -> Value {
 "#;
         let mut bodies = Vec::new();
         extract_function_bodies("admin1.rs", "rs", src, &mut bodies);
-        let first = bodies.iter().find(|b| b.name == "first").expect("got: {bodies:?}");
-        let second = bodies.iter().find(|b| b.name == "second").expect("got: {bodies:?}");
+        let first = bodies
+            .iter()
+            .find(|b| b.name == "first")
+            .expect("got: {bodies:?}");
+        let second = bodies
+            .iter()
+            .find(|b| b.name == "second")
+            .expect("got: {bodies:?}");
         assert!(
             !first.literals.iter().any(|l| l.contains("second marker")),
-            "first()'s body must not have swallowed second()'s content, got: {:?}", first.literals
+            "first()'s body must not have swallowed second()'s content, got: {:?}",
+            first.literals
         );
         assert!(
-            second.literals.iter().any(|l| l.contains("unique second value")),
-            "second() must still be extracted as its own function, got: {:?}", second.literals
+            second
+                .literals
+                .iter()
+                .any(|l| l.contains("unique second value")),
+            "second() must still be extracted as its own function, got: {:?}",
+            second.literals
         );
     }
 
@@ -5968,12 +7426,16 @@ pub fn second() -> Value {
         extract_function_bodies("q.rs", "rs", src, &mut bodies);
         let f = &bodies[0];
         assert!(
-            f.literals.iter().any(|l| l.contains("SELECT admin1") && l.contains("FROM world_events")),
-            "the backslash-newline-continued SQL string must be captured whole, got: {:?}", f.literals
+            f.literals
+                .iter()
+                .any(|l| l.contains("SELECT admin1") && l.contains("FROM world_events")),
+            "the backslash-newline-continued SQL string must be captured whole, got: {:?}",
+            f.literals
         );
         assert!(
             !f.literals.iter().any(|l| l.contains("query))")),
-            "no literal should contain raw code from between two real strings, got: {:?}", f.literals
+            "no literal should contain raw code from between two real strings, got: {:?}",
+            f.literals
         );
     }
 
@@ -6040,7 +7502,10 @@ def get_order(order_id: str):
         let mut route_calls = Vec::new();
         extract_route_calls("client.py", "py", src, &mut route_calls);
         assert_eq!(route_calls.len(), 1, "got: {route_calls:?}");
-        assert_eq!(route_calls[0].path, "http://orders-svc:8001/orders/{order_id}/approve");
+        assert_eq!(
+            route_calls[0].path,
+            "http://orders-svc:8001/orders/{order_id}/approve"
+        );
     }
 
     /// End-to-end: a route declared in one file (Python/FastAPI) is called
@@ -6052,8 +7517,8 @@ def get_order(order_id: str):
     /// seen touching it" for a route a real caller demonstrably calls.
     #[test]
     fn route_declared_in_one_file_called_from_another_is_no_longer_invisible() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-routecall-e2e-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("archietect-routecall-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("backend")).unwrap();
         std::fs::create_dir_all(tmp.join("frontend")).unwrap();
@@ -6070,12 +7535,17 @@ def get_order(order_id: str):
 
         let (_idx, graph) = crate::scan::scan(&tmp);
         assert!(
-            graph.routes.iter().any(|r| r.handler == "approve_order" && r.path == "/orders/{order_id}/approve"),
-            "sanity: the FastAPI route must actually be declared, got: {:?}", graph.routes
+            graph
+                .routes
+                .iter()
+                .any(|r| r.handler == "approve_order" && r.path == "/orders/{order_id}/approve"),
+            "sanity: the FastAPI route must actually be declared, got: {:?}",
+            graph.routes
         );
         assert!(
             !graph.route_calls.is_empty(),
-            "sanity: the axios call must actually be extracted, got route_calls: {:?}", graph.route_calls
+            "sanity: the axios call must actually be extracted, got route_calls: {:?}",
+            graph.route_calls
         );
         // "Orders" isn't a token-match for handler "approve_order" (same_word
         // requires a shared prefix, not a shared substring) — this concept
@@ -6100,7 +7570,10 @@ def get_order(order_id: str):
             "a concept whose route is genuinely called from another file must not report zero touchpoints, got: {impact}"
         );
         assert!(
-            !impact["route_call_dependents"].as_array().unwrap().is_empty(),
+            !impact["route_call_dependents"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
             "impact() must surface the route-call evidence, got: {impact}"
         );
 
@@ -6124,7 +7597,9 @@ let app = Router::new()
         let mut routes = Vec::new();
         extract_rs("gateway.rs", src, &mut symbols, &mut imports, &mut routes);
         assert!(
-            routes.iter().any(|r| r.method == "GET" && r.path == "/orders/:id" && r.handler == "get_order"),
+            routes
+                .iter()
+                .any(|r| r.method == "GET" && r.path == "/orders/:id" && r.handler == "get_order"),
             "got: {routes:?}"
         );
         assert!(
@@ -6148,7 +7623,9 @@ let app = Router::new()
         let mut routes = Vec::new();
         extract_rs("orders.rs", src, &mut symbols, &mut imports, &mut routes);
         assert!(
-            routes.iter().any(|r| r.method == "POST" && r.path == "/orders/{order_id}/approve" && r.handler == "approve_order"),
+            routes.iter().any(|r| r.method == "POST"
+                && r.path == "/orders/{order_id}/approve"
+                && r.handler == "approve_order"),
             "got: {routes:?}"
         );
     }
@@ -6163,8 +7640,7 @@ let app = Router::new()
     /// impact() pipeline, not just as isolated units.
     #[test]
     fn websocket_endpoint_declared_in_rust_called_from_python_is_not_invisible() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-ws-e2e-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("archietect-ws-e2e-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("gateway")).unwrap();
         std::fs::create_dir_all(tmp.join("client")).unwrap();
@@ -6181,12 +7657,20 @@ let app = Router::new()
 
         let (_idx, graph) = crate::scan::scan(&tmp);
         assert!(
-            graph.routes.iter().any(|r| r.path == "/council/deliberate" && r.handler == "deliberate_handler"),
-            "sanity: the Axum WS route must actually be declared, got: {:?}", graph.routes
+            graph
+                .routes
+                .iter()
+                .any(|r| r.path == "/council/deliberate" && r.handler == "deliberate_handler"),
+            "sanity: the Axum WS route must actually be declared, got: {:?}",
+            graph.routes
         );
         assert!(
-            graph.route_calls.iter().any(|c| c.path.contains("/council/deliberate")),
-            "sanity: the websockets.connect call must actually be extracted, got: {:?}", graph.route_calls
+            graph
+                .route_calls
+                .iter()
+                .any(|c| c.path.contains("/council/deliberate")),
+            "sanity: the websockets.connect call must actually be extracted, got: {:?}",
+            graph.route_calls
         );
 
         let deps = route_call_dependents(&graph, "Council");
@@ -6224,15 +7708,25 @@ mod import_relationship_tests {
     #[test]
     fn resolves_rust_crate_import_to_src_module_or_mod_file() {
         let files = known(&["src/main.rs", "src/model.rs", "src/query/mod.rs"]);
-        assert_eq!(resolve_relative_import("src/main.rs", "crate::model", &files, &BTreeMap::new()), Some("src/model.rs".into()));
-        assert_eq!(resolve_relative_import("src/main.rs", "crate::query", &files, &BTreeMap::new()), Some("src/query/mod.rs".into()));
-        assert_eq!(resolve_relative_import("src/main.rs", "crate::missing", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import("src/main.rs", "crate::model", &files, &BTreeMap::new()),
+            Some("src/model.rs".into())
+        );
+        assert_eq!(
+            resolve_relative_import("src/main.rs", "crate::query", &files, &BTreeMap::new()),
+            Some("src/query/mod.rs".into())
+        );
+        assert_eq!(
+            resolve_relative_import("src/main.rs", "crate::missing", &files, &BTreeMap::new()),
+            None
+        );
     }
 
     #[test]
     fn resolves_parent_relative_import() {
         let files = known(&["src/components/a.ts", "src/lib/b.ts"]);
-        let resolved = resolve_relative_import("src/components/a.ts", "../lib/b", &files, &BTreeMap::new());
+        let resolved =
+            resolve_relative_import("src/components/a.ts", "../lib/b", &files, &BTreeMap::new());
         assert_eq!(resolved, Some("src/lib/b.ts".to_string()));
     }
 
@@ -6249,21 +7743,40 @@ mod import_relationship_tests {
     #[test]
     fn resolves_a_godot_res_path() {
         let files = known(&["player/Player.gd", "player/Player.tscn"]);
-        let resolved = resolve_relative_import("player/Player.tscn", "res://player/Player.gd", &files, &BTreeMap::new());
+        let resolved = resolve_relative_import(
+            "player/Player.tscn",
+            "res://player/Player.gd",
+            &files,
+            &BTreeMap::new(),
+        );
         assert_eq!(resolved, Some("player/Player.gd".to_string()));
     }
 
     #[test]
     fn unresolved_res_path_resolves_to_nothing() {
         let files = known(&["player/Player.gd"]);
-        assert_eq!(resolve_relative_import("player/Player.tscn", "res://nonexistent/Foo.gd", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import(
+                "player/Player.tscn",
+                "res://nonexistent/Foo.gd",
+                &files,
+                &BTreeMap::new()
+            ),
+            None
+        );
     }
 
     #[test]
     fn external_package_import_resolves_to_nothing() {
         let files = known(&["src/a.ts"]);
-        assert_eq!(resolve_relative_import("src/a.ts", "lodash", &files, &BTreeMap::new()), None);
-        assert_eq!(resolve_relative_import("src/a.ts", "react", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import("src/a.ts", "lodash", &files, &BTreeMap::new()),
+            None
+        );
+        assert_eq!(
+            resolve_relative_import("src/a.ts", "react", &files, &BTreeMap::new()),
+            None
+        );
     }
 
     #[test]
@@ -6272,7 +7785,10 @@ mod import_relationship_tests {
         // slash-separated file paths) — deliberately not attempted, per
         // Import::relationship's own doc. Must return None, not a wrong guess.
         let files = known(&["myapp/utils.py"]);
-        assert_eq!(resolve_relative_import("myapp/main.py", ".utils", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import("myapp/main.py", ".utils", &files, &BTreeMap::new()),
+            None
+        );
     }
 
     #[test]
@@ -6280,20 +7796,32 @@ mod import_relationship_tests {
         // Two real scanned files could both satisfy "./foo" — .ts and .js
         // both present. Silence is correct; guessing between them is not.
         let files = known(&["src/foo.ts", "src/foo.js"]);
-        assert_eq!(resolve_relative_import("src/main.ts", "./foo", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import("src/main.ts", "./foo", &files, &BTreeMap::new()),
+            None
+        );
     }
 
     #[test]
     fn no_match_at_all_resolves_to_nothing() {
         let files = known(&["src/other.ts"]);
-        assert_eq!(resolve_relative_import("src/main.ts", "./missing", &files, &BTreeMap::new()), None);
+        assert_eq!(
+            resolve_relative_import("src/main.ts", "./missing", &files, &BTreeMap::new()),
+            None
+        );
     }
 
     #[test]
     fn import_relationship_carries_declared_tier_and_real_evidence_text() {
-        let imp = Import { from_file: "src/a.ts".to_string(), to_module: "./b".to_string(), names: vec![] };
+        let imp = Import {
+            from_file: "src/a.ts".to_string(),
+            to_module: "./b".to_string(),
+            names: vec![],
+        };
         let files = known(&["src/a.ts", "src/b.ts"]);
-        let rel = imp.relationship(&files, &BTreeMap::new()).expect("expected a resolved relationship");
+        let rel = imp
+            .relationship(&files, &BTreeMap::new())
+            .expect("expected a resolved relationship");
         assert_eq!(rel.from.0, "src/a.ts");
         assert_eq!(rel.to.0, "src/b.ts");
         assert_eq!(rel.kind, "imports");
@@ -6303,7 +7831,11 @@ mod import_relationship_tests {
 
     #[test]
     fn import_relationship_is_none_for_unresolvable_import() {
-        let imp = Import { from_file: "src/a.ts".to_string(), to_module: "some-package".to_string(), names: vec![] };
+        let imp = Import {
+            from_file: "src/a.ts".to_string(),
+            to_module: "some-package".to_string(),
+            names: vec![],
+        };
         let files = known(&["src/a.ts"]);
         assert!(imp.relationship(&files, &BTreeMap::new()).is_none());
     }
@@ -6337,9 +7869,7 @@ fn extract_terraform(
     use regex::Regex;
 
     // resource "type" "name" { or data "type" "name" {
-    let block_re = Regex::new(
-        r#"(?m)^\s*(resource|data)\s+"([^"]+)"\s+"([^"]+)""#
-    ).unwrap();
+    let block_re = Regex::new(r#"(?m)^\s*(resource|data)\s+"([^"]+)"\s+"([^"]+)""#).unwrap();
     for cap in block_re.captures_iter(text) {
         let block_type = &cap[1];
         let res_type = &cap[2];
@@ -6377,9 +7907,7 @@ fn extract_terraform(
     // Matches resource-type-shaped dotted paths (at least two dot-separated
     // lowercase/underscore segments) that appear inside ${ } or as bare values.
     // data.type.name references are preserved as-is.
-    let ref_re = Regex::new(
-        r"\$\{([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,3})\}"
-    ).unwrap();
+    let ref_re = Regex::new(r"\$\{([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,3})\}").unwrap();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for cap in ref_re.captures_iter(text) {
         let full_ref = cap[1].to_string();
@@ -6454,7 +7982,8 @@ fn extract_kubernetes(
     let name_re = Regex::new(r"(?m)^\s{0,2}name:\s*(\S+)").unwrap();
 
     // Cross-resource reference patterns
-    let configmap_ref_re = Regex::new(r"(?m)configMap(?:Ref|KeyRef)?\s*:\s*\n\s+name:\s*(\S+)").unwrap();
+    let configmap_ref_re =
+        Regex::new(r"(?m)configMap(?:Ref|KeyRef)?\s*:\s*\n\s+name:\s*(\S+)").unwrap();
     let configmap_name_re = Regex::new(r"(?m)configMapRef:\s*\n\s+name:\s*(\S+)").unwrap();
     let secret_ref_re = Regex::new(r"(?m)secret(?:Ref|KeyRef)?\s*:\s*\n\s+name:\s*(\S+)").unwrap();
     let svc_account_re = Regex::new(r"(?m)serviceAccountName:\s*(\S+)").unwrap();
@@ -6475,7 +8004,11 @@ fn extract_kubernetes(
 
         // metadata.name: first `name:` at root/near-root indentation
         let resource_name = match name_re.captures(doc) {
-            Some(c) => c[1].trim().trim_end_matches('"').trim_start_matches('"').to_string(),
+            Some(c) => c[1]
+                .trim()
+                .trim_end_matches('"')
+                .trim_start_matches('"')
+                .to_string(),
             None => continue,
         };
         if resource_name.is_empty() {
@@ -6559,6 +8092,115 @@ fn extract_yaml(
     }
     if text.contains("openapi:") || text.contains("swagger:") {
         extract_openapi(rel, text, symbols, imports, routes);
+    }
+    if text.lines().any(|line| line.trim() == "services:") {
+        extract_compose(rel, text, symbols, imports);
+    }
+    if rel.contains(".github/workflows/") && text.lines().any(|line| line.trim() == "jobs:") {
+        extract_github_actions(rel, text, symbols, imports);
+    }
+}
+
+/// Extract the stable, high-value subset of Docker Compose YAML: service
+/// names and explicit `depends_on` references. Indentation is used only to
+/// establish the services/depends_on sections; values are never inferred from
+/// image names or arbitrary configuration keys.
+fn extract_compose(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &mut Vec<Import>) {
+    let mut in_services = false;
+    let mut current: Option<String> = None;
+    let mut in_depends = false;
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "services:" {
+            in_services = true;
+            continue;
+        }
+        if !in_services || (line.len() > 0 && !line.starts_with(' ') && !line.starts_with('\t')) {
+            if !trimmed.is_empty() && trimmed != "services:" {
+                in_services = false;
+            }
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent == 2 && trimmed.ends_with(':') && !trimmed.starts_with('-') {
+            let name = trimmed.trim_end_matches(':').trim().to_string();
+            if !name.is_empty() {
+                symbols.push(Symbol {
+                    name: format!("Service.{name}"),
+                    kind: SymbolKind::Class,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: line_no + 1,
+                    observation_source: ObservationSource::Lexical,
+                });
+                current = Some(name);
+                in_depends = false;
+            }
+            continue;
+        }
+        if indent == 4 && trimmed == "depends_on:" {
+            in_depends = true;
+            continue;
+        }
+        if in_depends && indent >= 6 {
+            let dep = trimmed.trim_start_matches('-').trim().trim_end_matches(':');
+            if !dep.is_empty() && !dep.contains(' ') {
+                if let Some(source) = current.as_ref() {
+                    imports.push(Import {
+                        from_file: rel.to_string(),
+                        to_module: format!("Service.{dep}"),
+                        names: vec![format!("Service.{source}.depends_on")],
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Extract GitHub Actions workflow jobs and their explicit `needs` edges.
+/// Workflow names and step commands are intentionally not treated as
+/// architecture symbols; job IDs are the stable graph nodes.
+fn extract_github_actions(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &mut Vec<Import>) {
+    let mut in_jobs = false;
+    let mut current: Option<String> = None;
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent == 2 && trimmed.ends_with(':') {
+            let job = trimmed.trim_end_matches(':').trim().to_string();
+            if !job.is_empty() {
+                symbols.push(Symbol {
+                    name: format!("Job.{job}"),
+                    kind: SymbolKind::Class,
+                    file: rel.to_string(),
+                    linked_concept: None,
+                    line: line_no + 1,
+                    observation_source: ObservationSource::Lexical,
+                });
+                current = Some(job);
+            }
+            continue;
+        }
+        if indent >= 4 && trimmed.starts_with("needs:") {
+            let value = trimmed.trim_start_matches("needs:").trim();
+            let values = value.trim_matches(['[', ']']).split(',');
+            for dep in values.map(str::trim).filter(|s| !s.is_empty()) {
+                if let Some(source) = current.as_ref() {
+                    imports.push(Import {
+                        from_file: rel.to_string(),
+                        to_module: format!("Job.{dep}"),
+                        names: vec![format!("Job.{source}.needs")],
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -6660,9 +8302,9 @@ fn extract_openapi(
     // $ref: '#/components/schemas/User' → Import { to_module: "User" }
     // This links this spec file to the schema concept — enabling
     // `archietect impact User` to surface API specs that depend on it.
-    let ref_re = Regex::new(
-        r#"\$ref:\s*["']#/(?:components/schemas|definitions)/([A-Za-z0-9_]+)["']"#
-    ).unwrap();
+    let ref_re =
+        Regex::new(r#"\$ref:\s*["']#/(?:components/schemas|definitions)/([A-Za-z0-9_]+)["']"#)
+            .unwrap();
     let mut seen_refs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for cap in ref_re.captures_iter(text) {
         let schema_name = cap[1].to_string();
@@ -6730,12 +8372,19 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
                  This edit would produce a file that does not parse — fix before writing to disk."
             ));
             // Duplicate detection on a broken AST is meaningless — return early.
-            return EditVerdict { valid: false, errors, warnings };
+            return EditVerdict {
+                valid: false,
+                errors,
+                warnings,
+            };
         }
     }
 
     // ── Symbol duplicate detection ────────────────────────────────────────
-    if let Some(lang) = LANGUAGES.iter().find(|l| l.extensions.contains(&ext.as_str())) {
+    if let Some(lang) = LANGUAGES
+        .iter()
+        .find(|l| l.extensions.contains(&ext.as_str()))
+    {
         // Call the raw extractor directly — NOT extract_file() — because
         // extract_file() deduplicates symbols before returning, which would
         // hide the very duplicates we're trying to catch.
@@ -6743,7 +8392,13 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
         let mut symbols: Vec<Symbol> = Vec::new();
         let mut imports: Vec<Import> = Vec::new();
         let mut routes: Vec<Route> = Vec::new();
-        (lang.extractor)(file_path, proposed_content, &mut symbols, &mut imports, &mut routes);
+        (lang.extractor)(
+            file_path,
+            proposed_content,
+            &mut symbols,
+            &mut imports,
+            &mut routes,
+        );
 
         let mut seen: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
@@ -6764,7 +8419,11 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
                     indices.len(),
                     lines.join(", ")
                 );
-                if hard_error { errors.push(msg); } else { warnings.push(msg); }
+                if hard_error {
+                    errors.push(msg);
+                } else {
+                    warnings.push(msg);
+                }
             }
         }
     } else {
@@ -6774,5 +8433,9 @@ pub fn verify_edit(file_path: &str, proposed_content: &str) -> EditVerdict {
         ));
     }
 
-    EditVerdict { valid: errors.is_empty(), errors, warnings }
+    EditVerdict {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+    }
 }

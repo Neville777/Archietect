@@ -7,6 +7,8 @@
 
 pub mod docker_domain;
 pub mod documents_domain;
+pub mod diff_impact;
+pub mod evidence;
 pub mod git_domain;
 pub mod humanize;
 pub mod invariants;
@@ -23,17 +25,19 @@ pub mod proposal;
 pub mod query;
 pub mod register;
 pub mod resource;
-pub mod root;
 pub mod rest;
+pub mod root;
+pub mod runtime;
 pub mod scan;
-pub mod shape;
 pub mod scoring;
 pub mod seed;
+pub mod shape;
 pub mod store;
 pub mod structural;
 pub mod system_db;
 pub mod tree_sitter_detector;
 pub mod watch;
+pub mod workflow;
 
 /// The mtime of the currently-running binary's file on disk, at the moment
 /// this is called. A long-running process (the MCP server, the REST server,
@@ -44,5 +48,10 @@ pub mod watch;
 /// exact scenario, undetected, produced silently wrong answers across five
 /// concurrent sessions during one afternoon of rapid rebuilds.
 pub fn exe_mtime() -> Option<std::time::SystemTime> {
-    std::env::current_exe().ok()?.metadata().ok()?.modified().ok()
+    std::env::current_exe()
+        .ok()?
+        .metadata()
+        .ok()?
+        .modified()
+        .ok()
 }

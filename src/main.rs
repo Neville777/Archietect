@@ -18,7 +18,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use archietect::{mcp, model, proposal, query, rest, root, scan, store, watch};
+use archietect::{mcp, model, proposal, query, rest, root, scan, store, watch, workflow};
 
 #[derive(Parser)]
 #[command(name = "archietect", version, about)]
@@ -88,6 +88,30 @@ enum Cmd {
     Plan { text: Vec<String> },
     /// What is affected if this concept changes?
     Impact { term: String },
+    /// Compare the current staged/unstaged Git diff with a base ref and
+    /// report affected concepts, symbols, routes, and importers.
+    ImpactDiff {
+        /// Git ref, commit, or branch to compare against (for example main).
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+    },
+    /// Read-only workflow evidence gate for a proposed change.
+    WorkflowCheck {
+        /// Human goal being considered (optional; omitted means not provided).
+        goal: Vec<String>,
+        /// Concept whose downstream impact should be traced.
+        #[arg(long)]
+        impact_term: Option<String>,
+        /// Proposed patch text to pass through the storage guard.
+        #[arg(long)]
+        patch: Option<String>,
+        /// Repository-relative file to validate with --content-file.
+        #[arg(long)]
+        file: Option<String>,
+        /// File containing the complete proposed content.
+        #[arg(long)]
+        content_file: Option<PathBuf>,
+    },
     /// What does this file exactly, unambiguously import — and what
     /// imports it? Only exact relative-import resolutions are reported
     /// (see structural.rs's Import::relationship); an external package or
@@ -340,6 +364,10 @@ enum Cmd {
     /// `docker_domain::scan_observed`.
     #[command(subcommand)]
     Docker(DockerCmd),
+    /// Explicit, read-only runtime verification. Unlike static indexing, this
+    /// performs one bounded HTTP request and labels the result RUNTIME.
+    #[command(subcommand)]
+    Runtime(RuntimeCmd),
 }
 
 #[derive(Subcommand)]
@@ -358,6 +386,41 @@ enum DockerCmd {
     /// file the command can't be run against — missing `docker`, unreachable
     /// daemon, timeout — never a guessed or stale state.
     Observe,
+}
+
+#[derive(Subcommand)]
+enum RuntimeCmd {
+    /// Perform one unauthenticated HTTP GET without following redirects.
+    /// HTTPS, credentials, cookies, JavaScript and writes are deliberately
+    /// unsupported so a network probe cannot be mistaken for browser proof.
+    VerifyHttp {
+        /// Absolute http:// URL, optionally including a path.
+        #[arg(long)]
+        url: String,
+        /// Connection/read timeout in milliseconds, clamped to 1..=30000.
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Emit the stable QAForge evidence envelope instead of the raw probe payload.
+        #[arg(long)]
+        qaforge: bool,
+    },
+    /// Open one page in a fresh headless Playwright context and collect
+    /// browser-console, page-error, failed-request, title, and basic DOM
+    /// accessibility evidence. No cookies, storage state, or credentials.
+    VerifyBrowser {
+        /// Absolute http:// or https:// URL.
+        #[arg(long)]
+        url: String,
+        /// Navigation timeout in milliseconds, clamped to 1..=30000.
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Optional bounded settle time after DOMContentLoaded, clamped to 0..=3000.
+        #[arg(long)]
+        settle_ms: Option<u64>,
+        /// Emit the stable QAForge evidence envelope instead of the raw probe payload.
+        #[arg(long)]
+        qaforge: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -471,7 +534,10 @@ fn index_for(root: &PathBuf) -> (model::Index, archietect::structural::Structura
 /// ~15ms and ~4s on a 600MB repo — the scan is still needed for `init` and
 /// the daemon, but a one-off `concept` or `impact` query has no reason to
 /// re-walk 400+ files when the index is already warm.
-fn index_for_query(root: &PathBuf, refresh: bool) -> (model::Index, archietect::structural::StructuralGraph) {
+fn index_for_query(
+    root: &PathBuf,
+    refresh: bool,
+) -> (model::Index, archietect::structural::StructuralGraph) {
     if !refresh {
         if let Some(cached) = store::load_cached(root) {
             return cached;
@@ -490,7 +556,9 @@ fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -508,12 +576,16 @@ fn open_in_browser(url: &str) {
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).status()
     } else if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd").args(["/C", "start", "", url]).status()
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()
     } else {
         std::process::Command::new("xdg-open").arg(url).status()
     };
     if result.map(|s| !s.success()).unwrap_or(true) {
-        eprintln!("archietect: couldn't open a browser automatically — open this URL yourself: {url}");
+        eprintln!(
+            "archietect: couldn't open a browser automatically — open this URL yourself: {url}"
+        );
     }
 }
 
@@ -524,7 +596,10 @@ fn print_glance(g: &serde_json::Value) {
     println!("Repository: {}", g["repository"].as_str().unwrap_or("?"));
     println!(
         "  {} concepts · {} decisions · {} duplicate-storage risks · {} ontology warnings",
-        s["concepts"], s["declared_decisions"], s["duplicate_storage_risks"], s["ontology_warnings"]
+        s["concepts"],
+        s["declared_decisions"],
+        s["duplicate_storage_risks"],
+        s["ontology_warnings"]
     );
     println!("  index: {}", s["index"].as_str().unwrap_or("?"));
     if let Some(ob) = g["onboarding"].as_str() {
@@ -536,7 +611,11 @@ fn print_glance(g: &serde_json::Value) {
         println!("  (none recorded — run the daemon and history accumulates)");
     }
     for e in recent {
-        println!("  {} {}", e["kind"].as_str().unwrap_or("?"), e["concept"].as_str().unwrap_or(""));
+        println!(
+            "  {} {}",
+            e["kind"].as_str().unwrap_or("?"),
+            e["concept"].as_str().unwrap_or("")
+        );
     }
     let sug = g["suggestions"].as_array().cloned().unwrap_or_default();
     if !sug.is_empty() {
@@ -594,7 +673,14 @@ fn main() -> anyhow::Result<()> {
         }
         let out = query::glance(&idx, &graph, &root);
         if cli.json {
-            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&archietect::shape::apply(
+                    out.clone(),
+                    only.as_deref(),
+                    compact
+                ))?
+            );
         } else {
             if first_run_here {
                 eprintln!("archietect: indexed this project for the first time (archietect.db created) — every future run here is incremental.\n");
@@ -611,12 +697,27 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Track before the match consumes cmd — used for exit 7 check below
-    let needs_index = matches!(cmd,
-        Cmd::Concept { .. } | Cmd::Impact { .. } | Cmd::Status | Cmd::Doctor
-        | Cmd::Verdicts | Cmd::Duplicates | Cmd::Tour | Cmd::Owner { .. }
-        | Cmd::Claim { .. } | Cmd::ConceptAt { .. } | Cmd::Intent { .. }
-        | Cmd::Plan { .. } | Cmd::Imports { .. } | Cmd::Guard { .. }
-        | Cmd::DuplicateLogic | Cmd::Register { .. } | Cmd::Mutations
+    let needs_index = matches!(
+        cmd,
+        Cmd::Concept { .. }
+            | Cmd::Impact { .. }
+            | Cmd::ImpactDiff { .. }
+            | Cmd::WorkflowCheck { .. }
+            | Cmd::Status
+            | Cmd::Doctor
+            | Cmd::Verdicts
+            | Cmd::Duplicates
+            | Cmd::Tour
+            | Cmd::Owner { .. }
+            | Cmd::Claim { .. }
+            | Cmd::ConceptAt { .. }
+            | Cmd::Intent { .. }
+            | Cmd::Plan { .. }
+            | Cmd::Imports { .. }
+            | Cmd::Guard { .. }
+            | Cmd::DuplicateLogic
+            | Cmd::Register { .. }
+            | Cmd::Mutations
     );
 
     let out = match cmd {
@@ -624,7 +725,9 @@ fn main() -> anyhow::Result<()> {
             bootstrap_policy(&root)?;
             let hook = if root.join(".git/hooks").is_dir() {
                 Some(hook_command(&root, HookAction::Install)?)
-            } else { None };
+            } else {
+                None
+            };
             let (idx, graph) = scan::scan(&root);
             let path = store::save(&idx, &graph, &root)?;
             serde_json::json!({
@@ -646,8 +749,14 @@ fn main() -> anyhow::Result<()> {
                 "note": "Remove MCP registrations and user daemons through their owning tools; Archietect never edits global editor or service configuration."
             })
         }
-        Cmd::Status => { let (idx, g) = index_for_query(&root, refresh); query::status(&idx, &g) }
-        Cmd::Concept { term } => { let (idx, g) = index_for_query(&root, refresh); query::concept(&idx, &g, &term) }
+        Cmd::Status => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::status(&idx, &g)
+        }
+        Cmd::Concept { term } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::concept(&idx, &g, &term)
+        }
         Cmd::ConceptAt { term, version } => {
             match store::concept_at_version(&root, &term, version) {
                 Some(v) => v,
@@ -659,10 +768,49 @@ fn main() -> anyhow::Result<()> {
                 }),
             }
         }
-        Cmd::Intent { text } => { let (idx, g) = index_for_query(&root, refresh); query::intent(&idx, &g, &text.join(" ")) }
-        Cmd::Plan { text } => { let (idx, g) = index_for_query(&root, refresh); query::plan(&idx, &g, &text.join(" ")) }
-        Cmd::Impact { term } => { let (idx, g) = index_for_query(&root, refresh); query::impact(&idx, &g, &term) }
-        Cmd::Imports { file } => { let (_idx, g) = index_for_query(&root, refresh); query::imports(&g, &file) }
+        Cmd::Intent { text } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::intent(&idx, &g, &text.join(" "))
+        }
+        Cmd::Plan { text } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::plan(&idx, &g, &text.join(" "))
+        }
+        Cmd::Impact { term } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::impact(&idx, &g, &term)
+        }
+        Cmd::ImpactDiff { base } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            archietect::diff_impact::impact_report(&root, &base, &idx, &g)
+        }
+        Cmd::WorkflowCheck {
+            goal,
+            impact_term,
+            patch,
+            file,
+            content_file,
+        } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            let content = content_file
+                .as_ref()
+                .map(std::fs::read_to_string)
+                .transpose()?;
+            workflow::workflow_check(
+                &root,
+                &idx,
+                &g,
+                &goal.join(" "),
+                impact_term.as_deref(),
+                patch.as_deref(),
+                file.as_deref(),
+                content.as_deref(),
+            )
+        }
+        Cmd::Imports { file } => {
+            let (_idx, g) = index_for_query(&root, refresh);
+            query::imports(&g, &file)
+        }
         Cmd::Guard { sql } => {
             let (idx, g) = index_for_query(&root, refresh);
             let out = query::guard(&idx, &g, &sql);
@@ -678,25 +826,59 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     format!("archietect concept {canonical}")
                 };
-                println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&archietect::shape::apply(
+                        out.clone(),
+                        only.as_deref(),
+                        compact
+                    ))?
+                );
                 eprintln!("archietect guard: exit 1 — run `{next_cmd}` to see what already exists");
                 std::process::exit(1);
             }
             out
         }
-        Cmd::Doctor => { let (idx, g) = index_for_query(&root, refresh); query::doctor(&idx, &g, &root) }
-        Cmd::Tour => { let (idx, g) = index_for_query(&root, refresh); query::tour(&idx, &g) }
-        Cmd::Claim { statement, r#type, target, min, within, exclude } => {
+        Cmd::Doctor => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::doctor(&idx, &g, &root)
+        }
+        Cmd::Tour => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::tour(&idx, &g)
+        }
+        Cmd::Claim {
+            statement,
+            r#type,
+            target,
+            min,
+            within,
+            exclude,
+        } => {
             let (idx, g) = index_for_query(&root, refresh);
             if let Some(claim_type) = r#type {
-                query::claim_structured(&idx, &g, &claim_type, target.as_deref(), min, within.as_deref(), exclude.as_deref())
+                query::claim_structured(
+                    &idx,
+                    &g,
+                    &claim_type,
+                    target.as_deref(),
+                    min,
+                    within.as_deref(),
+                    exclude.as_deref(),
+                )
             } else {
                 let stmt = statement.join(" ");
                 query::claim(&idx, &g, &stmt)
             }
         }
-        Cmd::Duplicates => { let (idx, _g) = index_for_query(&root, refresh); query::duplicates(&idx) }
-        Cmd::DuplicateLogic => { let (_idx, g) = index_for_query(&root, refresh); query::duplicate_logic(&g) }
+        Cmd::Duplicates => {
+            let (idx, _g) = index_for_query(&root, refresh);
+            query::duplicates(&idx)
+        }
+        Cmd::DuplicateLogic => {
+            let (_idx, g) = index_for_query(&root, refresh);
+            query::duplicate_logic(&g)
+        }
         Cmd::VerifyEdit { file, content_file } => {
             let proposed = match content_file {
                 Some(path) => std::fs::read_to_string(&path).map_err(|e| {
@@ -715,7 +897,14 @@ fn main() -> anyhow::Result<()> {
                 "errors": verdict.errors,
                 "warnings": verdict.warnings,
             });
-            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&archietect::shape::apply(
+                    out.clone(),
+                    only.as_deref(),
+                    compact
+                ))?
+            );
             if !verdict.valid {
                 for e in &verdict.errors {
                     eprintln!("archietect verify-edit: {e}");
@@ -724,20 +913,45 @@ fn main() -> anyhow::Result<()> {
             }
             return Ok(());
         }
-        Cmd::Verdicts => { let (idx, _g) = index_for_query(&root, refresh); query::verdicts(&idx) }
-        Cmd::Owner { term } => { let (idx, g) = index_for_query(&root, refresh); query::owner(&idx, &g, &term) }
-        Cmd::History { concept, limit, include_archived: _, digest } if digest => {
+        Cmd::Verdicts => {
+            let (idx, _g) = index_for_query(&root, refresh);
+            query::verdicts(&idx)
+        }
+        Cmd::Owner { term } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            query::owner(&idx, &g, &term)
+        }
+        Cmd::History {
+            concept,
+            limit,
+            include_archived: _,
+            digest,
+        } if digest => {
             let mut out = store::history_digest(&root, limit);
             if concept.is_some() {
                 out["note"] = serde_json::json!("--digest summarizes the whole window; --concept is ignored with --digest. Drop --digest to filter by concept.");
             }
             out
         }
-        Cmd::History { concept, limit, include_archived, digest: _ } => {
+        Cmd::History {
+            concept,
+            limit,
+            include_archived,
+            digest: _,
+        } => {
             let mut events = store::read_history(&root, concept.as_deref(), limit);
             if include_archived {
-                events.extend(archietect::store::read_archived_history(&root, concept.as_deref(), limit));
-                events.sort_by(|a, b| b["ts_ms"].as_i64().unwrap_or(0).cmp(&a["ts_ms"].as_i64().unwrap_or(0)));
+                events.extend(archietect::store::read_archived_history(
+                    &root,
+                    concept.as_deref(),
+                    limit,
+                ));
+                events.sort_by(|a, b| {
+                    b["ts_ms"]
+                        .as_i64()
+                        .unwrap_or(0)
+                        .cmp(&a["ts_ms"].as_i64().unwrap_or(0))
+                });
                 events.truncate(limit);
             }
             serde_json::json!({
@@ -751,9 +965,14 @@ fn main() -> anyhow::Result<()> {
             let (idx, _g) = index_for(&root);
             archietect::seed::seed(&root, &idx, write, proposed_by.as_deref())?
         }
-        Cmd::HistoryArchive { before_days, before_ms } => {
+        Cmd::HistoryArchive {
+            before_days,
+            before_ms,
+        } => {
             let cutoff = match (before_days, before_ms) {
-                (Some(_), Some(_)) => anyhow::bail!("pass exactly one of --before-days or --before-ms, not both"),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("pass exactly one of --before-days or --before-ms, not both")
+                }
                 (None, None) => anyhow::bail!("pass one of --before-days or --before-ms"),
                 (Some(days), None) => {
                     let now_ms = std::time::SystemTime::now()
@@ -764,7 +983,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 (None, Some(ms)) => ms,
             };
-            let (archived_events, archived_to) = archietect::store::archive_events_before(&root, cutoff)?;
+            let (archived_events, archived_to) =
+                archietect::store::archive_events_before(&root, cutoff)?;
             serde_json::json!({
                 "root": root.display().to_string(),
                 "cutoff_ms": cutoff,
@@ -784,7 +1004,14 @@ fn main() -> anyhow::Result<()> {
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff)?;
             let (idx, g) = index_for(&root);
             let out = query::ci(&idx, &g, &diff, strict);
-            println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&archietect::shape::apply(
+                    out.clone(),
+                    only.as_deref(),
+                    compact
+                ))?
+            );
 
             // Record the outcome. query::ci() itself stays read-only — REST
             // or MCP could call the same query to CHECK a diff without
@@ -856,9 +1083,7 @@ fn main() -> anyhow::Result<()> {
                     (1, "archietect duplicates".to_string())
                 };
 
-                eprintln!(
-                    "archietect ci: exit {exit_code} — run `{next_cmd}` to investigate"
-                );
+                eprintln!("archietect ci: exit {exit_code} — run `{next_cmd}` to investigate");
                 std::process::exit(exit_code);
             }
             return Ok(());
@@ -876,7 +1101,10 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Gui { port } => {
-            let url = format!("http://127.0.0.1:{port}/?root={}", urlencode(&root.display().to_string()));
+            let url = format!(
+                "http://127.0.0.1:{port}/?root={}",
+                urlencode(&root.display().to_string())
+            );
             // rest::serve() below blocks forever (it's the same HTTP accept
             // loop `serve` runs) — the browser has to be opened from a
             // SEPARATE thread, not after serve() returns, since it never
@@ -897,7 +1125,15 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Cmd::Proposal(pcmd) => match pcmd {
-            ProposalCmd::Submit { kind, title, description, lang, preview_repo, source, patch } => proposal::submit(
+            ProposalCmd::Submit {
+                kind,
+                title,
+                description,
+                lang,
+                preview_repo,
+                source,
+                patch,
+            } => proposal::submit(
                 &root,
                 kind,
                 &title,
@@ -912,7 +1148,14 @@ fn main() -> anyhow::Result<()> {
             ProposalCmd::Test { id } => {
                 let out = proposal::test(&root, id)?;
                 let passed = out["result"]["passed"] == true;
-                println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&archietect::shape::apply(
+                        out.clone(),
+                        only.as_deref(),
+                        compact
+                    ))?
+                );
                 if !passed {
                     std::process::exit(1);
                 }
@@ -947,7 +1190,8 @@ fn main() -> anyhow::Result<()> {
                     })
                 }
                 SystemCmd::Query { term } => {
-                    let results = archietect::system_db::query_registered_projects(&db_path, &term)?;
+                    let results =
+                        archietect::system_db::query_registered_projects(&db_path, &term)?;
                     serde_json::json!({
                         "term": term,
                         "results": results.iter().map(|r| serde_json::json!({
@@ -981,7 +1225,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::PermissionsCheck { path, domain } => {
             let global_path = archietect::permissions::default_global_config_path()?;
             let cfg = archietect::permissions::load(&global_path, &root)?;
-            let full_path = if path.is_absolute() { path.clone() } else { root.join(&path) };
+            let full_path = if path.is_absolute() {
+                path.clone()
+            } else {
+                root.join(&path)
+            };
             let decision = archietect::permissions::check_resource(&cfg, &domain, &full_path);
             serde_json::json!({
                 "path": full_path.display().to_string(),
@@ -1004,8 +1252,12 @@ fn main() -> anyhow::Result<()> {
             let cfg = archietect::permissions::load(&global_path, &root)?;
             let confirmations_path = archietect::permissions::default_confirmations_path()?;
             let asker = archietect::permissions::stdio_asker();
-            let (enabled, resources) =
-                archietect::documents_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
+            let (enabled, resources) = archietect::documents_domain::scan_if_allowed(
+                &cfg,
+                &confirmations_path,
+                &dir,
+                asker.as_ref(),
+            )?;
             serde_json::json!({
                 "dir": dir.display().to_string(),
                 "enabled": enabled,
@@ -1017,8 +1269,12 @@ fn main() -> anyhow::Result<()> {
             let cfg = archietect::permissions::load(&global_path, &root)?;
             let confirmations_path = archietect::permissions::default_confirmations_path()?;
             let asker = archietect::permissions::stdio_asker();
-            let (enabled, resources) =
-                archietect::photos_domain::scan_if_allowed(&cfg, &confirmations_path, &dir, asker.as_ref())?;
+            let (enabled, resources) = archietect::photos_domain::scan_if_allowed(
+                &cfg,
+                &confirmations_path,
+                &dir,
+                asker.as_ref(),
+            )?;
             serde_json::json!({
                 "dir": dir.display().to_string(),
                 "enabled": enabled,
@@ -1031,8 +1287,12 @@ fn main() -> anyhow::Result<()> {
             let confirmations_path = archietect::permissions::default_confirmations_path()?;
             let asker = archietect::permissions::stdio_asker();
             let home = archietect::messages_domain::default_home()?;
-            let (enabled, resources) =
-                archietect::messages_domain::scan_if_allowed(&cfg, &confirmations_path, &home, asker.as_ref())?;
+            let (enabled, resources) = archietect::messages_domain::scan_if_allowed(
+                &cfg,
+                &confirmations_path,
+                &home,
+                asker.as_ref(),
+            )?;
             serde_json::json!({
                 "enabled": enabled,
                 "resources": resources,
@@ -1044,8 +1304,40 @@ fn main() -> anyhow::Result<()> {
             let resources = archietect::docker_domain::scan_observed(&cfg, &root);
             serde_json::json!({ "resources": resources })
         }
+        Cmd::Runtime(RuntimeCmd::VerifyHttp { url, timeout_ms, qaforge }) => {
+            let value = match archietect::runtime::verify_http(&url, timeout_ms) {
+                Ok(value) => value,
+                Err(error) => archietect::runtime::http_error_evidence(&url, &error),
+            };
+            if qaforge {
+                archietect::evidence::qaforge_envelope(
+                    value,
+                    "archietect.runtime.verify_http",
+                    serde_json::json!({ "url": url }),
+                    Some(&root),
+                )
+            } else { value }
+        }
+        Cmd::Runtime(RuntimeCmd::VerifyBrowser { url, timeout_ms, settle_ms, qaforge }) => {
+            let value = archietect::runtime::verify_browser(&url, timeout_ms, settle_ms)?;
+            if qaforge {
+                archietect::evidence::qaforge_envelope(
+                    value,
+                    "archietect.runtime.verify_browser",
+                    serde_json::json!({ "url": url }),
+                    Some(&root),
+                )
+            } else { value }
+        }
     };
-    println!("{}", serde_json::to_string_pretty(&archietect::shape::apply(out.clone(), only.as_deref(), compact))?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&archietect::shape::apply(
+            out.clone(),
+            only.as_deref(),
+            compact
+        ))?
+    );
 
     // ── Typed exit codes — post-print, after JSON is on stdout ───────────
     //
@@ -1069,7 +1361,9 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or("check unclassified files manually");
         eprintln!("archietect: exit 3 — INSUFFICIENT_COVERAGE: {next}");
         3
-    } else if out.get("impact").and_then(|v| v.as_str()) == Some("unknown — concept not declared in this project") {
+    } else if out.get("impact").and_then(|v| v.as_str())
+        == Some("unknown — concept not declared in this project")
+    {
         eprintln!("archietect: exit 6 — concept not found in this project");
         6
     } else if !root.join("archietect.db").exists() && needs_index {
@@ -1089,15 +1383,38 @@ fn main() -> anyhow::Result<()> {
 /// prefixes after init; rerunning init is idempotent.
 fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
     let roots = detect_source_roots(root);
-    let roots_toml = roots.iter().map(|r| format!("\"{r}\"")).collect::<Vec<_>>().join(", ");
+    let roots_toml = roots
+        .iter()
+        .map(|r| format!("\"{r}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     let path = root.join("archietect.toml");
     if path.exists() {
         let text = std::fs::read_to_string(&path)?;
         if text.contains("decision_required_paths") {
+            // Migrate only the exact placeholder emitted by older versions.
+            // A different path list is a repository decision and remains
+            // untouched. `src` is dangerously narrow for flat layouts and
+            // monorepos; mutation classification already excludes routine
+            // implementation and test edits, so root protection is safe.
+            if text.starts_with("# Archietect project policy")
+                && text.contains("decision_required_paths = [\"src\"]")
+            {
+                std::fs::write(
+                    &path,
+                    text.replacen(
+                        "decision_required_paths = [\"src\"]",
+                        "decision_required_paths = [\".\"]",
+                        1,
+                    ),
+                )?;
+            }
             return Ok(());
         }
         let mut updated = text;
-        if !updated.ends_with('\n') { updated.push('\n'); }
+        if !updated.ends_with('\n') {
+            updated.push('\n');
+        }
         updated.push_str(&format!("\n[policy]\n# Hard gate for architectural source changes. Edit the prefixes for this project.\ndecision_required_paths = [{roots_toml}]\n"));
         std::fs::write(path, updated)?;
     } else {
@@ -1106,15 +1423,12 @@ fn bootstrap_policy(root: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn detect_source_roots(root: &std::path::Path) -> Vec<String> {
-    let candidates = ["src", "app", "apps", "packages", "services", "backend", "api", "core"];
-    let mut found: Vec<String> = candidates.iter().filter(|name| root.join(name).is_dir()).map(|name| (*name).to_string()).collect();
-    // Flat-layout repositories commonly keep Django models, Python modules,
-    // Go packages, or small Rust binaries at the root. Falling back to a
-    // nonexistent `src/` silently disables the policy gate for exactly those
-    // projects; `.` deliberately protects every code file the scanner finds.
-    if found.is_empty() { found.push(".".to_string()); }
-    found
+fn detect_source_roots(_root: &std::path::Path) -> Vec<String> {
+    // The mutation classifier is what distinguishes architectural work from
+    // a routine body edit. Root protection makes that classifier apply to
+    // every package in a monorepo and every flat-layout project, avoiding the
+    // silent gaps caused by guessing one conventional source directory.
+    vec![".".to_string()]
 }
 
 fn hook_command(root: &std::path::Path, action: HookAction) -> anyhow::Result<serde_json::Value> {
@@ -1124,24 +1438,55 @@ fn hook_command(root: &std::path::Path, action: HookAction) -> anyhow::Result<se
     const END: &str = "# <<< archietect <<<";
     match action {
         HookAction::Install => {
-            if !hooks.exists() { anyhow::bail!("no .git/hooks directory found; run this inside a git repository"); }
+            if !hooks.exists() {
+                anyhow::bail!("no .git/hooks directory found; run this inside a git repository");
+            }
             let old = std::fs::read_to_string(&path).unwrap_or_default();
-            if old.contains(BEGIN) { return Ok(serde_json::json!({"installed": true, "changed": false, "hook": path.display().to_string()})); }
+            if old.contains(BEGIN) {
+                return Ok(
+                    serde_json::json!({"installed": true, "changed": false, "hook": path.display().to_string()}),
+                );
+            }
             let mut text = old;
-            if text.is_empty() { text.push_str("#!/bin/sh\n"); }
-            if !text.ends_with('\n') { text.push('\n'); }
+            if text.is_empty() {
+                text.push_str("#!/bin/sh\n");
+            }
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
             text.push_str(&format!("\n{BEGIN}\nif command -v archietect >/dev/null 2>&1; then\n  git diff --cached | archietect ci\nfi\n{END}\n"));
             std::fs::write(&path, text)?;
-            #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; let mut p = std::fs::metadata(&path)?.permissions(); p.set_mode(0o755); std::fs::set_permissions(&path, p)?; }
-            Ok(serde_json::json!({"installed": true, "changed": true, "hook": path.display().to_string()}))
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut p = std::fs::metadata(&path)?.permissions();
+                p.set_mode(0o755);
+                std::fs::set_permissions(&path, p)?;
+            }
+            Ok(
+                serde_json::json!({"installed": true, "changed": true, "hook": path.display().to_string()}),
+            )
         }
         HookAction::Uninstall => {
-            let Ok(old) = std::fs::read_to_string(&path) else { return Ok(serde_json::json!({"installed": false, "changed": false})); };
-            let Some(start) = old.find(BEGIN) else { return Ok(serde_json::json!({"installed": false, "changed": false})); };
-            let end = old[start..].find(END).map(|i| start + i + END.len()).unwrap_or(old.len());
+            let Ok(old) = std::fs::read_to_string(&path) else {
+                return Ok(serde_json::json!({"installed": false, "changed": false}));
+            };
+            let Some(start) = old.find(BEGIN) else {
+                return Ok(serde_json::json!({"installed": false, "changed": false}));
+            };
+            let end = old[start..]
+                .find(END)
+                .map(|i| start + i + END.len())
+                .unwrap_or(old.len());
             let text = format!("{}{}", &old[..start], &old[end..]);
-            if text.trim().is_empty() { std::fs::remove_file(&path)?; } else { std::fs::write(&path, text.trim_start_matches('\n'))?; }
-            Ok(serde_json::json!({"installed": false, "changed": true, "hook": path.display().to_string()}))
+            if text.trim().is_empty() {
+                std::fs::remove_file(&path)?;
+            } else {
+                std::fs::write(&path, text.trim_start_matches('\n'))?;
+            }
+            Ok(
+                serde_json::json!({"installed": false, "changed": true, "hook": path.display().to_string()}),
+            )
         }
     }
 }
@@ -1157,7 +1502,8 @@ mod tests {
 
     #[test]
     fn flat_layout_bootstrap_protects_the_repository_root() {
-        let root = std::env::temp_dir().join(format!("archietect-flat-root-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-flat-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         assert_eq!(detect_source_roots(&root), vec!["."]);
@@ -1165,11 +1511,12 @@ mod tests {
     }
 
     #[test]
-    fn conventional_source_root_beats_flat_layout_fallback() {
+    fn bootstrap_protects_all_monorepo_packages() {
         let root = std::env::temp_dir().join(format!("archietect-src-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("backend")).unwrap();
-        assert_eq!(detect_source_roots(&root), vec!["backend"]);
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        assert_eq!(detect_source_roots(&root), vec!["."]);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1225,6 +1572,7 @@ fn help_json() -> serde_json::Value {
         { "command": "intent <goal>",    "description": "From a stated intent to the smallest correct change — EXTEND vs CREATE", "exit_codes": {"0": "success"} },
         { "command": "plan <goal>",      "description": "One-call composition: canonical locations, owners, decisions, impact", "exit_codes": {"0": "success"} },
         { "command": "impact <term>",    "description": "What is affected if this concept changes? Import graph to depth 3 + HTTP route callers.", "exit_codes": {"0": "success"} },
+        { "command": "impact-diff --base <ref>", "description": "Compare staged and unstaged changes with a Git base ref and report affected concepts, symbols, routes, and importers.", "exit_codes": {"0": "success", "1": "Git diff unavailable"} },
         { "command": "imports <file>",   "description": "Exact, unambiguous import edges in and out of one file", "exit_codes": {"0": "success"} },
         { "command": "guard <sql>",      "description": "Reject a CREATE TABLE that duplicates an existing concept", "exit_codes": {"0": "allowed", "1": "blocked — run `archietect concept <canonical>` to investigate"} },
         { "command": "claim <statement>","description": "Verify a plain-language claim: CONFIRMED, REFUTED, or UNVERIFIABLE with evidence receipt", "exit_codes": {"0": "success"} },

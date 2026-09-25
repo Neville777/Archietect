@@ -85,7 +85,10 @@ pub fn scan(root: &Path) -> Vec<Resource> {
         id: Identity(repo_name.clone()),
         kind: "git_repository".to_string(),
         domain: "git".to_string(),
-        location: Location { file: root.display().to_string(), line: None },
+        location: Location {
+            file: root.display().to_string(),
+            line: None,
+        },
         attributes: repo_attrs,
         evidence: vec![Evidence {
             tier: Tier::Declared,
@@ -103,11 +106,17 @@ pub fn scan(root: &Path) -> Vec<Resource> {
             id: Identity(format!("{repo_name}:{b}")),
             kind: "git_branch".to_string(),
             domain: "git".to_string(),
-            location: Location { file: git_dir.join("HEAD").display().to_string(), line: None },
+            location: Location {
+                file: git_dir.join("HEAD").display().to_string(),
+                line: None,
+            },
             attributes: BTreeMap::from([("repository".to_string(), repo_name.clone())]),
             evidence: vec![Evidence {
                 tier: Tier::Observed,
-                what: format!("{} currently has '{b}' checked out (.git/HEAD)", root.display()),
+                what: format!(
+                    "{} currently has '{b}' checked out (.git/HEAD)",
+                    root.display()
+                ),
             }],
         });
     }
@@ -120,7 +129,10 @@ pub fn scan(root: &Path) -> Vec<Resource> {
             id: Identity(format!("{repo_name}:remote:{name}")),
             kind: "git_remote".to_string(),
             domain: "git".to_string(),
-            location: Location { file: git_dir.join("config").display().to_string(), line: None },
+            location: Location {
+                file: git_dir.join("config").display().to_string(),
+                line: None,
+            },
             attributes: BTreeMap::from([
                 ("repository".to_string(), repo_name.clone()),
                 ("name".to_string(), name.clone()),
@@ -203,11 +215,15 @@ mod tests {
     #[test]
     fn scan_finds_origin_remote_pointing_at_archietect() {
         let resources = scan(&this_repo_root());
-        let origin = resources
-            .iter()
-            .find(|r| r.kind == "git_remote" && r.attributes.get("name").map(String::as_str) == Some("origin"));
+        let origin = resources.iter().find(|r| {
+            r.kind == "git_remote" && r.attributes.get("name").map(String::as_str) == Some("origin")
+        });
         assert!(origin.is_some(), "expected an 'origin' remote resource");
-        let url = origin.unwrap().attributes.get("url").expect("remote resource must have a url attribute");
+        let url = origin
+            .unwrap()
+            .attributes
+            .get("url")
+            .expect("remote resource must have a url attribute");
         assert!(
             url.to_lowercase().contains("archietect"),
             "expected origin URL to reference archietect, got: {url}"
@@ -222,14 +238,16 @@ mod tests {
         // checkouts (e.g. the CI release run that checked out v0.1.x) have no
         // branch by definition, so skip rather than fail with a misleading
         // "expected branch" message.
-        let head = std::fs::read_to_string(this_repo_root().join(".git/HEAD"))
-            .unwrap_or_default();
+        let head = std::fs::read_to_string(this_repo_root().join(".git/HEAD")).unwrap_or_default();
         if !head.trim_start().starts_with("ref: refs/heads/") {
             // detached HEAD — no branch resource expected, nothing to assert
             return;
         }
         let branch = resources.iter().find(|r| r.kind == "git_branch");
-        assert!(branch.is_some(), "expected a git_branch resource for a non-detached checkout");
+        assert!(
+            branch.is_some(),
+            "expected a git_branch resource for a non-detached checkout"
+        );
         let branch = branch.unwrap();
         assert_eq!(branch.evidence[0].tier, Tier::Observed);
         assert!(!branch.attributes.get("repository").unwrap().is_empty());
@@ -245,8 +263,10 @@ mod tests {
 
     #[test]
     fn scan_if_allowed_blocks_when_git_domain_disabled() {
-        let global = std::env::temp_dir()
-            .join(format!("archietect-git-domain-test-disabled-{}.toml", std::process::id()));
+        let global = std::env::temp_dir().join(format!(
+            "archietect-git-domain-test-disabled-{}.toml",
+            std::process::id()
+        ));
         std::fs::write(&global, "[domains]\ngit = \"disabled\"\n").unwrap();
         let cfg = crate::permissions::load(&global, &this_repo_root()).unwrap();
 

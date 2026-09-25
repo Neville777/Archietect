@@ -52,14 +52,14 @@ impl SupportedLanguage {
 
     pub fn tree_sitter_language(&self) -> Language {
         match self {
-            SupportedLanguage::Rust       => tree_sitter_rust::language(),
-            SupportedLanguage::Python     => tree_sitter_python::language(),
+            SupportedLanguage::Rust => tree_sitter_rust::language(),
+            SupportedLanguage::Python => tree_sitter_python::language(),
             SupportedLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
             SupportedLanguage::JavaScript => tree_sitter_javascript::language(),
-            SupportedLanguage::Go         => tree_sitter_go::language(),
-            SupportedLanguage::Java       => tree_sitter_java::language(),
-            SupportedLanguage::CSharp     => tree_sitter_c_sharp::language(),
-            SupportedLanguage::Ruby       => tree_sitter_ruby::language(),
+            SupportedLanguage::Go => tree_sitter_go::language(),
+            SupportedLanguage::Java => tree_sitter_java::language(),
+            SupportedLanguage::CSharp => tree_sitter_c_sharp::language(),
+            SupportedLanguage::Ruby => tree_sitter_ruby::language(),
         }
     }
 }
@@ -69,12 +69,16 @@ pub struct TreeSitterUsageDetector {
 }
 
 impl Default for TreeSitterUsageDetector {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TreeSitterUsageDetector {
     pub fn new() -> Self {
-        Self { parser: Parser::new() }
+        Self {
+            parser: Parser::new(),
+        }
     }
 
     /// Parse `text` once and return the set of canonical concept names that
@@ -85,27 +89,27 @@ impl TreeSitterUsageDetector {
     ///   const c = new BillingManager();
     ///
     /// correctly reports "InvoiceService" as used, not just "BillingManager".
-    pub fn extract_used_identifiers(
-        &mut self,
-        text: &str,
-        file_rel: &str,
-    ) -> HashSet<String> {
+    pub fn extract_used_identifiers(&mut self, text: &str, file_rel: &str) -> HashSet<String> {
         let lang = match SupportedLanguage::from_file_path(file_rel) {
             Some(l) => l,
-            None    => return HashSet::new(),
+            None => return HashSet::new(),
         };
 
-        if self.parser.set_language(lang.tree_sitter_language()).is_err() {
+        if self
+            .parser
+            .set_language(lang.tree_sitter_language())
+            .is_err()
+        {
             return HashSet::new();
         }
 
         let tree = match self.parser.parse(text, None) {
             Some(t) => t,
-            None    => return HashSet::new(),
+            None => return HashSet::new(),
         };
 
         let bytes = text.as_bytes();
-        let root  = tree.root_node();
+        let root = tree.root_node();
 
         // ── Pass 1: collect import aliases ───────────────────────────────────
         // alias → canonical  e.g. "BillingManager" → "InvoiceService"
@@ -146,17 +150,22 @@ impl TreeSitterUsageDetector {
 
     // ── alias collection ─────────────────────────────────────────────────────
 
-    fn collect_aliases(node: &Node, bytes: &[u8], lang: &SupportedLanguage, out: &mut HashMap<String, String>) {
+    fn collect_aliases(
+        node: &Node,
+        bytes: &[u8],
+        lang: &SupportedLanguage,
+        out: &mut HashMap<String, String>,
+    ) {
         match lang {
             SupportedLanguage::TypeScript | SupportedLanguage::JavaScript => {
                 // import { InvoiceService as BillingManager } from '...'
                 // AST: import_specifier → name: "InvoiceService", alias: "BillingManager"
                 if node.kind() == "import_specifier" {
-                    let name  = node.child_by_field_name("name");
+                    let name = node.child_by_field_name("name");
                     let alias = node.child_by_field_name("alias");
                     if let (Some(n), Some(a)) = (name, alias) {
                         let canonical = node_text(n, bytes);
-                        let local     = node_text(a, bytes);
+                        let local = node_text(a, bytes);
                         if !canonical.is_empty() && !local.is_empty() && canonical != local {
                             out.insert(local, canonical);
                         }
@@ -167,11 +176,11 @@ impl TreeSitterUsageDetector {
                 // from services.billing import InvoiceService as BillingManager
                 // AST: aliased_import → name: "InvoiceService", alias: "BillingManager"
                 if node.kind() == "aliased_import" {
-                    let name  = node.child_by_field_name("name");
+                    let name = node.child_by_field_name("name");
                     let alias = node.child_by_field_name("alias");
                     if let (Some(n), Some(a)) = (name, alias) {
                         let canonical = node_text(n, bytes);
-                        let local     = node_text(a, bytes);
+                        let local = node_text(a, bytes);
                         if !canonical.is_empty() && !local.is_empty() && canonical != local {
                             out.insert(local, canonical);
                         }
@@ -190,13 +199,17 @@ impl TreeSitterUsageDetector {
                     if c.goto_first_child() {
                         loop {
                             let ch = c.node();
-                            if ch.kind() == "identifier" { children.push(ch); }
-                            if !c.goto_next_sibling() { break; }
+                            if ch.kind() == "identifier" {
+                                children.push(ch);
+                            }
+                            if !c.goto_next_sibling() {
+                                break;
+                            }
                         }
                     }
                     if children.len() >= 2 {
                         let canonical = node_text(children[children.len() - 2], bytes);
-                        let local     = node_text(children[children.len() - 1], bytes);
+                        let local = node_text(children[children.len() - 1], bytes);
                         if !canonical.is_empty() && !local.is_empty() && canonical != local {
                             out.insert(local, canonical);
                         }
@@ -209,13 +222,22 @@ impl TreeSitterUsageDetector {
             SupportedLanguage::CSharp => {
                 if node.kind() == "using_directive" {
                     // tree-sitter-c-sharp: (using_directive (name_equals (identifier) "=") qualified_name)
-                    let text = std::str::from_utf8(&bytes[node.start_byte()..node.end_byte()]).unwrap_or("");
+                    let text = std::str::from_utf8(&bytes[node.start_byte()..node.end_byte()])
+                        .unwrap_or("");
                     if let Some(eq_pos) = text.find('=') {
-                        let alias = text[..eq_pos].trim()
-                            .trim_start_matches("using").trim().to_string();
-                        let canonical = text[eq_pos + 1..].trim()
-                            .trim_end_matches(';').trim()
-                            .split('.').last().unwrap_or("").to_string();
+                        let alias = text[..eq_pos]
+                            .trim()
+                            .trim_start_matches("using")
+                            .trim()
+                            .to_string();
+                        let canonical = text[eq_pos + 1..]
+                            .trim()
+                            .trim_end_matches(';')
+                            .trim()
+                            .split('.')
+                            .last()
+                            .unwrap_or("")
+                            .to_string();
                         if !alias.is_empty() && !canonical.is_empty() && alias != canonical {
                             out.insert(alias, canonical);
                         }
@@ -231,7 +253,9 @@ impl TreeSitterUsageDetector {
         if cursor.goto_first_child() {
             loop {
                 Self::collect_aliases(&cursor.node(), bytes, lang, out);
-                if !cursor.goto_next_sibling() { break; }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
             }
         }
     }
@@ -251,7 +275,11 @@ impl TreeSitterUsageDetector {
             return;
         }
 
-        if kind == "identifier" || kind == "type_identifier" || kind == "field_identifier" || kind == "property_identifier" {
+        if kind == "identifier"
+            || kind == "type_identifier"
+            || kind == "field_identifier"
+            || kind == "property_identifier"
+        {
             let name = node_text(*node, bytes);
             if !name.is_empty() && !Self::is_declaration(node, lang) {
                 out.insert(name);
@@ -262,7 +290,9 @@ impl TreeSitterUsageDetector {
         if cursor.goto_first_child() {
             loop {
                 Self::collect_identifiers(&cursor.node(), bytes, lang, out);
-                if !cursor.goto_next_sibling() { break; }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
             }
         }
     }
@@ -274,50 +304,68 @@ impl TreeSitterUsageDetector {
     fn is_declaration(node: &Node, lang: &SupportedLanguage) -> bool {
         let parent = match node.parent() {
             Some(p) => p,
-            None    => return false,
+            None => return false,
         };
         let is_name_field = parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id());
 
         match lang {
-            SupportedLanguage::Rust => matches!(
-                parent.kind(),
-                "struct_item" | "enum_item" | "trait_item" | "type_item" | "function_item"
-            ) && is_name_field,
+            SupportedLanguage::Rust => {
+                matches!(
+                    parent.kind(),
+                    "struct_item" | "enum_item" | "trait_item" | "type_item" | "function_item"
+                ) && is_name_field
+            }
 
-            SupportedLanguage::Python => matches!(
-                parent.kind(),
-                "class_definition" | "function_definition"
-            ) && is_name_field,
+            SupportedLanguage::Python => {
+                matches!(parent.kind(), "class_definition" | "function_definition") && is_name_field
+            }
 
-            SupportedLanguage::TypeScript | SupportedLanguage::JavaScript => matches!(
-                parent.kind(),
-                "class_declaration"
-                | "interface_declaration"
-                | "type_alias_declaration"
-                | "function_declaration"
-                | "method_definition"
-            ) && is_name_field,
+            SupportedLanguage::TypeScript | SupportedLanguage::JavaScript => {
+                matches!(
+                    parent.kind(),
+                    "class_declaration"
+                        | "interface_declaration"
+                        | "type_alias_declaration"
+                        | "function_declaration"
+                        | "method_definition"
+                ) && is_name_field
+            }
 
-            SupportedLanguage::Go => matches!(
-                parent.kind(),
-                "type_spec" | "function_declaration" | "method_declaration"
-            ) && is_name_field,
+            SupportedLanguage::Go => {
+                matches!(
+                    parent.kind(),
+                    "type_spec" | "function_declaration" | "method_declaration"
+                ) && is_name_field
+            }
 
-            SupportedLanguage::Java => matches!(
-                parent.kind(),
-                "class_declaration" | "interface_declaration" | "enum_declaration" | "method_declaration"
-            ) && is_name_field,
+            SupportedLanguage::Java => {
+                matches!(
+                    parent.kind(),
+                    "class_declaration"
+                        | "interface_declaration"
+                        | "enum_declaration"
+                        | "method_declaration"
+                ) && is_name_field
+            }
 
-            SupportedLanguage::CSharp => matches!(
-                parent.kind(),
-                "class_declaration" | "interface_declaration" | "struct_declaration"
-                | "enum_declaration" | "method_declaration" | "record_declaration"
-            ) && is_name_field,
+            SupportedLanguage::CSharp => {
+                matches!(
+                    parent.kind(),
+                    "class_declaration"
+                        | "interface_declaration"
+                        | "struct_declaration"
+                        | "enum_declaration"
+                        | "method_declaration"
+                        | "record_declaration"
+                ) && is_name_field
+            }
 
-            SupportedLanguage::Ruby => matches!(
-                parent.kind(),
-                "class" | "module" | "method" | "singleton_method"
-            ) && is_name_field,
+            SupportedLanguage::Ruby => {
+                matches!(
+                    parent.kind(),
+                    "class" | "module" | "method" | "singleton_method"
+                ) && is_name_field
+            }
         }
     }
 }

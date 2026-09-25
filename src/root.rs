@@ -21,8 +21,14 @@ use std::path::{Path, PathBuf};
 /// anywhere above the starting directory.
 const STRONG_MARKERS: &[&str] = &["archietect.db", "archietect.toml", ".git"];
 const WEAK_MARKERS: &[&str] = &[
-    "Cargo.toml", "package.json", "composer.json", "manage.py", "mix.exs",
-    "go.mod", "Gemfile", "pom.xml",
+    "Cargo.toml",
+    "package.json",
+    "composer.json",
+    "manage.py",
+    "mix.exs",
+    "go.mod",
+    "Gemfile",
+    "pom.xml",
 ];
 
 /// Resolve the repository root ONCE: explicit override wins; otherwise the
@@ -48,7 +54,9 @@ pub fn resolve(explicit: Option<PathBuf>, start: &Path) -> anyhow::Result<PathBu
         // to an isolated worktree — a still-relative patch path then
         // resolved against the WRONG directory and failed with "no such
         // file," found by dogfooding the proposal protocol itself.
-        return r.canonicalize().with_context(|| format!("resolving root: {}", r.display()));
+        return r
+            .canonicalize()
+            .with_context(|| format!("resolving root: {}", r.display()));
     }
     let mut weak_hit: Option<PathBuf> = None;
     let mut dir = start.to_path_buf();
@@ -113,7 +121,11 @@ pub fn scope_warning(root: &Path) -> Option<String> {
     nested_repos.sort();
     let total = nested_repos.len();
     nested_repos.truncate(5);
-    let more = if total > 5 { format!(" (+{} more)", total - 5) } else { String::new() };
+    let more = if total > 5 {
+        format!(" (+{} more)", total - 5)
+    } else {
+        String::new()
+    };
     Some(format!(
         "'{}' looks like a directory of {total} separate projects ({}{more}), not one project — \
          archietect treats everything under --root as a SINGLE codebase, so this scan may be slow \
@@ -134,7 +146,8 @@ mod tests {
 
     #[test]
     fn strong_marker_beats_weak_at_any_distance() {
-        let root = std::env::temp_dir().join(format!("archietect-root-test-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-root-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let sub = root.join("crates/payment_api/src");
         std::fs::create_dir_all(&sub).unwrap();
@@ -142,13 +155,19 @@ mod tests {
         touch(&root.join("crates/payment_api"), "Cargo.toml"); // weak, nearer
 
         let resolved = resolve(None, &sub).unwrap();
-        assert_eq!(resolved, root, "weak marker in a subdirectory must not win over a strong marker above it");
+        assert_eq!(
+            resolved, root,
+            "weak marker in a subdirectory must not win over a strong marker above it"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn explicit_root_always_wins() {
-        let root = std::env::temp_dir().join(format!("archietect-root-test-explicit-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-root-test-explicit-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let resolved = resolve(Some(root.clone()), &std::env::temp_dir()).unwrap();
         assert_eq!(resolved, root);
@@ -163,7 +182,8 @@ mod tests {
 
     #[test]
     fn warns_on_a_directory_of_several_independent_repos() {
-        let root = std::env::temp_dir().join(format!("archietect-scope-test-many-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-scope-test-many-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         nested_repo(&root, "project-a");
@@ -181,18 +201,27 @@ mod tests {
 
     #[test]
     fn stays_silent_on_a_real_single_project_root() {
-        let root = std::env::temp_dir().join(format!("archietect-scope-test-single-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-scope-test-single-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         touch(&root, ".git"); // root itself IS a project
 
-        assert!(scope_warning(&root).is_none(), "a root with its own .git must never warn, regardless of what's under it");
+        assert!(
+            scope_warning(&root).is_none(),
+            "a root with its own .git must never warn, regardless of what's under it"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn stays_silent_below_the_threshold() {
-        let root = std::env::temp_dir().join(format!("archietect-scope-test-below-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-scope-test-below-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         nested_repo(&root, "project-a");
@@ -204,7 +233,8 @@ mod tests {
 
     #[test]
     fn long_names_are_capped_but_the_real_count_is_stated() {
-        let root = std::env::temp_dir().join(format!("archietect-scope-test-cap-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-scope-test-cap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         for i in 0..8 {
@@ -225,7 +255,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn auto_discovered_root_is_canonicalized_same_as_explicit_root() {
-        let base = std::env::temp_dir().join(format!("archietect-root-test-symlink-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "archietect-root-test-symlink-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&base);
         let real = base.join("real_project");
         let link = base.join("link_to_project");

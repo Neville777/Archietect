@@ -39,13 +39,27 @@ use std::time::Duration;
 use walkdir::WalkDir;
 
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", ".next", "target", "dist", "build", "__pycache__",
-    ".venv", "venv", ".turbo", "coverage", ".cache", "vendor",
+    "node_modules",
+    ".git",
+    ".next",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".turbo",
+    "coverage",
+    ".cache",
+    "vendor",
 ];
 
 fn skip_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir()
-        && e.file_name().to_str().map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false)
+        && e.file_name()
+            .to_str()
+            .map(|n| SKIP_DIRS.contains(&n))
+            .unwrap_or(false)
 }
 
 /// Every directory the watcher should register on, respecting SKIP_DIRS
@@ -105,7 +119,10 @@ pub(crate) fn relevant(path: &Path) -> bool {
         return false;
     }
     if path.components().any(|c| {
-        c.as_os_str().to_str().map(|s| SKIP_DIRS.contains(&s)).unwrap_or(false)
+        c.as_os_str()
+            .to_str()
+            .map(|s| SKIP_DIRS.contains(&s))
+            .unwrap_or(false)
     }) {
         return false;
     }
@@ -123,10 +140,29 @@ pub type Event = (i64, String, String, serde_json::Value); // ts, kind, concept,
 /// unrelated `PaymentGatewayExecutor` struct via the single shared token
 /// "executor" — a role, not a domain concept.
 pub const GENERIC_ROLE_TOKENS: &[&str] = &[
-    "executor", "manager", "handler", "service", "controller", "factory", "builder",
-    "adapter", "provider", "client", "worker", "engine", "repository", "store",
-    "registry", "gateway", "middleware", "config", "result", "response", "request",
-    "context", "state",
+    "executor",
+    "manager",
+    "handler",
+    "service",
+    "controller",
+    "factory",
+    "builder",
+    "adapter",
+    "provider",
+    "client",
+    "worker",
+    "engine",
+    "repository",
+    "store",
+    "registry",
+    "gateway",
+    "middleware",
+    "config",
+    "result",
+    "response",
+    "request",
+    "context",
+    "state",
 ];
 
 fn now_ms() -> i64 {
@@ -165,16 +201,21 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
             let shared = oc.fields.iter().filter(|f| nc.fields.contains(f)).count();
             let overlap = shared >= 3 && shared * 10 >= oc.fields.len().max(1) * 6;
             if same_table || overlap {
-                event(&mut out, "concept_renamed", aname, json!({
-                    "from": rname,
-                    "to": aname,
-                    "identity_evidence": if same_table {
-                        format!("same declared table '{}'", oc.table.clone().unwrap_or_default())
-                    } else {
-                        format!("{shared} shared fields")
-                    },
-                    "note": "provenance carries over: this is one concept changing its name, not a new concept",
-                }));
+                event(
+                    &mut out,
+                    "concept_renamed",
+                    aname,
+                    json!({
+                        "from": rname,
+                        "to": aname,
+                        "identity_evidence": if same_table {
+                            format!("same declared table '{}'", oc.table.clone().unwrap_or_default())
+                        } else {
+                            format!("{shared} shared fields")
+                        },
+                        "note": "provenance carries over: this is one concept changing its name, not a new concept",
+                    }),
+                );
                 renamed_from.push(rname.clone());
                 renamed_to.push(aname.clone());
                 break;
@@ -187,9 +228,14 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
         if old.concepts.contains_key(name) || renamed_to.contains(name) {
             continue;
         }
-        event(&mut out, "concept_appeared", name, json!({
-            "declared_in": c.declared_in,
-        }));
+        event(
+            &mut out,
+            "concept_appeared",
+            name,
+            json!({
+                "declared_in": c.declared_in,
+            }),
+        );
         // duplicate risk: any token of the new name resolving to an EXISTING
         // concept or declared alias is the moment of infection.
         for tok in crate::model::name_tokens(name) {
@@ -213,26 +259,35 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
                     // (the canonical's declarations, its relations, and the
                     // governing decision when one is declared) — no AI, just
                     // the facts a reader needs to act without a second query.
-                    let canon = old.concepts.get(&existing).or_else(|| new.concepts.get(&existing));
+                    let canon = old
+                        .concepts
+                        .get(&existing)
+                        .or_else(|| new.concepts.get(&existing));
                     let decision = new.decisions.iter().find(|d| {
-                        d.links.iter().any(|l| crate::model::same_word(l, &tok)
-                            || l.eq_ignore_ascii_case(&existing))
+                        d.links.iter().any(|l| {
+                            crate::model::same_word(l, &tok) || l.eq_ignore_ascii_case(&existing)
+                        })
                     });
-                    event(&mut out, "duplicate_concept_risk", name, json!({
-                        "collides_with": existing,
-                        "via_token": tok,
-                        "evidence": {
-                            "declared_in": canon.map(|c| c.declared_in.clone()),
-                            "relations": canon.map(|c| c.relations.clone()),
-                            "governing_decision": decision.map(|d| json!({
-                                "id": d.id, "because": d.because,
-                                "rejected": d.rejected,
-                            })),
-                        },
-                        "suggested_action": format!(
-                            "Extend '{existing}' rather than introducing '{name}'."
-                        ),
-                    }));
+                    event(
+                        &mut out,
+                        "duplicate_concept_risk",
+                        name,
+                        json!({
+                            "collides_with": existing,
+                            "via_token": tok,
+                            "evidence": {
+                                "declared_in": canon.map(|c| c.declared_in.clone()),
+                                "relations": canon.map(|c| c.relations.clone()),
+                                "governing_decision": decision.map(|d| json!({
+                                    "id": d.id, "because": d.because,
+                                    "rejected": d.rejected,
+                                })),
+                            },
+                            "suggested_action": format!(
+                                "Extend '{existing}' rather than introducing '{name}'."
+                            ),
+                        }),
+                    );
                     break;
                 }
             }
@@ -241,9 +296,14 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     // REMOVED concepts — storage vanished; intentional or a refactor casualty?
     for name in old.concepts.keys() {
         if !new.concepts.contains_key(name) && !renamed_from.contains(name) {
-            event(&mut out, "concept_lost_storage", name, json!({
-                "advice": "all declarations for this concept are gone — if unintentional, a refactor just deleted storage something may still depend on",
-            }));
+            event(
+                &mut out,
+                "concept_lost_storage",
+                name,
+                json!({
+                    "advice": "all declarations for this concept are gone — if unintentional, a refactor just deleted storage something may still depend on",
+                }),
+            );
         }
     }
     // ONTOLOGY changes — the declared layer has its own event vocabulary.
@@ -254,20 +314,35 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
     }
     for (k, target) in &old.aliases {
         if !new.aliases.contains_key(k) {
-            event(&mut out, "alias_removed", k, json!({ "was_target": target }));
+            event(
+                &mut out,
+                "alias_removed",
+                k,
+                json!({ "was_target": target }),
+            );
         }
     }
     for d in &new.decisions {
         if !old.decisions.iter().any(|o| o.id == d.id) {
-            event(&mut out, "decision_added", &d.id, json!({ "decision": d.decision, "proposed_by": d.proposed_by }));
+            event(
+                &mut out,
+                "decision_added",
+                &d.id,
+                json!({ "decision": d.decision, "proposed_by": d.proposed_by }),
+            );
         }
     }
     for d in &old.decisions {
         if !new.decisions.iter().any(|n| n.id == d.id) {
-            event(&mut out, "decision_removed", &d.id, json!({
-                "was": d.decision,
-                "advice": "a recorded architectural decision was deleted — rationale removed is rationale lost; supersede rather than delete",
-            }));
+            event(
+                &mut out,
+                "decision_removed",
+                &d.id,
+                json!({
+                    "was": d.decision,
+                    "advice": "a recorded architectural decision was deleted — rationale removed is rationale lost; supersede rather than delete",
+                }),
+            );
         }
     }
 
@@ -278,10 +353,15 @@ pub fn diff_findings(old: &Index, new: &Index) -> Vec<Event> {
             .keys()
             .any(|n| n == target || names_concept(n, target.trim_end_matches('s')));
         if !resolves {
-            event(&mut out, "stale_alias", k, json!({
-                "target": target,
-                "advice": "archietect.toml declares this alias but the target concept no longer exists — the ontology file is stale or the concept was removed",
-            }));
+            event(
+                &mut out,
+                "stale_alias",
+                k,
+                json!({
+                    "target": target,
+                    "advice": "archietect.toml declares this alias but the target concept no longer exists — the ontology file is stale or the concept was removed",
+                }),
+            );
         }
     }
     out
@@ -297,7 +377,10 @@ fn print_event(ev: &Event, subscribe: Option<&str>) {
             return;
         }
     }
-    println!("{}", json!({ "ts_ms": ev.0, "kind": ev.1, "concept": ev.2, "detail": ev.3 }));
+    println!(
+        "{}",
+        json!({ "ts_ms": ev.0, "kind": ev.1, "concept": ev.2, "detail": ev.3 })
+    );
 }
 
 pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
@@ -310,15 +393,18 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
     // initial build — the daemon starts knowing.
     let (mut current, mut current_graph) = scan::scan(&root);
     store::save(&current, &current_graph, &root)?;
-    println!("{}", json!({
-        "ts_ms": now_ms(), "kind": "watching", "concept": "",
-        "detail": {
-            "root": root.display().to_string(),
-            "files": current.files_scanned,
-            "concepts": current.concepts.len(),
-            "subscribed": subscribe,
-        }
-    }));
+    println!(
+        "{}",
+        json!({
+            "ts_ms": now_ms(), "kind": "watching", "concept": "",
+            "detail": {
+                "root": root.display().to_string(),
+                "files": current.files_scanned,
+                "concepts": current.concepts.len(),
+                "subscribed": subscribe,
+            }
+        })
+    );
 
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -340,7 +426,10 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
         // (a build tool cleaning up) should not abort the whole daemon.
         let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
     }
-    eprintln!("archietect watch: registered {} directories (skipped target/node_modules/.git/...)", dirs.len());
+    eprintln!(
+        "archietect watch: registered {} directories (skipped target/node_modules/.git/...)",
+        dirs.len()
+    );
 
     loop {
         // block until something changes…
@@ -353,30 +442,45 @@ pub fn run(root: PathBuf, subscribe: Option<String>) -> anyhow::Result<()> {
 
         if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
             if now != started {
-                println!("{}", json!({
-                    "ts_ms": now_ms(), "kind": "stale_binary_warning", "concept": "",
-                    "detail": "This daemon has been running since before the archietect binary on disk was last rebuilt — it is rescanning with OLD extractor code. Restart it (systemctl --user restart archietectd@<escaped-path>, or re-run `archietect watch`) to pick up the current build.",
-                }));
+                println!(
+                    "{}",
+                    json!({
+                        "ts_ms": now_ms(), "kind": "stale_binary_warning", "concept": "",
+                        "detail": "This daemon has been running since before the archietect binary on disk was last rebuilt — it is rescanning with OLD extractor code. Restart it (systemctl --user restart archietectd@<escaped-path>, or re-run `archietect watch`) to pick up the current build.",
+                    })
+                );
             }
         }
 
-        let (next, next_graph) = scan::scan_with_prior(&root, Some(current.clone()), Some(current_graph.clone()));
+        let (next, next_graph) =
+            scan::scan_with_prior(&root, Some(current.clone()), Some(current_graph.clone()));
         let mut events = diff_findings(&current, &next);
         // ARCHITECTURE VERSION: a monotonic number that advances only when
         // the concept set changes — migration numbering for architectural
         // knowledge, with the +/- delta recorded like a changelog entry.
-        let added: Vec<&String> =
-            next.concepts.keys().filter(|n| !current.concepts.contains_key(*n)).collect();
-        let removed: Vec<&String> =
-            current.concepts.keys().filter(|n| !next.concepts.contains_key(*n)).collect();
+        let added: Vec<&String> = next
+            .concepts
+            .keys()
+            .filter(|n| !current.concepts.contains_key(*n))
+            .collect();
+        let removed: Vec<&String> = current
+            .concepts
+            .keys()
+            .filter(|n| !next.concepts.contains_key(*n))
+            .collect();
         if !added.is_empty() || !removed.is_empty() {
             if let Ok(v) = store::bump_arch_version(&root) {
                 let ts = now_ms();
-                events.push((ts, "architecture_version".into(), format!("v{v}"), json!({
-                    "version": v,
-                    "added": added,
-                    "removed": removed,
-                })));
+                events.push((
+                    ts,
+                    "architecture_version".into(),
+                    format!("v{v}"),
+                    json!({
+                        "version": v,
+                        "added": added,
+                        "removed": removed,
+                    }),
+                ));
                 // Episodic replay (store::concept_at_version): a compact
                 // per-concept snapshot taken exactly here, at the same rare
                 // trigger as the version bump itself — never on every scan.
@@ -420,7 +524,9 @@ mod tests {
         let events = diff_findings(&old, &new);
         let ev = events
             .iter()
-            .find(|(_, kind, concept, _)| kind == "decision_added" && concept == "widget-is-canonical")
+            .find(|(_, kind, concept, _)| {
+                kind == "decision_added" && concept == "widget-is-canonical"
+            })
             .expect("decision_added event must fire");
         assert_eq!(ev.3["proposed_by"], "claude-sonnet-5", "{:?}", ev.3);
     }
@@ -441,6 +547,10 @@ mod tests {
             .iter()
             .find(|(_, kind, concept, _)| kind == "decision_added" && concept == "some-decision")
             .expect("decision_added event must fire");
-        assert_eq!(ev.3["proposed_by"], "", "an unattributed decision must not fabricate a proposer: {:?}", ev.3);
+        assert_eq!(
+            ev.3["proposed_by"], "",
+            "an unattributed decision must not fabricate a proposer: {:?}",
+            ev.3
+        );
     }
 }

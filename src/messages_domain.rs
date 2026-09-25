@@ -87,15 +87,47 @@ struct MessageStoreSpec {
 
 const KNOWN_STORES: &[MessageStoreSpec] = &[
     // macOS
-    MessageStoreSpec { app: "iMessage/SMS", relative_path: "Library/Messages/chat.db", shape: StoreShape::File },
-    MessageStoreSpec { app: "Signal", relative_path: "Library/Application Support/Signal", shape: StoreShape::Directory },
-    MessageStoreSpec { app: "WhatsApp", relative_path: "Library/Application Support/WhatsApp", shape: StoreShape::Directory },
-    MessageStoreSpec { app: "Slack", relative_path: "Library/Application Support/Slack", shape: StoreShape::Directory },
-    MessageStoreSpec { app: "Discord", relative_path: "Library/Application Support/discord", shape: StoreShape::Directory },
+    MessageStoreSpec {
+        app: "iMessage/SMS",
+        relative_path: "Library/Messages/chat.db",
+        shape: StoreShape::File,
+    },
+    MessageStoreSpec {
+        app: "Signal",
+        relative_path: "Library/Application Support/Signal",
+        shape: StoreShape::Directory,
+    },
+    MessageStoreSpec {
+        app: "WhatsApp",
+        relative_path: "Library/Application Support/WhatsApp",
+        shape: StoreShape::Directory,
+    },
+    MessageStoreSpec {
+        app: "Slack",
+        relative_path: "Library/Application Support/Slack",
+        shape: StoreShape::Directory,
+    },
+    MessageStoreSpec {
+        app: "Discord",
+        relative_path: "Library/Application Support/discord",
+        shape: StoreShape::Directory,
+    },
     // Linux
-    MessageStoreSpec { app: "Signal", relative_path: ".config/Signal", shape: StoreShape::Directory },
-    MessageStoreSpec { app: "Slack", relative_path: ".config/Slack", shape: StoreShape::Directory },
-    MessageStoreSpec { app: "Discord", relative_path: ".config/discord", shape: StoreShape::Directory },
+    MessageStoreSpec {
+        app: "Signal",
+        relative_path: ".config/Signal",
+        shape: StoreShape::Directory,
+    },
+    MessageStoreSpec {
+        app: "Slack",
+        relative_path: ".config/Slack",
+        shape: StoreShape::Directory,
+    },
+    MessageStoreSpec {
+        app: "Discord",
+        relative_path: ".config/discord",
+        shape: StoreShape::Directory,
+    },
 ];
 
 /// The gated entry point real callers should use. No `dir` parameter —
@@ -110,8 +142,12 @@ pub fn scan_if_allowed(
     home: &Path,
     asker: &dyn ConfirmationAsker,
 ) -> Result<(bool, Vec<Resource>)> {
-    let allowed =
-        crate::permissions::domain_allowed_with_confirmation(cfg, confirmations_path, "messages", asker)?;
+    let allowed = crate::permissions::domain_allowed_with_confirmation(
+        cfg,
+        confirmations_path,
+        "messages",
+        asker,
+    )?;
     if !allowed {
         return Ok((false, Vec::new()));
     }
@@ -152,7 +188,9 @@ pub fn scan(home: &Path) -> Vec<Resource> {
     let mut resources = Vec::new();
     for spec in KNOWN_STORES {
         let path = home.join(spec.relative_path);
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
 
         let modified_ms = meta
             .modified()
@@ -186,9 +224,15 @@ pub fn scan(home: &Path) -> Vec<Resource> {
             id: Identity(format!("{}:{}", spec.app, path.display())),
             kind: "message_store".to_string(),
             domain: "messages".to_string(),
-            location: Location { file: path.display().to_string(), line: None },
+            location: Location {
+                file: path.display().to_string(),
+                line: None,
+            },
             attributes,
-            evidence: vec![Evidence { tier: Tier::Derived, what }],
+            evidence: vec![Evidence {
+                tier: Tier::Derived,
+                what,
+            }],
         });
     }
     resources
@@ -219,7 +263,10 @@ mod tests {
     }
 
     fn fake_home(label: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-messages-domain-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-messages-domain-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -229,14 +276,23 @@ mod tests {
     fn finds_a_real_file_based_store_with_size_and_mtime() {
         let home = fake_home("file-store");
         std::fs::create_dir_all(home.join("Library/Messages")).unwrap();
-        std::fs::write(home.join("Library/Messages/chat.db"), b"fake sqlite content").unwrap();
+        std::fs::write(
+            home.join("Library/Messages/chat.db"),
+            b"fake sqlite content",
+        )
+        .unwrap();
 
         let resources = scan(&home);
-        let r = resources.iter().find(|r| r.attributes.get("app").map(String::as_str) == Some("iMessage/SMS"))
+        let r = resources
+            .iter()
+            .find(|r| r.attributes.get("app").map(String::as_str) == Some("iMessage/SMS"))
             .expect("expected the iMessage store to be found");
         assert_eq!(r.domain, "messages");
         assert_eq!(r.kind, "message_store");
-        assert_eq!(r.attributes.get("size_bytes").map(String::as_str), Some("19"));
+        assert_eq!(
+            r.attributes.get("size_bytes").map(String::as_str),
+            Some("19")
+        );
         assert!(r.attributes.contains_key("modified_unix_ms"));
         assert_eq!(r.evidence[0].tier, Tier::Derived);
         assert!(r.evidence[0].what.contains("never opened or queried"));
@@ -255,14 +311,22 @@ mod tests {
         std::fs::create_dir_all(signal_dir.join("attachments.noindex")).unwrap();
 
         let resources = scan(&home);
-        let r = resources.iter().find(|r| r.attributes.get("app").map(String::as_str) == Some("Signal") && r.location.file.contains(".config"))
+        let r = resources
+            .iter()
+            .find(|r| {
+                r.attributes.get("app").map(String::as_str) == Some("Signal")
+                    && r.location.file.contains(".config")
+            })
             .expect("expected the Linux Signal store to be found");
         assert_eq!(r.kind, "message_store");
         assert!(!r.attributes.contains_key("size_bytes"), "a directory-shaped store must never report a size, that would imply content was measured");
         assert!(r.evidence[0].what.contains("contents never listed"));
         // The literal filename of the real content must not leak anywhere.
         let full = serde_json::to_string(r).unwrap();
-        assert!(!full.contains("real-conversation-data"), "directory contents must never appear in the resource: {full}");
+        assert!(
+            !full.contains("real-conversation-data"),
+            "directory contents must never appear in the resource: {full}"
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -278,8 +342,10 @@ mod tests {
     fn scan_if_allowed_blocks_when_confirmation_says_no() {
         let home = fake_home("confirm-no");
         std::fs::create_dir_all(home.join(".config/Slack")).unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-messages-test-confirm-no-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-messages-test-confirm-no-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
@@ -295,17 +361,23 @@ mod tests {
     fn scan_if_allowed_permits_and_persists_when_confirmation_says_yes() {
         let home = fake_home("confirm-yes");
         std::fs::create_dir_all(home.join(".config/Slack")).unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-messages-test-confirm-yes-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-messages-test-confirm-yes-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
-        let (allowed, resources) = scan_if_allowed(&cfg, &confirmations, &home, &AlwaysYes).unwrap();
+        let (allowed, resources) =
+            scan_if_allowed(&cfg, &confirmations, &home, &AlwaysYes).unwrap();
         assert!(allowed);
         assert_eq!(resources.len(), 1);
 
         let (allowed_again, _) = scan_if_allowed(&cfg, &confirmations, &home, &AlwaysNo).unwrap();
-        assert!(allowed_again, "a prior persisted 'yes' must not be re-asked and overturned silently");
+        assert!(
+            allowed_again,
+            "a prior persisted 'yes' must not be re-asked and overturned silently"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
         let _ = std::fs::remove_dir_all(&home);
@@ -316,13 +388,21 @@ mod tests {
         let home = fake_home("attr-restrict");
         std::fs::create_dir_all(home.join("Library/Messages")).unwrap();
         std::fs::write(home.join("Library/Messages/chat.db"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-messages-test-attr-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-messages-test-attr-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
 
-        let global = std::env::temp_dir()
-            .join(format!("archietect-messages-test-attr-global-{}.toml", std::process::id()));
-        std::fs::write(&global, "[domains.messages]\nstate = \"enabled\"\nattributes = [\"filename\"]\n").unwrap();
+        let global = std::env::temp_dir().join(format!(
+            "archietect-messages-test-attr-global-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &global,
+            "[domains.messages]\nstate = \"enabled\"\nattributes = [\"filename\"]\n",
+        )
+        .unwrap();
         let project_dir = fake_home("attr-restrict-project");
         let cfg = crate::permissions::load(&global, &project_dir).unwrap();
 

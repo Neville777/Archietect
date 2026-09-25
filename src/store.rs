@@ -44,10 +44,8 @@ pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<ser
     if !db.exists() {
         return Vec::new();
     }
-    let Ok(conn) = Connection::open_with_flags(
-        &db,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) else {
+    let Ok(conn) = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
         return Vec::new();
     };
     let Ok(mut stmt) =
@@ -113,7 +111,13 @@ pub fn read_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<ser
 /// a governance record. The decision/alias TEXT itself always lives in
 /// archietect.toml, never in this table — this only protects the audit
 /// trail of when it changed.
-const PROTECTED_KINDS: &[&str] = &["decision_added", "decision_removed", "alias_introduced", "alias_removed", "stale_alias"];
+const PROTECTED_KINDS: &[&str] = &[
+    "decision_added",
+    "decision_removed",
+    "alias_introduced",
+    "alias_removed",
+    "stale_alias",
+];
 
 /// Atomic via SQLite's own `ATTACH DATABASE`: the copy into the archive and
 /// the delete from the live table happen in ONE transaction on one
@@ -122,7 +126,11 @@ const PROTECTED_KINDS: &[&str] = &["decision_added", "decision_removed", "alias_
 /// window where a row exists in neither, or in both counted twice.
 pub fn archive_events_before(root: &Path, cutoff_ms: i64) -> Result<(usize, std::path::PathBuf)> {
     let live_db = root.join("archietect.db");
-    anyhow::ensure!(live_db.exists(), "no archietect.db at {} — nothing to archive", root.display());
+    anyhow::ensure!(
+        live_db.exists(),
+        "no archietect.db at {} — nothing to archive",
+        root.display()
+    );
 
     let archive_dir = root.join(".archietect");
     std::fs::create_dir_all(&archive_dir)
@@ -152,13 +160,20 @@ pub fn archive_events_before(root: &Path, cutoff_ms: i64) -> Result<(usize, std:
     // never external input — so interpolating them into the IN (...) list
     // carries no injection risk; rusqlite has no bind-parameter form for a
     // variable-length list.
-    let protected_sql = PROTECTED_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+    let protected_sql = PROTECTED_KINDS
+        .iter()
+        .map(|k| format!("'{k}'"))
+        .collect::<Vec<_>>()
+        .join(",");
     let where_clause = format!("ts_ms < ?1 AND kind NOT IN ({protected_sql})");
     let inserted = conn.execute(
         &format!("INSERT INTO archive.events (ts_ms, kind, concept, detail) SELECT ts_ms, kind, concept, detail FROM events WHERE {where_clause}"),
         [cutoff_ms],
     )?;
-    conn.execute(&format!("DELETE FROM events WHERE {where_clause}"), [cutoff_ms])?;
+    conn.execute(
+        &format!("DELETE FROM events WHERE {where_clause}"),
+        [cutoff_ms],
+    )?;
     conn.execute_batch("COMMIT; DETACH DATABASE archive;")?;
 
     Ok((inserted, archive_db))
@@ -167,12 +182,18 @@ pub fn archive_events_before(root: &Path, cutoff_ms: i64) -> Result<(usize, std:
 /// Read events previously moved by `archive_events_before`, same shape as
 /// `read_history`. Returns empty if no archive file exists yet — archiving
 /// is opt-in, so most projects never have one, and that's not an error.
-pub fn read_archived_history(root: &Path, concept: Option<&str>, limit: usize) -> Vec<serde_json::Value> {
+pub fn read_archived_history(
+    root: &Path,
+    concept: Option<&str>,
+    limit: usize,
+) -> Vec<serde_json::Value> {
     let archive_db = root.join(".archietect").join("history-archive.db");
     if !archive_db.exists() {
         return Vec::new();
     }
-    let Ok(conn) = Connection::open_with_flags(&archive_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+    let Ok(conn) =
+        Connection::open_with_flags(&archive_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
         return Vec::new();
     };
     let Ok(mut stmt) =
@@ -182,7 +203,12 @@ pub fn read_archived_history(root: &Path, concept: Option<&str>, limit: usize) -
     };
     let rows = stmt
         .query_map([limit.max(1) as i64 * 4], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
         })
         .map(|it| it.filter_map(|x| x.ok()).collect::<Vec<_>>())
         .unwrap_or_default();
@@ -217,7 +243,11 @@ fn join_capped(names: &[&str], cap: usize) -> String {
 }
 
 fn plural_s(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 /// A narrative-quality summary of the timeline, not a fact dump — deliberate
@@ -239,10 +269,16 @@ pub fn history_digest(root: &Path, limit: usize) -> serde_json::Value {
     use std::collections::BTreeMap;
     let mut by_kind: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
     for e in &events {
-        by_kind.entry(e["kind"].as_str().unwrap_or("").to_string()).or_default().push(e);
+        by_kind
+            .entry(e["kind"].as_str().unwrap_or("").to_string())
+            .or_default()
+            .push(e);
     }
     let concept_names = |kind: &str| -> Vec<&str> {
-        by_kind.get(kind).map(|v| v.iter().filter_map(|e| e["concept"].as_str()).collect()).unwrap_or_default()
+        by_kind
+            .get(kind)
+            .map(|v| v.iter().filter_map(|e| e["concept"].as_str()).collect())
+            .unwrap_or_default()
     };
 
     let mut narrative: Vec<String> = Vec::new();
@@ -252,26 +288,50 @@ pub fn history_digest(root: &Path, limit: usize) -> serde_json::Value {
     if ci_passed + ci_blocked > 0 {
         narrative.push(format!(
             "CI ran {} time{}: {} passed, {} blocked.",
-            ci_passed + ci_blocked, plural_s(ci_passed + ci_blocked), ci_passed, ci_blocked
+            ci_passed + ci_blocked,
+            plural_s(ci_passed + ci_blocked),
+            ci_passed,
+            ci_blocked
         ));
     }
 
     let appeared = concept_names("concept_appeared");
     if !appeared.is_empty() {
-        narrative.push(format!("{} new concept{} appeared: {}.", appeared.len(), plural_s(appeared.len()), join_capped(&appeared, 10)));
+        narrative.push(format!(
+            "{} new concept{} appeared: {}.",
+            appeared.len(),
+            plural_s(appeared.len()),
+            join_capped(&appeared, 10)
+        ));
     }
 
     if let Some(v) = by_kind.get("concept_renamed") {
-        let renames: Vec<String> = v.iter().map(|e| format!("{} → {}", e["detail"]["from"].as_str().unwrap_or("?"), e["detail"]["to"].as_str().unwrap_or("?"))).collect();
+        let renames: Vec<String> = v
+            .iter()
+            .map(|e| {
+                format!(
+                    "{} → {}",
+                    e["detail"]["from"].as_str().unwrap_or("?"),
+                    e["detail"]["to"].as_str().unwrap_or("?")
+                )
+            })
+            .collect();
         let refs: Vec<&str> = renames.iter().map(|s| s.as_str()).collect();
-        narrative.push(format!("{} concept{} renamed: {}.", v.len(), plural_s(v.len()), join_capped(&refs, 10)));
+        narrative.push(format!(
+            "{} concept{} renamed: {}.",
+            v.len(),
+            plural_s(v.len()),
+            join_capped(&refs, 10)
+        ));
     }
 
     let dup_risk = concept_names("duplicate_concept_risk");
     if !dup_risk.is_empty() {
         narrative.push(format!(
             "{} duplicate-concept risk{} flagged: {}.",
-            dup_risk.len(), plural_s(dup_risk.len()), join_capped(&dup_risk, 10)
+            dup_risk.len(),
+            plural_s(dup_risk.len()),
+            join_capped(&dup_risk, 10)
         ));
     }
 
@@ -279,36 +339,75 @@ pub fn history_digest(root: &Path, limit: usize) -> serde_json::Value {
     if !lost.is_empty() {
         narrative.push(format!(
             "{} concept{} lost all storage declarations: {}.",
-            lost.len(), plural_s(lost.len()), join_capped(&lost, 10)
+            lost.len(),
+            plural_s(lost.len()),
+            join_capped(&lost, 10)
         ));
     }
 
     if let Some(v) = by_kind.get("alias_introduced") {
-        let names: Vec<String> = v.iter().map(|e| format!("{} → {}", e["concept"].as_str().unwrap_or("?"), e["detail"]["target"].as_str().unwrap_or("?"))).collect();
+        let names: Vec<String> = v
+            .iter()
+            .map(|e| {
+                format!(
+                    "{} → {}",
+                    e["concept"].as_str().unwrap_or("?"),
+                    e["detail"]["target"].as_str().unwrap_or("?")
+                )
+            })
+            .collect();
         let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        narrative.push(format!("{} alias{} introduced: {}.", v.len(), plural_s(v.len()), join_capped(&refs, 10)));
+        narrative.push(format!(
+            "{} alias{} introduced: {}.",
+            v.len(),
+            plural_s(v.len()),
+            join_capped(&refs, 10)
+        ));
     }
     if let Some(v) = by_kind.get("alias_removed") {
         let names = concept_names("alias_removed");
-        narrative.push(format!("{} alias{} removed: {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+        narrative.push(format!(
+            "{} alias{} removed: {}.",
+            v.len(),
+            plural_s(v.len()),
+            join_capped(&names, 10)
+        ));
     }
     if let Some(v) = by_kind.get("decision_added") {
         let names = concept_names("decision_added");
-        narrative.push(format!("{} decision{} recorded: {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+        narrative.push(format!(
+            "{} decision{} recorded: {}.",
+            v.len(),
+            plural_s(v.len()),
+            join_capped(&names, 10)
+        ));
     }
     if let Some(v) = by_kind.get("decision_removed") {
         let names = concept_names("decision_removed");
-        narrative.push(format!("{} decision{} deleted (rationale lost, not just the record): {}.", v.len(), plural_s(v.len()), join_capped(&names, 10)));
+        narrative.push(format!(
+            "{} decision{} deleted (rationale lost, not just the record): {}.",
+            v.len(),
+            plural_s(v.len()),
+            join_capped(&names, 10)
+        ));
     }
     let stale = concept_names("stale_alias");
     if !stale.is_empty() {
-        narrative.push(format!("{} alias{} point at a concept that no longer exists: {}.", stale.len(), plural_s(stale.len()), join_capped(&stale, 10)));
+        narrative.push(format!(
+            "{} alias{} point at a concept that no longer exists: {}.",
+            stale.len(),
+            plural_s(stale.len()),
+            join_capped(&stale, 10)
+        ));
     }
     // Newest-first: the first architecture_version event in this window is
     // the latest version reached, not the first bump — narrate that one.
     if let Some(v) = by_kind.get("architecture_version") {
         if let Some(latest) = v.first() {
-            narrative.push(format!("Architecture version reached {}.", latest["concept"].as_str().unwrap_or("?")));
+            narrative.push(format!(
+                "Architecture version reached {}.",
+                latest["concept"].as_str().unwrap_or("?")
+            ));
         }
     }
 
@@ -335,7 +434,9 @@ pub fn bump_arch_version(root: &Path) -> Result<i64> {
     let conn = Connection::open(root.join("archietect.db"))?;
     conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")?;
     let cur: i64 = conn
-        .query_row("SELECT v FROM meta WHERE k='arch_version'", [], |r| r.get::<_, String>(0))
+        .query_row("SELECT v FROM meta WHERE k='arch_version'", [], |r| {
+            r.get::<_, String>(0)
+        })
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -364,7 +465,12 @@ pub fn bump_arch_version(root: &Path) -> Result<i64> {
 /// concept-set change — nothing else calls this. A project that has never
 /// run the daemon has zero snapshots, forever, and `concept_at_version`
 /// says so honestly rather than guessing.
-pub fn snapshot_concepts_at_version(root: &Path, version: i64, ts_ms: i64, idx: &Index) -> Result<()> {
+pub fn snapshot_concepts_at_version(
+    root: &Path,
+    version: i64,
+    ts_ms: i64,
+    idx: &Index,
+) -> Result<()> {
     let conn = Connection::open(root.join("archietect.db"))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS concept_snapshots (
@@ -383,9 +489,21 @@ pub fn snapshot_concepts_at_version(root: &Path, version: i64, ts_ms: i64, idx: 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for (name, c) in &idx.concepts {
-        let verdict = if c.usage.is_empty() { "DECLARED_ONLY" } else { "ACTIVE" };
+        let verdict = if c.usage.is_empty() {
+            "DECLARED_ONLY"
+        } else {
+            "ACTIVE"
+        };
         let fields = serde_json::to_string(&c.fields).unwrap_or_else(|_| "[]".to_string());
-        stmt.execute(rusqlite::params![version, ts_ms, name, verdict, c.table, fields, c.first_seen_ms])?;
+        stmt.execute(rusqlite::params![
+            version,
+            ts_ms,
+            name,
+            verdict,
+            c.table,
+            fields,
+            c.first_seen_ms
+        ])?;
     }
     Ok(())
 }
@@ -439,7 +557,11 @@ pub fn concept_at_version(root: &Path, concept: &str, version: i64) -> Option<se
     })
 }
 
-pub fn save(idx: &Index, graph: &crate::structural::StructuralGraph, root: &Path) -> Result<std::path::PathBuf> {
+pub fn save(
+    idx: &Index,
+    graph: &crate::structural::StructuralGraph,
+    root: &Path,
+) -> Result<std::path::PathBuf> {
     let db_path = root.join("archietect.db");
     let conn = Connection::open(&db_path)?;
     // WAL mode: under SQLite's default rollback-journal mode, a reader
@@ -495,23 +617,25 @@ pub fn load_raw(root: &Path) -> (Option<Index>, Option<crate::structural::Struct
     if !db_path.exists() {
         return (None, None);
     }
-    let conn = match Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) {
-        Ok(c) => c,
-        Err(_) => return (None, None),
-    };
+    let conn =
+        match Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(c) => c,
+            Err(_) => return (None, None),
+        };
     // Defense in depth alongside save()'s WAL switch: guards any other
     // transient lock (e.g. mid-checkpoint) instead of failing instantly and
     // silently, indistinguishable from having no saved index at all.
     let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
     let idx: Option<Index> = conn
-        .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| r.get::<_, String>(0))
+        .query_row("SELECT doc FROM idx WHERE k='index'", [], |r| {
+            r.get::<_, String>(0)
+        })
         .ok()
         .and_then(|doc| serde_json::from_str(&doc).ok());
     let graph: Option<crate::structural::StructuralGraph> = conn
-        .query_row("SELECT doc FROM idx WHERE k='structural'", [], |r| r.get::<_, String>(0))
+        .query_row("SELECT doc FROM idx WHERE k='structural'", [], |r| {
+            r.get::<_, String>(0)
+        })
         .ok()
         .and_then(|doc| serde_json::from_str(&doc).ok());
     (idx, graph)
@@ -524,38 +648,59 @@ fn chrono_ms() -> i64 {
         .unwrap_or(0)
 }
 
-
 #[cfg(test)]
 mod archive_tests {
     use super::*;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-archive-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-archive-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
     }
 
     fn event_count(db: &Path) -> i64 {
-        let conn = Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0)
+        let conn =
+            Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap_or(0)
     }
 
     #[test]
     fn archive_moves_old_events_and_preserves_all_of_them() {
         let root = tmp_project("basic");
-        append_events(&root, &[
-            (1000, "concept_appeared".into(), "Old1".into(), "{}".into()),
-            (2000, "concept_appeared".into(), "Old2".into(), "{}".into()),
-            (5000, "concept_appeared".into(), "Recent".into(), "{}".into()),
-        ]).unwrap();
+        append_events(
+            &root,
+            &[
+                (1000, "concept_appeared".into(), "Old1".into(), "{}".into()),
+                (2000, "concept_appeared".into(), "Old2".into(), "{}".into()),
+                (
+                    5000,
+                    "concept_appeared".into(),
+                    "Recent".into(),
+                    "{}".into(),
+                ),
+            ],
+        )
+        .unwrap();
 
         let (moved, archive_path) = archive_events_before(&root, 3000).unwrap();
         assert_eq!(moved, 2, "the two events before cutoff 3000 must be moved");
 
         let live_db = root.join("archietect.db");
-        assert_eq!(event_count(&live_db), 1, "only the recent event should remain live");
-        assert_eq!(event_count(&archive_path), 2, "both old events must be in the archive file");
+        assert_eq!(
+            event_count(&live_db),
+            1,
+            "only the recent event should remain live"
+        );
+        assert_eq!(
+            event_count(&archive_path),
+            2,
+            "both old events must be in the archive file"
+        );
 
         // Nothing lost: total across both locations equals what was written.
         let archived = read_archived_history(&root, None, 100);
@@ -585,16 +730,24 @@ mod archive_tests {
     #[test]
     fn archiving_twice_appends_to_the_same_archive_file_not_overwrite() {
         let root = tmp_project("twice");
-        append_events(&root, &[
-            (1000, "k".into(), "A".into(), "{}".into()),
-            (5000, "k".into(), "B".into(), "{}".into()),
-        ]).unwrap();
+        append_events(
+            &root,
+            &[
+                (1000, "k".into(), "A".into(), "{}".into()),
+                (5000, "k".into(), "B".into(), "{}".into()),
+            ],
+        )
+        .unwrap();
 
         archive_events_before(&root, 2000).unwrap(); // moves A
         archive_events_before(&root, 6000).unwrap(); // moves B, on top of A
 
         let archived = read_archived_history(&root, None, 100);
-        assert_eq!(archived.len(), 2, "second archive call must ADD to the archive, not replace it");
+        assert_eq!(
+            archived.len(),
+            2,
+            "second archive call must ADD to the archive, not replace it"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -602,23 +755,55 @@ mod archive_tests {
     #[test]
     fn protected_ontology_events_never_get_archived_regardless_of_age() {
         let root = tmp_project("protected");
-        append_events(&root, &[
-            (1000, "concept_appeared".into(), "Old".into(), "{}".into()),
-            (1000, "decision_added".into(), "widget-is-canonical".into(), "{}".into()),
-            (1000, "decision_removed".into(), "old-decision".into(), "{}".into()),
-            (1000, "alias_introduced".into(), "gadget".into(), "{}".into()),
-            (1000, "alias_removed".into(), "thing".into(), "{}".into()),
-            (1000, "stale_alias".into(), "ghost".into(), "{}".into()),
-        ]).unwrap();
+        append_events(
+            &root,
+            &[
+                (1000, "concept_appeared".into(), "Old".into(), "{}".into()),
+                (
+                    1000,
+                    "decision_added".into(),
+                    "widget-is-canonical".into(),
+                    "{}".into(),
+                ),
+                (
+                    1000,
+                    "decision_removed".into(),
+                    "old-decision".into(),
+                    "{}".into(),
+                ),
+                (
+                    1000,
+                    "alias_introduced".into(),
+                    "gadget".into(),
+                    "{}".into(),
+                ),
+                (1000, "alias_removed".into(), "thing".into(), "{}".into()),
+                (1000, "stale_alias".into(), "ghost".into(), "{}".into()),
+            ],
+        )
+        .unwrap();
 
         let (moved, _archive_path) = archive_events_before(&root, 3000).unwrap();
-        assert_eq!(moved, 1, "only the non-protected concept_appeared event should move");
+        assert_eq!(
+            moved, 1,
+            "only the non-protected concept_appeared event should move"
+        );
 
         let live = read_history(&root, None, 100);
-        assert_eq!(live.len(), 5, "the five protected ontology events must remain live despite being old: {live:?}");
-        let live_kinds: std::collections::BTreeSet<String> = live.iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect();
+        assert_eq!(
+            live.len(),
+            5,
+            "the five protected ontology events must remain live despite being old: {live:?}"
+        );
+        let live_kinds: std::collections::BTreeSet<String> = live
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap().to_string())
+            .collect();
         for k in PROTECTED_KINDS {
-            assert!(live_kinds.contains(*k), "{k} must still be live, got {live_kinds:?}");
+            assert!(
+                live_kinds.contains(*k),
+                "{k} must still be live, got {live_kinds:?}"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&root);
@@ -628,7 +813,10 @@ mod archive_tests {
     fn archive_on_project_with_no_db_returns_a_clear_error_not_a_panic() {
         let root = tmp_project("no-db");
         let result = archive_events_before(&root, 1000);
-        assert!(result.is_err(), "archiving a project with no archietect.db must error cleanly");
+        assert!(
+            result.is_err(),
+            "archiving a project with no archietect.db must error cleanly"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -646,7 +834,10 @@ mod digest_tests {
     use serde_json::json;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-digest-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-digest-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -663,19 +854,48 @@ mod digest_tests {
     #[test]
     fn narrates_real_events_grouped_by_kind_not_a_raw_dump() {
         let root = tmp_project("narrate");
-        append_events(&root, &[
-            (1_700_000_000_000, "concept_appeared".into(), "Widget".into(), "{}".into()),
-            (1_700_000_001_000, "concept_appeared".into(), "Gadget".into(), "{}".into()),
-            (1_700_000_002_000, "ci_passed".into(), "Widget".into(), "{}".into()),
-            (1_700_000_003_000, "ci_blocked".into(), "Gadget".into(), "{}".into()),
-            (1_700_000_004_000, "alias_introduced".into(), "gadget".into(), json!({"target": "Gadget"}).to_string()),
-            (
-                1_700_000_005_000,
-                "concept_renamed".into(),
-                "NewName".into(),
-                json!({"from": "OldName", "to": "NewName"}).to_string(),
-            ),
-        ]).unwrap();
+        append_events(
+            &root,
+            &[
+                (
+                    1_700_000_000_000,
+                    "concept_appeared".into(),
+                    "Widget".into(),
+                    "{}".into(),
+                ),
+                (
+                    1_700_000_001_000,
+                    "concept_appeared".into(),
+                    "Gadget".into(),
+                    "{}".into(),
+                ),
+                (
+                    1_700_000_002_000,
+                    "ci_passed".into(),
+                    "Widget".into(),
+                    "{}".into(),
+                ),
+                (
+                    1_700_000_003_000,
+                    "ci_blocked".into(),
+                    "Gadget".into(),
+                    "{}".into(),
+                ),
+                (
+                    1_700_000_004_000,
+                    "alias_introduced".into(),
+                    "gadget".into(),
+                    json!({"target": "Gadget"}).to_string(),
+                ),
+                (
+                    1_700_000_005_000,
+                    "concept_renamed".into(),
+                    "NewName".into(),
+                    json!({"from": "OldName", "to": "NewName"}).to_string(),
+                ),
+            ],
+        )
+        .unwrap();
 
         let d = history_digest(&root, 50);
         assert_eq!(d["available"], json!(true));
@@ -683,11 +903,38 @@ mod digest_tests {
         assert!(d["oldest_label"].is_string(), "{d}");
         assert!(d["newest_label"].is_string(), "{d}");
 
-        let narrative: Vec<String> = d["narrative"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
-        assert!(narrative.iter().any(|s| s.contains("2 new concepts appeared") && s.contains("Widget") && s.contains("Gadget")), "{narrative:?}");
-        assert!(narrative.iter().any(|s| s.contains("CI ran 2 times: 1 passed, 1 blocked")), "{narrative:?}");
-        assert!(narrative.iter().any(|s| s.contains("1 alias introduced") && s.contains("gadget → Gadget")), "{narrative:?}");
-        assert!(narrative.iter().any(|s| s.contains("1 concept renamed") && s.contains("OldName → NewName")), "{narrative:?}");
+        let narrative: Vec<String> = d["narrative"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            narrative
+                .iter()
+                .any(|s| s.contains("2 new concepts appeared")
+                    && s.contains("Widget")
+                    && s.contains("Gadget")),
+            "{narrative:?}"
+        );
+        assert!(
+            narrative
+                .iter()
+                .any(|s| s.contains("CI ran 2 times: 1 passed, 1 blocked")),
+            "{narrative:?}"
+        );
+        assert!(
+            narrative
+                .iter()
+                .any(|s| s.contains("1 alias introduced") && s.contains("gadget → Gadget")),
+            "{narrative:?}"
+        );
+        assert!(
+            narrative
+                .iter()
+                .any(|s| s.contains("1 concept renamed") && s.contains("OldName → NewName")),
+            "{narrative:?}"
+        );
 
         assert_eq!(d["by_kind_count"]["concept_appeared"], json!(2));
         let _ = std::fs::remove_dir_all(&root);
@@ -697,13 +944,28 @@ mod digest_tests {
     fn long_name_lists_are_capped_not_dumped() {
         let root = tmp_project("cap");
         let events: Vec<(i64, String, String, String)> = (0..15)
-            .map(|i| (1_700_000_000_000 + i, "concept_appeared".into(), format!("Concept{i}"), "{}".into()))
+            .map(|i| {
+                (
+                    1_700_000_000_000 + i,
+                    "concept_appeared".into(),
+                    format!("Concept{i}"),
+                    "{}".into(),
+                )
+            })
             .collect();
         append_events(&root, &events).unwrap();
 
         let d = history_digest(&root, 50);
-        let narrative: Vec<String> = d["narrative"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
-        let line = narrative.iter().find(|s| s.contains("new concepts appeared")).expect("appeared line");
+        let narrative: Vec<String> = d["narrative"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        let line = narrative
+            .iter()
+            .find(|s| s.contains("new concepts appeared"))
+            .expect("appeared line");
         assert!(line.contains("+5 more"), "{line}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -715,7 +977,10 @@ mod episodic_replay_tests {
     use serde_json::json;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-replay-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-replay-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -746,7 +1011,14 @@ mod episodic_replay_tests {
         assert_eq!(out["exact_version_match"], json!(true));
         assert_eq!(out["verdict"], json!("DECLARED_ONLY"));
         assert_eq!(out["table"], json!("Widget"));
-        assert!(out["fields"].as_array().unwrap().iter().any(|f| f == "name"), "{out}");
+        assert!(
+            out["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f == "name"),
+            "{out}"
+        );
         assert!(out["ts_label"].is_string(), "{out}");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -755,7 +1027,11 @@ mod episodic_replay_tests {
     #[test]
     fn querying_a_version_between_two_snapshots_falls_back_to_the_nearest_prior_one() {
         let root = tmp_project("fallback");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         let (idx, _graph) = crate::scan::scan(&root);
 
         snapshot_concepts_at_version(&root, 3, 1000, &idx).unwrap();
@@ -763,7 +1039,8 @@ mod episodic_replay_tests {
 
         // Version 6 has no snapshot of its own — must fall back to v3, not v9
         // (never look FORWARD in time) and not None (v3 genuinely exists).
-        let out = concept_at_version(&root, "Widget", 6).expect("must fall back to the nearest PRIOR snapshot");
+        let out = concept_at_version(&root, "Widget", 6)
+            .expect("must fall back to the nearest PRIOR snapshot");
         assert_eq!(out["snapshot_version"], json!(3));
         assert_eq!(out["exact_version_match"], json!(false));
 
@@ -773,7 +1050,11 @@ mod episodic_replay_tests {
     #[test]
     fn a_concept_that_did_not_exist_yet_at_the_requested_version_returns_none() {
         let root = tmp_project("not-yet-existed");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         let (idx, _graph) = crate::scan::scan(&root);
         // Only ever snapshotted starting at version 10 — Widget effectively
         // "didn't exist" in this project's recorded history before that.
@@ -789,7 +1070,10 @@ mod concurrent_access_tests {
     use super::*;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-concurrency-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-concurrency-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -809,13 +1093,23 @@ mod concurrent_access_tests {
     #[test]
     fn save_switches_the_database_to_wal_journal_mode() {
         let root = tmp_project("wal-mode");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         let (idx, graph) = crate::scan::scan(&root);
         save(&idx, &graph, &root).unwrap();
 
         let conn = Connection::open(root.join("archietect.db")).unwrap();
-        let mode: String = conn.query_row("PRAGMA journal_mode;", [], |r| r.get(0)).unwrap();
-        assert_eq!(mode.to_lowercase(), "wal", "save() must leave the database in WAL mode, not the default rollback journal");
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode;", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            mode.to_lowercase(),
+            "wal",
+            "save() must leave the database in WAL mode, not the default rollback journal"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -826,7 +1120,11 @@ mod concurrent_access_tests {
     #[test]
     fn load_raw_succeeds_while_another_connection_holds_an_open_write_transaction() {
         let root = tmp_project("read-during-write");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         let (idx, graph) = crate::scan::scan(&root);
         save(&idx, &graph, &root).unwrap();
 
@@ -842,7 +1140,10 @@ mod concurrent_access_tests {
         // skip it, so a failing assertion doesn't leave a locked temp file.
         let commit_result = writer.execute_batch("COMMIT;");
 
-        assert!(loaded_idx.is_some(), "a read must succeed even while another connection holds an open write transaction");
+        assert!(
+            loaded_idx.is_some(),
+            "a read must succeed even while another connection holds an open write transaction"
+        );
         assert!(loaded_graph.is_some());
         commit_result.unwrap();
 

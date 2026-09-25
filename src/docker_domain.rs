@@ -91,7 +91,10 @@ pub fn scan(root: &Path) -> Vec<Resource> {
                 id: Identity(format!("{repo_name}:{dockerfile_name}:{idx}:{image}")),
                 kind: "docker_image".to_string(),
                 domain: "docker".to_string(),
-                location: Location { file: dockerfile_path.display().to_string(), line: None },
+                location: Location {
+                    file: dockerfile_path.display().to_string(),
+                    line: None,
+                },
                 attributes: BTreeMap::from([
                     ("repository".to_string(), repo_name.clone()),
                     ("image".to_string(), image.clone()),
@@ -146,12 +149,21 @@ pub fn scan(root: &Path) -> Vec<Resource> {
                 (None, None) => format!("service '{}' declared in {compose_name}", service.name),
             };
             resources.push(Resource {
-                id: Identity(format!("{repo_name}:{compose_name}:service:{}", service.name)),
+                id: Identity(format!(
+                    "{repo_name}:{compose_name}:service:{}",
+                    service.name
+                )),
                 kind: "docker_service".to_string(),
                 domain: "docker".to_string(),
-                location: Location { file: compose_path.display().to_string(), line: None },
+                location: Location {
+                    file: compose_path.display().to_string(),
+                    line: None,
+                },
                 attributes: attrs,
-                evidence: vec![Evidence { tier: Tier::Declared, what }],
+                evidence: vec![Evidence {
+                    tier: Tier::Declared,
+                    what,
+                }],
             });
         }
     }
@@ -190,7 +202,9 @@ pub fn scan_observed(cfg: &crate::permissions::PermissionConfig, root: &Path) ->
         if declared.is_empty() {
             continue;
         }
-        let Some(states) = live_compose_states(&compose_path) else { continue };
+        let Some(states) = live_compose_states(&compose_path) else {
+            continue;
+        };
         for service in declared {
             let (what, running) = match states.get(&service.name) {
                 Some(state) if state == "running" => (
@@ -222,14 +236,20 @@ pub fn scan_observed(cfg: &crate::permissions::PermissionConfig, root: &Path) ->
                 )),
                 kind: "docker_service_observed".to_string(),
                 domain: "docker".to_string(),
-                location: Location { file: compose_path.display().to_string(), line: None },
+                location: Location {
+                    file: compose_path.display().to_string(),
+                    line: None,
+                },
                 attributes: BTreeMap::from([
                     ("repository".to_string(), repo_name.clone()),
                     ("service".to_string(), service.name.clone()),
                     ("source".to_string(), compose_name.clone()),
                     ("running".to_string(), running.to_string()),
                 ]),
-                evidence: vec![Evidence { tier: Tier::Observed, what }],
+                evidence: vec![Evidence {
+                    tier: Tier::Observed,
+                    what,
+                }],
             });
         }
     }
@@ -264,10 +284,13 @@ fn live_compose_states(compose_path: &Path) -> Option<BTreeMap<String, String>> 
         if line.is_empty() {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        let (Some(service), Some(state)) =
-            (value.get("Service").and_then(|v| v.as_str()), value.get("State").and_then(|v| v.as_str()))
-        else {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let (Some(service), Some(state)) = (
+            value.get("Service").and_then(|v| v.as_str()),
+            value.get("State").and_then(|v| v.as_str()),
+        ) else {
             continue;
         };
         states.insert(service.to_string(), state.to_string());
@@ -306,9 +329,13 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Option<std::process:
 /// environment-specific variants living alongside it, without recursing.
 fn dockerfiles_at_root(root: &Path) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(root) else { return out };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return out;
+    };
     for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if !file_type.is_file() {
             continue;
         }
@@ -328,11 +355,16 @@ fn dockerfiles_at_root(root: &Path) -> Vec<(String, std::path::PathBuf)> {
 /// (the DECLARED fact is "this image is the base," not "this image is
 /// interesting"), not a special case to filter out.
 fn from_images(dockerfile: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(dockerfile) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(dockerfile) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        let Some(rest) = line.strip_prefix("FROM ").or_else(|| line.strip_prefix("from ")) else {
+        let Some(rest) = line
+            .strip_prefix("FROM ")
+            .or_else(|| line.strip_prefix("from "))
+        else {
             continue;
         };
         let image = rest.split_whitespace().next().unwrap_or("").to_string();
@@ -349,8 +381,12 @@ fn from_images(dockerfile: &Path) -> Vec<String> {
 /// what's declared, don't guess which single file is authoritative"
 /// posture.
 fn compose_files_at_root(root: &Path) -> Vec<(String, std::path::PathBuf)> {
-    let candidates =
-        ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
+    let candidates = [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ];
     candidates
         .iter()
         .filter_map(|name| {
@@ -382,14 +418,16 @@ struct ComposeService {
 /// doesn't recognize is skipped, not treated as an error — a compose file
 /// using YAML features beyond this subset simply yields fewer resources.
 fn compose_services(compose_path: &Path) -> Vec<ComposeService> {
-    let Ok(text) = std::fs::read_to_string(compose_path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(compose_path) else {
+        return Vec::new();
+    };
     let lines: Vec<&str> = text.lines().collect();
 
     // Find the `services:` top-level key and its indentation (almost always
     // column 0, but tolerate a globally-indented file rather than assume).
-    let Some(services_idx) = lines.iter().position(|l| l.trim_end() == "services:"
-        || l.trim_start() == "services:" && indent_of(l) == 0)
-    else {
+    let Some(services_idx) = lines.iter().position(|l| {
+        l.trim_end() == "services:" || l.trim_start() == "services:" && indent_of(l) == 0
+    }) else {
         return Vec::new();
     };
     let services_indent = indent_of(lines[services_idx]);
@@ -507,8 +545,10 @@ mod tests {
     use super::*;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir()
-            .join(format!("archietect-docker-domain-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-docker-domain-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -528,7 +568,10 @@ mod tests {
         assert!(image.is_some(), "expected a docker_image resource");
         let image = image.unwrap();
         assert_eq!(image.domain, "docker");
-        assert_eq!(image.attributes.get("image").map(String::as_str), Some("node:20-alpine"));
+        assert_eq!(
+            image.attributes.get("image").map(String::as_str),
+            Some("node:20-alpine")
+        );
         assert_eq!(image.evidence[0].tier, Tier::Declared);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -544,22 +587,38 @@ mod tests {
         .unwrap();
 
         let resources = scan(&root);
-        let services: Vec<_> = resources.iter().filter(|r| r.kind == "docker_service").collect();
-        assert_eq!(services.len(), 2, "expected two services, got: {services:?}");
+        let services: Vec<_> = resources
+            .iter()
+            .filter(|r| r.kind == "docker_service")
+            .collect();
+        assert_eq!(
+            services.len(),
+            2,
+            "expected two services, got: {services:?}"
+        );
 
         let web = services
             .iter()
             .find(|r| r.attributes.get("service").map(String::as_str) == Some("web"))
             .expect("expected a 'web' service resource");
-        assert_eq!(web.attributes.get("image").map(String::as_str), Some("myapp:latest"));
-        assert_eq!(web.attributes.get("ports").map(String::as_str), Some("3000:3000,3001:3001"));
+        assert_eq!(
+            web.attributes.get("image").map(String::as_str),
+            Some("myapp:latest")
+        );
+        assert_eq!(
+            web.attributes.get("ports").map(String::as_str),
+            Some("3000:3000,3001:3001")
+        );
         assert_eq!(web.evidence[0].tier, Tier::Declared);
 
         let redis = services
             .iter()
             .find(|r| r.attributes.get("service").map(String::as_str) == Some("redis"))
             .expect("expected a 'redis' service resource");
-        assert_eq!(redis.attributes.get("image").map(String::as_str), Some("redis:7"));
+        assert_eq!(
+            redis.attributes.get("image").map(String::as_str),
+            Some("redis:7")
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -589,7 +648,11 @@ mod tests {
     fn scan_if_allowed_permits_when_explicitly_enabled() {
         let root = tmp_project("explicit-enabled");
         std::fs::write(root.join("Dockerfile"), "FROM alpine\n").unwrap();
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
 
         let cfg = crate::permissions::load(Path::new("/nonexistent/global.toml"), &root).unwrap();
         assert!(
@@ -609,24 +672,57 @@ mod tests {
         .unwrap();
 
         let resources = scan(&root);
-        let services: Vec<_> = resources.iter().filter(|r| r.kind == "docker_service").collect();
-        assert_eq!(services.len(), 3, "expected three services, got: {services:?}");
+        let services: Vec<_> = resources
+            .iter()
+            .filter(|r| r.kind == "docker_service")
+            .collect();
+        assert_eq!(
+            services.len(),
+            3,
+            "expected three services, got: {services:?}"
+        );
 
-        let api = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("api")).unwrap();
-        assert_eq!(api.attributes.get("build_context").map(String::as_str), Some("./backend"));
-        assert_eq!(api.attributes.get("build_dockerfile").map(String::as_str), Some("Dockerfile.prod"));
+        let api = services
+            .iter()
+            .find(|r| r.attributes.get("service").map(String::as_str) == Some("api"))
+            .unwrap();
+        assert_eq!(
+            api.attributes.get("build_context").map(String::as_str),
+            Some("./backend")
+        );
+        assert_eq!(
+            api.attributes.get("build_dockerfile").map(String::as_str),
+            Some("Dockerfile.prod")
+        );
 
-        let worker = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("worker")).unwrap();
-        assert_eq!(worker.attributes.get("build_context").map(String::as_str), Some("./worker-src"), "shorthand `build: ./dir` form must be captured as the context");
+        let worker = services
+            .iter()
+            .find(|r| r.attributes.get("service").map(String::as_str) == Some("worker"))
+            .unwrap();
+        assert_eq!(
+            worker.attributes.get("build_context").map(String::as_str),
+            Some("./worker-src"),
+            "shorthand `build: ./dir` form must be captured as the context"
+        );
 
-        let cache = services.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("cache")).unwrap();
-        assert!(cache.attributes.get("build_context").is_none(), "a plain image: service must have no build_context");
+        let cache = services
+            .iter()
+            .find(|r| r.attributes.get("service").map(String::as_str) == Some("cache"))
+            .unwrap();
+        assert!(
+            cache.attributes.get("build_context").is_none(),
+            "a plain image: service must have no build_context"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
     fn docker_enabled_cfg(root: &Path) -> crate::permissions::PermissionConfig {
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
         crate::permissions::load(Path::new("/nonexistent/global.toml"), root).unwrap()
     }
 
@@ -668,7 +764,10 @@ mod tests {
         // Exercises the same graceful-None path a missing binary or an
         // unreachable daemon would also take.
         let result = live_compose_states(Path::new("/nonexistent/archietect-test/compose.yml"));
-        assert!(result.is_none(), "a compose file docker can't open must yield None, never a guessed state");
+        assert!(
+            result.is_none(),
+            "a compose file docker can't open must yield None, never a guessed state"
+        );
     }
 
     /// Kills and removes the real containers/network this test brings up,
@@ -714,24 +813,51 @@ mod tests {
             .stderr(Stdio::null())
             .status();
         let _guard = ComposeGuard(compose_path.clone());
-        assert!(up.map(|s| s.success()).unwrap_or(false), "docker compose up -d web must succeed in this sandbox");
+        assert!(
+            up.map(|s| s.success()).unwrap_or(false),
+            "docker compose up -d web must succeed in this sandbox"
+        );
 
         let resources = scan_observed(&cfg, &root);
-        let observed: Vec<_> = resources.iter().filter(|r| r.kind == "docker_service_observed").collect();
-        assert_eq!(observed.len(), 2, "expected one observed resource per declared service, got: {observed:?}");
+        let observed: Vec<_> = resources
+            .iter()
+            .filter(|r| r.kind == "docker_service_observed")
+            .collect();
+        assert_eq!(
+            observed.len(),
+            2,
+            "expected one observed resource per declared service, got: {observed:?}"
+        );
 
-        let web = observed.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("web")).unwrap();
-        assert_eq!(web.attributes.get("running").map(String::as_str), Some("true"));
+        let web = observed
+            .iter()
+            .find(|r| r.attributes.get("service").map(String::as_str) == Some("web"))
+            .unwrap();
+        assert_eq!(
+            web.attributes.get("running").map(String::as_str),
+            Some("true")
+        );
         assert_eq!(web.evidence[0].tier, Tier::Observed);
-        assert!(web.evidence[0].what.contains("RUNNING"), "{}", web.evidence[0].what);
+        assert!(
+            web.evidence[0].what.contains("RUNNING"),
+            "{}",
+            web.evidence[0].what
+        );
 
-        let cache = observed.iter().find(|r| r.attributes.get("service").map(String::as_str) == Some("cache")).unwrap();
+        let cache = observed
+            .iter()
+            .find(|r| r.attributes.get("service").map(String::as_str) == Some("cache"))
+            .unwrap();
         assert_eq!(
             cache.attributes.get("running").map(String::as_str),
             Some("false"),
             "cache' was declared but never started — must be observed NOT running, never omitted or guessed"
         );
-        assert!(cache.evidence[0].what.contains("NOT running"), "{}", cache.evidence[0].what);
+        assert!(
+            cache.evidence[0].what.contains("NOT running"),
+            "{}",
+            cache.evidence[0].what
+        );
 
         drop(_guard);
         let _ = std::fs::remove_dir_all(&root);

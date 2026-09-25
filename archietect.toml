@@ -104,3 +104,18 @@ decision = "CLI, REST, and MCP all call the same query functions in query.rs wit
 because = "business logic in a transport layer creates drift — the same query asked over CLI vs MCP must produce identical output"
 rejected = ["MCP-specific ranking logic", "REST-only features", "CLI shortcuts that bypass evidence checks"]
 links = ["Index"]
+[[decision]]
+id = "django-nested-symbols-are-scoped"
+decision = "Mutation identity treats nested Django declarations as scoped by their enclosing model."
+because = "Multiple Django models may each declare class Meta; a bare nested name is not a duplicate architectural symbol."
+rejected = ["Blocking all Python changes when nested declarations share a name"]
+links = ["Mutation", "Symbol"]
+proposed_by = "human"
+
+[[decision]]
+id = "evidence-backed-runtime-and-change-workflow"
+decision = "Architectural extraction, freshness, runtime observations, impact diffs, evidence envelopes, and workflow checks remain explicit, read-only evidence layers over the shared index."
+because = "Agents and humans need one deterministic record of what was inspected, what remains unverified, and what a proposed change affects without silently converting missing observation into absence or allowing a transport to mutate the repository."
+rejected = ["Treating a failed probe as route absence", "Duplicating workflow logic in each transport", "Applying runtime observations as edits to source code"]
+links = ["Index", "StructuralGraph", "ChangedFile", "Evidence", "Runtime", "workflow_check", "impact_report", "contradictions", "verify_http", "verify_browser", "extract", "extract_rs_syn", "extract_snapshot", "route_call_dependents", "routes_for_concept", "suspected_duplicate_logic", "symbol_sources", "symbols_for_concept", "verify_edit"]
+proposed_by = "human"

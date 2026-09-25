@@ -15,7 +15,9 @@
 use crate::humanize::age_label;
 use crate::model::{name_tokens, names_concept, same_word, Evidence, Index, Tier};
 use crate::scoring;
-use crate::structural::{routes_for_concept, structural_dependents, symbols_for_concept, StructuralGraph};
+use crate::structural::{
+    routes_for_concept, structural_dependents, symbols_for_concept, StructuralGraph,
+};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
@@ -86,7 +88,13 @@ fn concept_card(idx: &Index, graph: &StructuralGraph, name: &str, term: &str) ->
 /// runs at all (law-011), rather than only as a fallback when name search
 /// comes up empty — the ordering that let an unrelated struct silently defeat
 /// a declared alias.
-fn resolve_alias(idx: &Index, graph: &StructuralGraph, term: &str, alias_key: &str, target: &str) -> Value {
+fn resolve_alias(
+    idx: &Index,
+    graph: &StructuralGraph,
+    term: &str,
+    alias_key: &str,
+    target: &str,
+) -> Value {
     // LAW-010: an alias target is an EXACT concept name, not a search term.
     // Feeding it back through term matching broke on any multi-token target —
     // a declared alias whose target is a multi-word concept name got UNKNOWN, because
@@ -177,11 +185,21 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         // message. We keep them in the concept table (they're legitimately
         // queryable) but label them honestly.
         let is_in_memory_struct = c.table.is_none()
-            && c.declared_in.iter().all(|(_, k)| matches!(k.as_str(), "rust" | "go-struct"));
+            && c.declared_in
+                .iter()
+                .all(|(_, k)| matches!(k.as_str(), "rust" | "go-struct"));
         let verdict = if is_in_memory_struct {
-            if used { "ACTIVE" } else { "SYMBOL" }
+            if used {
+                "ACTIVE"
+            } else {
+                "SYMBOL"
+            }
         } else {
-            if used { "ACTIVE" } else { "DECLARED_ONLY" }
+            if used {
+                "ACTIVE"
+            } else {
+                "DECLARED_ONLY"
+            }
         };
         let confidence = if used {
             "high".to_string()
@@ -238,7 +256,10 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     structural_hits.sort_by(|a, b| {
         let exact_a = same_word(&a.name, term);
         let exact_b = same_word(&b.name, term);
-        exact_b.cmp(&exact_a).then(a.file.cmp(&b.file)).then(a.name.cmp(&b.name))
+        exact_b
+            .cmp(&exact_a)
+            .then(a.file.cmp(&b.file))
+            .then(a.name.cmp(&b.name))
     });
     // A route can exist with NO symbol sharing its name at all — e.g. a
     // gRPC `rpc SayHello(...)` has no standalone "SayHello" symbol, only a
@@ -284,7 +305,11 @@ pub fn concept(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         let linked_routes: Vec<&crate::structural::Route> = graph
             .routes
             .iter()
-            .filter(|r| hit_files.contains(r.file.as_str()) || same_word(&r.handler, term) || names_concept(&r.handler, term))
+            .filter(|r| {
+                hit_files.contains(r.file.as_str())
+                    || same_word(&r.handler, term)
+                    || names_concept(&r.handler, term)
+            })
             .take(10)
             .collect();
         // See impact()'s own comment on route_call_dependents for the full
@@ -479,15 +504,20 @@ pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
         .chain(graph.symbols.values().map(|s| &s.name))
         .filter(|name| {
             let n = name.to_lowercase();
-            lower_text
-                .match_indices(&n)
-                .any(|(i, _)| {
-                    let before = i.checked_sub(1).and_then(|j| lower_text.as_bytes().get(j)).copied();
-                    let end = i + n.len();
-                    let after = lower_text.as_bytes().get(end).copied();
-                    before.map(|b| !(b.is_ascii_alphanumeric() || b == b'_')).unwrap_or(true)
-                        && after.map(|b| !(b.is_ascii_alphanumeric() || b == b'_')).unwrap_or(true)
-                })
+            lower_text.match_indices(&n).any(|(i, _)| {
+                let before = i
+                    .checked_sub(1)
+                    .and_then(|j| lower_text.as_bytes().get(j))
+                    .copied();
+                let end = i + n.len();
+                let after = lower_text.as_bytes().get(end).copied();
+                before
+                    .map(|b| !(b.is_ascii_alphanumeric() || b == b'_'))
+                    .unwrap_or(true)
+                    && after
+                        .map(|b| !(b.is_ascii_alphanumeric() || b == b'_'))
+                        .unwrap_or(true)
+            })
         })
         .map(|name| name.to_lowercase())
         .collect();
@@ -637,21 +667,29 @@ fn impact_field(
     };
     let canon = match r["canonical"].as_str().map(String::from) {
         Some(c) => c,
-        None => return json!({
-            "target": original_term,
-            "verdict": "ABSENT",
-            "note": format!("Concept '{}' not found — cannot check field '{}'", concept_term, field_name),
-        }),
+        None => {
+            return json!({
+                "target": original_term,
+                "verdict": "ABSENT",
+                "note": format!("Concept '{}' not found — cannot check field '{}'", concept_term, field_name),
+            })
+        }
     };
 
     // 2. Validate the field exists in the concept's declared fields
-    let concept_fields = idx.concepts.get(&canon)
+    let concept_fields = idx
+        .concepts
+        .get(&canon)
         .map(|c| c.fields.clone())
         .unwrap_or_default();
-    let field_exists = concept_fields.iter().any(|f| f.eq_ignore_ascii_case(field_name));
+    let field_exists = concept_fields
+        .iter()
+        .any(|f| f.eq_ignore_ascii_case(field_name));
 
     // 3. Get all files that use the concept
-    let usage_files: Vec<String> = idx.concepts.get(&canon)
+    let usage_files: Vec<String> = idx
+        .concepts
+        .get(&canon)
         .map(|c| c.usage.iter().map(|(f, _)| f.clone()).collect())
         .unwrap_or_default();
 
@@ -673,8 +711,10 @@ fn impact_field(
             let flen = field_bytes.len();
             for i in 0..bytes.len().saturating_sub(flen) {
                 if &bytes[i..i + flen] == field_bytes {
-                    let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
-                    let after_ok = i + flen >= bytes.len() || !bytes[i + flen].is_ascii_alphanumeric() && bytes[i + flen] != b'_';
+                    let before_ok =
+                        i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+                    let after_ok = i + flen >= bytes.len()
+                        || !bytes[i + flen].is_ascii_alphanumeric() && bytes[i + flen] != b'_';
                     if before_ok && after_ok {
                         found = true;
                         break;
@@ -704,9 +744,6 @@ fn impact_field(
         "evidence_note": "field_usage_files = files that use the concept AND contain the field name at an identifier boundary (word-boundary string search, case-insensitive). Evidence of LIKELY field access — not proof. Generic field names (id, name, type) will produce false positives.",
     })
 }
-
-
-
 
 pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
     // Column-level query: "User.email" — split on first dot, validate the
@@ -801,7 +838,8 @@ pub fn impact(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
 /// This is a separate, one-file-at-a-time query instead, same shape as
 /// `impact`.
 pub fn imports(graph: &StructuralGraph, file: &str) -> Value {
-    let known_files: std::collections::BTreeSet<String> = graph.file_facts.keys().cloned().collect();
+    let known_files: std::collections::BTreeSet<String> =
+        graph.file_facts.keys().cloned().collect();
 
     let outgoing: Vec<Value> = graph
         .imports
@@ -829,7 +867,11 @@ pub fn imports(graph: &StructuralGraph, file: &str) -> Value {
 }
 
 pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
-    let used = idx.concepts.values().filter(|c| !c.usage.is_empty()).count();
+    let used = idx
+        .concepts
+        .values()
+        .filter(|c| !c.usage.is_empty())
+        .count();
     let dead: Vec<&String> = idx
         .concepts
         .iter()
@@ -841,9 +883,29 @@ pub fn status(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value 
         .collect();
     let mut relationships = same_project_relationships(idx);
     relationships.extend(built_from_relationships(idx));
+    let current_commit = crate::scan::current_commit_sha(std::path::Path::new(&idx.root));
+    let dirty = crate::scan::working_tree_dirty(std::path::Path::new(&idx.root));
+    let commit_matches = match (&idx.source_commit_sha, &current_commit) {
+        (Some(indexed), Some(current)) => Some(indexed == current),
+        _ => None,
+    };
+    let freshness_status = match (commit_matches, dirty) {
+        (Some(false), _) => "stale_commit",
+        (Some(true), Some(true)) => "stale_worktree",
+        (Some(true), Some(false)) => "fresh",
+        _ => "unknown",
+    };
     json!({
         "root": idx.root,
         "files_scanned": idx.files_scanned,
+        "scanned_at_ms": idx.scanned_at_ms,
+        "source_commit_sha": idx.source_commit_sha,
+        "freshness": {
+            "status": freshness_status,
+            "current_commit_sha": current_commit,
+            "tracked_worktree_dirty": dirty,
+            "note": "fresh means HEAD matches and tracked files are clean; unknown means this root is not a resolvable git checkout",
+        },
         "declaration_files": idx.declaration_files,
         "concepts_declared": idx.concepts.len(),
         "concepts_with_observed_usage": used,
@@ -963,7 +1025,9 @@ fn same_project_relationships(idx: &Index) -> Vec<crate::resource::Relationship>
 /// a second, redundant relationship for it would be noise, not a new fact.
 fn built_from_relationships(idx: &Index) -> Vec<crate::resource::Relationship> {
     let root = std::path::Path::new(&idx.root);
-    let Ok(canon_root) = root.canonicalize() else { return Vec::new() };
+    let Ok(canon_root) = root.canonicalize() else {
+        return Vec::new();
+    };
     let cfg = crate::permissions::default_global_config_path()
         .and_then(|p| crate::permissions::load(&p, root))
         .unwrap_or_default();
@@ -973,8 +1037,12 @@ fn built_from_relationships(idx: &Index) -> Vec<crate::resource::Relationship> {
     let resources = crate::docker_domain::scan_if_allowed(&cfg, root);
     let mut rels = Vec::new();
     for r in resources.iter().filter(|r| r.kind == "docker_service") {
-        let Some(context) = r.attributes.get("build_context") else { continue };
-        let Ok(canon_candidate) = root.join(context).canonicalize() else { continue };
+        let Some(context) = r.attributes.get("build_context") else {
+            continue;
+        };
+        let Ok(canon_candidate) = root.join(context).canonicalize() else {
+            continue;
+        };
         if !canon_candidate.starts_with(&canon_root) {
             continue; // escapes root — never claim identity across it
         }
@@ -984,7 +1052,9 @@ fn built_from_relationships(idx: &Index) -> Vec<crate::resource::Relationship> {
         if !canon_candidate.is_dir() {
             continue;
         }
-        let Ok(relative) = canon_candidate.strip_prefix(&canon_root) else { continue };
+        let Ok(relative) = canon_candidate.strip_prefix(&canon_root) else {
+            continue;
+        };
         let relative_display = relative.display().to_string();
         rels.push(crate::resource::Relationship {
             from: r.id.clone(),
@@ -1071,16 +1141,11 @@ fn docker_status_section(idx: &Index) -> Value {
 /// matching `intent()`'s equivalent check, which already treats
 /// `ACTIVE`/`DECLARED_ONLY`/`STRUCTURAL` uniformly.
 pub fn guard(idx: &Index, graph: &StructuralGraph, sql: &str) -> Value {
-    let re = regex::RegexBuilder::new(
-        r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#,
-    )
-    .case_insensitive(true)
-    .build()
-    .unwrap();
-    let proposed: Vec<String> = re
-        .captures_iter(sql)
-        .map(|c| c[1].to_string())
-        .collect();
+    let re = regex::RegexBuilder::new(r#"create\s+table\s+(?:if\s+not\s+exists\s+)?["'`]?(\w+)"#)
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    let proposed: Vec<String> = re.captures_iter(sql).map(|c| c[1].to_string()).collect();
     if proposed.is_empty() {
         return json!({
             "allowed": true,
@@ -1122,9 +1187,10 @@ pub fn guard(idx: &Index, graph: &StructuralGraph, sql: &str) -> Value {
             .get(&canonical)
             .and_then(|c| c.table.as_deref())
             .unwrap_or(&canonical);
-        let is_known = matches!(verdict, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL") && !canonical.is_empty();
-        let is_exact_redeclaration =
-            is_known && (t.eq_ignore_ascii_case(canonical_table) || t.eq_ignore_ascii_case(&canonical));
+        let is_known =
+            matches!(verdict, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL") && !canonical.is_empty();
+        let is_exact_redeclaration = is_known
+            && (t.eq_ignore_ascii_case(canonical_table) || t.eq_ignore_ascii_case(&canonical));
         let status = if is_known && !is_exact_redeclaration {
             // Cite the governing DECISION when one is declared. "The table
             // already exists" states a fact; the decision states the REASONING
@@ -1194,7 +1260,9 @@ fn top_segment(path: &str) -> String {
     // In a monorepo the first segment is a CONTAINER, not an owner — 'crates'
     // owns nothing; 'crates/payment_knowledge' is the answer a human wants.
     // The container list is ecosystem convention (like SKIP_DIRS), not a guess.
-    const CONTAINERS: &[&str] = &["crates", "packages", "apps", "bin", "services", "libs", "modules"];
+    const CONTAINERS: &[&str] = &[
+        "crates", "packages", "apps", "bin", "services", "libs", "modules",
+    ];
     let mut it = path.split('/');
     let first = it.next().unwrap_or("root");
     if CONTAINERS.contains(&first) {
@@ -1209,15 +1277,22 @@ fn top_segment(path: &str) -> String {
 }
 
 /// Repository summary for someone who just cloned it.
-pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &std::path::Path) -> Value {
+pub fn doctor(
+    idx: &Index,
+    graph: &crate::structural::StructuralGraph,
+    root: &std::path::Path,
+) -> Value {
     // Domains = where declarations LIVE (top-level directories) — derived from
     // the tree's own organisation, not from a curated list.
     let mut domains: std::collections::BTreeMap<String, usize> = Default::default();
     for (f, _) in &idx.declaration_files {
         *domains.entry(top_segment(f)).or_default() += 1;
     }
-    let mut top: Vec<(&String, usize)> =
-        idx.concepts.iter().map(|(n, c)| (n, c.usage.len())).collect();
+    let mut top: Vec<(&String, usize)> = idx
+        .concepts
+        .iter()
+        .map(|(n, c)| (n, c.usage.len()))
+        .collect();
     top.sort_by(|a, b| b.1.cmp(&a.1));
     let unused: Vec<&String> = idx
         .concepts
@@ -1257,10 +1332,11 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         idx.concepts.keys().take(10).collect()
     };
 
-    let avg_query_payload_bytes: u64 = if sample_concepts.is_empty() {
-        0
-    } else {
-        let total: u64 = sample_concepts.iter().map(|name| {
+    let avg_query_payload_bytes: u64 =
+        if sample_concepts.is_empty() {
+            0
+        } else {
+            let total: u64 = sample_concepts.iter().map(|name| {
             // Simulate a concept() call by serializing the concept card JSON —
             // same data the CLI/MCP sends, measured at the actual wire size.
             let c = &idx.concepts[*name];
@@ -1278,8 +1354,8 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
             });
             serde_json::to_string(&card).map(|s| s.len() as u64).unwrap_or(500)
         }).sum();
-        total / sample_concepts.len() as u64
-    };
+            total / sample_concepts.len() as u64
+        };
 
     // The honest denominator for the reduction claim is NOT the entire source
     // corpus — it's the files an agent would open to answer one discovery
@@ -1289,16 +1365,24 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
     // file set across all concepts (not just the top 10, and using median not
     // mean to reduce skew from load-bearing concepts like Index/Model that
     // appear everywhere and would make the denominator artificially large).
-    let mut all_candidate_bytes: Vec<u64> = idx.concepts.keys().map(|name| {
-        let c = &idx.concepts[name];
-        let candidate_files: std::collections::BTreeSet<&str> = c.declared_in.iter()
-            .map(|(f, _)| f.as_str())
-            .chain(c.usage.iter().map(|(f, _)| f.as_str()))
-            .collect();
-        candidate_files.iter().map(|f| {
-            idx.file_facts.get(*f).map(|ff| ff.size).unwrap_or(0)
-        }).sum::<u64>()
-    }).filter(|&b| b > 0).collect();
+    let mut all_candidate_bytes: Vec<u64> = idx
+        .concepts
+        .keys()
+        .map(|name| {
+            let c = &idx.concepts[name];
+            let candidate_files: std::collections::BTreeSet<&str> = c
+                .declared_in
+                .iter()
+                .map(|(f, _)| f.as_str())
+                .chain(c.usage.iter().map(|(f, _)| f.as_str()))
+                .collect();
+            candidate_files
+                .iter()
+                .map(|f| idx.file_facts.get(*f).map(|ff| ff.size).unwrap_or(0))
+                .sum::<u64>()
+        })
+        .filter(|&b| b > 0)
+        .collect();
     all_candidate_bytes.sort_unstable();
 
     let median_candidate_bytes: u64 = if all_candidate_bytes.is_empty() {
@@ -1312,16 +1396,22 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
     let avg_candidate_bytes: u64 = if sample_concepts.is_empty() {
         0
     } else {
-        let total: u64 = sample_concepts.iter().map(|name| {
-            let c = &idx.concepts[*name];
-            let candidate_files: std::collections::BTreeSet<&str> = c.declared_in.iter()
-                .map(|(f, _)| f.as_str())
-                .chain(c.usage.iter().map(|(f, _)| f.as_str()))
-                .collect();
-            candidate_files.iter().map(|f| {
-                idx.file_facts.get(*f).map(|ff| ff.size).unwrap_or(0)
-            }).sum::<u64>()
-        }).sum();
+        let total: u64 = sample_concepts
+            .iter()
+            .map(|name| {
+                let c = &idx.concepts[*name];
+                let candidate_files: std::collections::BTreeSet<&str> = c
+                    .declared_in
+                    .iter()
+                    .map(|(f, _)| f.as_str())
+                    .chain(c.usage.iter().map(|(f, _)| f.as_str()))
+                    .collect();
+                candidate_files
+                    .iter()
+                    .map(|f| idx.file_facts.get(*f).map(|ff| ff.size).unwrap_or(0))
+                    .sum::<u64>()
+            })
+            .sum();
         total / sample_concepts.len() as u64
     };
 
@@ -1335,12 +1425,14 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
         0
     };
 
-    let discovery_payload_reduction: String = if reduction_denominator > 0 && avg_query_payload_bytes > 0 {
-        let reduction = (1.0 - (avg_query_payload_bytes as f64 / reduction_denominator as f64)) * 100.0;
-        format!("{:.1}%", reduction.min(99.9_f64).max(0.0_f64))
-    } else {
-        "n/a (insufficient data)".to_string()
-    };
+    let discovery_payload_reduction: String =
+        if reduction_denominator > 0 && avg_query_payload_bytes > 0 {
+            let reduction =
+                (1.0 - (avg_query_payload_bytes as f64 / reduction_denominator as f64)) * 100.0;
+            format!("{:.1}%", reduction.min(99.9_f64).max(0.0_f64))
+        } else {
+            "n/a (insufficient data)".to_string()
+        };
 
     json!({
         "domains": domains,
@@ -1383,31 +1475,42 @@ pub fn doctor(idx: &Index, graph: &crate::structural::StructuralGraph, root: &st
 /// than being silently matched to a similarly named replacement.
 pub fn stale_decision_links(idx: &Index, graph: &crate::structural::StructuralGraph) -> Vec<Value> {
     fn resolves(name: &str, idx: &Index, graph: &crate::structural::StructuralGraph) -> bool {
-        if idx.concepts.contains_key(name) || graph.symbols.contains_key(name)
-            || graph.symbols.values().any(|s| s.name == name) {
+        if idx.concepts.contains_key(name)
+            || graph.symbols.contains_key(name)
+            || graph.symbols.values().any(|s| s.name == name)
+        {
             return true;
         }
         let mut current = name;
         let mut seen = std::collections::BTreeSet::new();
         while let Some(next) = idx.aliases.get(current) {
-            if !seen.insert(current) { return false; }
+            if !seen.insert(current) {
+                return false;
+            }
             current = next;
-            if idx.concepts.contains_key(current) || graph.symbols.contains_key(current)
-                || graph.symbols.values().any(|s| s.name == current) {
+            if idx.concepts.contains_key(current)
+                || graph.symbols.contains_key(current)
+                || graph.symbols.values().any(|s| s.name == current)
+            {
                 return true;
             }
         }
         false
     }
-    idx.decisions.iter().flat_map(|decision| decision.links.iter().filter_map(|link| {
-        let link = link.trim();
-        (!link.is_empty() && !resolves(link, idx, graph)).then(|| json!({
+    idx.decisions
+        .iter()
+        .flat_map(|decision| {
+            decision.links.iter().filter_map(|link| {
+                let link = link.trim();
+                (!link.is_empty() && !resolves(link, idx, graph)).then(|| json!({
             "decision_id": decision.id,
             "link": link,
             "status": decision.status,
             "reason": "decision link does not resolve to a current concept or structural symbol",
         }))
-    })).collect()
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1435,16 +1538,21 @@ mod stale_decision_link_tests {
 /// alias is a "don't create X" waiting to happen, and every decision's
 /// rejected list is literally what the next person is about to propose.
 pub fn tour(idx: &Index, graph: &crate::structural::StructuralGraph) -> Value {
-    let mut top: Vec<(&String, usize)> =
-        idx.concepts.iter().map(|(n, c)| (n, c.usage.len())).collect();
+    let mut top: Vec<(&String, usize)> = idx
+        .concepts
+        .iter()
+        .map(|(n, c)| (n, c.usage.len()))
+        .collect();
     top.sort_by(|a, b| b.1.cmp(&a.1));
 
     let mut mistakes: Vec<String> = idx
         .aliases
         .iter()
-        .map(|(alias, target)| format!(
+        .map(|(alias, target)| {
+            format!(
             "Don't create '{alias}' — '{target}' already owns that responsibility (declared alias)."
-        ))
+        )
+        })
         .collect();
     for d in &idx.decisions {
         for r in &d.rejected {
@@ -1514,11 +1622,16 @@ pub fn duplicates(idx: &Index) -> Value {
         // here are always >= 5 bytes — see the `t.len() >= 5` filter
         // below) — so skipping short strings here loses no real match.
     }
-    let mut prefix_index: std::collections::HashMap<[u8; 4], Vec<usize>> = std::collections::HashMap::new();
+    let mut prefix_index: std::collections::HashMap<[u8; 4], Vec<usize>> =
+        std::collections::HashMap::new();
     for (i, name) in names.iter().enumerate() {
         let mut prefixes: std::collections::HashSet<[u8; 4]> = std::collections::HashSet::new();
         prefixes.extend(prefix4(name));
-        prefixes.extend(crate::model::name_tokens(name).iter().filter_map(|t| prefix4(t)));
+        prefixes.extend(
+            crate::model::name_tokens(name)
+                .iter()
+                .filter_map(|t| prefix4(t)),
+        );
         for p in prefixes {
             prefix_index.entry(p).or_default().push(i);
         }
@@ -1527,7 +1640,10 @@ pub fn duplicates(idx: &Index) -> Value {
     let mut needs_alias = Vec::new();
     for i in 0..names.len() {
         let a = names[i];
-        let tokens_a: Vec<String> = crate::model::name_tokens(a).into_iter().filter(|t| t.len() >= 5).collect();
+        let tokens_a: Vec<String> = crate::model::name_tokens(a)
+            .into_iter()
+            .filter(|t| t.len() >= 5)
+            .collect();
         // Candidate j's this could possibly match, deduped and in ascending
         // order — a BTreeSet reproduces the original nested loop's j-order
         // exactly, which matters: only the first 40 pairs survive
@@ -1544,17 +1660,19 @@ pub fn duplicates(idx: &Index) -> Value {
             // real check the O(n^2) version ran, just on far fewer pairs —
             // and still picks the FIRST of a's own tokens that matches,
             // exactly like the old `shared[0]` did.
-            let Some(shared_token) = tokens_a.iter().find(|t| names_concept(b, t)) else { continue };
+            let Some(shared_token) = tokens_a.iter().find(|t| names_concept(b, t)) else {
+                continue;
+            };
             let (ca, cb) = (&idx.concepts[a.as_str()], &idx.concepts[b.as_str()]);
-            let sql_only = |c: &crate::model::Concept| c.declared_in.iter().all(|(_, k)| k == "sql");
+            let sql_only =
+                |c: &crate::model::Concept| c.declared_in.iter().all(|(_, k)| k == "sql");
             let orm = |c: &crate::model::Concept| c.declared_in.iter().any(|(_, k)| k != "sql");
             // An ORM model beside an sql-tier table sharing its name is
             // PROBABLY one concept the merge law cannot fold, because the
             // model declares no table name (we refuse to run inflection
             // engines). That is not a duplicate — it is a missing link,
             // and the fix is a one-line alias declaration.
-            let same_concept_unlinked =
-                (sql_only(ca) && orm(cb)) || (sql_only(cb) && orm(ca));
+            let same_concept_unlinked = (sql_only(ca) && orm(cb)) || (sql_only(cb) && orm(ca));
             let entry = json!({
                 "concepts": [a, b],
                 "shared_token": shared_token,
@@ -1688,7 +1806,10 @@ pub fn owner(idx: &Index, graph: &StructuralGraph, term: &str) -> Value {
         .map(|(d, n)| (d.clone(), *n, *use_score.get(d).unwrap_or(&0)))
         .collect();
     owners.sort_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)));
-    let mut ranked: Vec<(String, usize)> = owners.iter().map(|(d, n, u)| (d.clone(), n * 2 + u)).collect();
+    let mut ranked: Vec<(String, usize)> = owners
+        .iter()
+        .map(|(d, n, u)| (d.clone(), n * 2 + u))
+        .collect();
     for (d, u) in &use_score {
         if !decl_score.contains_key(d) {
             ranked.push((d.clone(), *u));
@@ -1729,7 +1850,9 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
 
     let g = guard(idx, graph, &added);
     let mut violations: Vec<Value> = if g["allowed"] == false {
-        vec![json!({ "kind": "duplicate_storage", "reason": g["reason"], "findings": g["findings"] })]
+        vec![
+            json!({ "kind": "duplicate_storage", "reason": g["reason"], "findings": g["findings"] }),
+        ]
     } else {
         Vec::new()
     };
@@ -1741,14 +1864,21 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
     .unwrap();
     let mut warnings = Vec::new();
     for cap in decl_re.captures_iter(&added) {
-        let name = cap.get(1).or(cap.get(2)).or(cap.get(3)).map(|m| m.as_str()).unwrap_or("");
+        let name = cap
+            .get(1)
+            .or(cap.get(2))
+            .or(cap.get(3))
+            .map(|m| m.as_str())
+            .unwrap_or("");
         if name.len() < 4 || idx.concepts.contains_key(name) {
             continue; // extending an existing concept is the GOAL, not a finding
         }
         for tok in crate::model::name_tokens(name) {
             // LAW-013: a shared generic architectural-role word (executor,
             // manager, handler, ...) is never by itself collision evidence.
-            if tok.len() < 4 || crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str()) {
+            if tok.len() < 4
+                || crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str())
+            {
                 continue;
             }
             if let Some(existing) = idx.concepts.keys().find(|c| names_concept(c, &tok)) {
@@ -1771,7 +1901,9 @@ pub fn ci(idx: &Index, graph: &StructuralGraph, diff: &str, strict: bool) -> Val
 
     let fail = !violations.is_empty() || (strict && !warnings.is_empty());
     let mutation_count = change["mutations"].as_array().map(|m| m.len()).unwrap_or(0);
-    let change_warning = change["violations"].as_array().is_some_and(|v| !v.is_empty());
+    let change_warning = change["violations"]
+        .as_array()
+        .is_some_and(|v| !v.is_empty());
     json!({
         "pass": !fail,
         "violations": violations,
@@ -1816,7 +1948,10 @@ pub fn index_freshness(root: &std::path::Path) -> &'static str {
 pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> Value {
     let db = root.join("archietect.db");
     let dup = duplicates(idx);
-    let needs_alias = dup["likely_same_concept_needs_alias"].as_array().map(|a| a.len()).unwrap_or(0);
+    let needs_alias = dup["likely_same_concept_needs_alias"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
 
     // stale aliases — ontology pointing at nothing
     let stale: Vec<&String> = idx
@@ -1824,7 +1959,10 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
         .iter()
         .filter(|(_, target)| {
             !idx.concepts.contains_key(*target)
-                && !idx.concepts.keys().any(|n| names_concept(n, target.trim_end_matches('s')))
+                && !idx
+                    .concepts
+                    .keys()
+                    .any(|n| names_concept(n, target.trim_end_matches('s')))
         })
         .map(|(k, _)| k)
         .collect();
@@ -1846,8 +1984,12 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
         for tok in crate::model::name_tokens(name) {
             // LAW-013: same generic-role-word exemption as the CI guard and
             // the watch daemon's diff — a shared role word never counts.
-            if tok.len() >= 5 && !crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str()) {
-                fam.entry(tok.to_lowercase()).or_default().push(name.clone());
+            if tok.len() >= 5
+                && !crate::watch::GENERIC_ROLE_TOKENS.contains(&tok.to_lowercase().as_str())
+            {
+                fam.entry(tok.to_lowercase())
+                    .or_default()
+                    .push(name.clone());
             }
         }
     }
@@ -1857,7 +1999,10 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
         .iter()
         .filter(|(tok, members)| {
             members.len() >= 3
-                && !idx.decisions.iter().any(|d| d.links.iter().any(|l| same_word(l, tok)))
+                && !idx
+                    .decisions
+                    .iter()
+                    .any(|d| d.links.iter().any(|l| same_word(l, tok)))
         })
         .collect();
     families.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
@@ -1908,8 +2053,16 @@ pub fn glance(idx: &Index, graph: &StructuralGraph, root: &std::path::Path) -> V
 pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     let it = intent(idx, graph, text);
     let mut planned = Vec::new();
-    for e in it["extend"].as_array().cloned().unwrap_or_default().iter().take(3) {
-        let Some(canon) = e["canonical"].as_str() else { continue };
+    for e in it["extend"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .take(3)
+    {
+        let Some(canon) = e["canonical"].as_str() else {
+            continue;
+        };
         let own = owner(idx, graph, canon);
         let imp = impact(idx, graph, canon);
         // governing decisions: any declared decision linking this concept
@@ -1924,7 +2077,11 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
             .map(|d| json!({ "id": d.id, "decision": d.decision, "rejected": d.rejected, "status": d.status, "superseded_by": d.superseded_by }))
             .collect();
         // Structural symbols have owners and impact, but no schema relations.
-        let related = idx.concepts.get(canon).map(|c| c.relations.as_slice()).unwrap_or_default();
+        let related = idx
+            .concepts
+            .get(canon)
+            .map(|c| c.relations.as_slice())
+            .unwrap_or_default();
         planned.push(json!({
             "concept": e["concept"],
             "canonical": canon,
@@ -1955,6 +2112,23 @@ pub fn plan(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
 mod status_git_section_tests {
     use super::*;
 
+    #[test]
+    fn status_exposes_index_freshness_provenance_without_claiming_clean_worktree() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let (idx, graph) = crate::scan::scan(&root);
+        let out = status(&idx, &graph);
+        assert!(out["scanned_at_ms"].as_i64().unwrap_or(0) > 0);
+        assert_eq!(
+            out["source_commit_sha"],
+            serde_json::to_value(&idx.source_commit_sha).unwrap()
+        );
+        assert!(matches!(
+            out["freshness"]["status"].as_str(),
+            Some("fresh") | Some("stale_worktree") | Some("stale_commit") | Some("unknown")
+        ));
+        assert!(out["freshness"].get("tracked_worktree_dirty").is_some());
+    }
+
     /// `status` against THIS repository's own real .git — a real fixture,
     /// not synthetic, matching this codebase's own testing preference.
     #[test]
@@ -1963,7 +2137,9 @@ mod status_git_section_tests {
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
         assert_eq!(out["git"]["enabled"], true);
-        let resources = out["git"]["resources"].as_array().expect("resources must be an array");
+        let resources = out["git"]["resources"]
+            .as_array()
+            .expect("resources must be an array");
         assert!(
             resources.iter().any(|r| r["kind"] == "git_repository"),
             "expected a git_repository resource in status's git section, got: {resources:?}"
@@ -1984,12 +2160,23 @@ mod status_git_section_tests {
     /// fall back to `scan`'s ungated output.
     #[test]
     fn status_git_section_honestly_disabled_via_project_config() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-status-git-disabled-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-status-git-disabled-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::process::Command::new("git").arg("init").arg("-q").current_dir(&tmp).status().unwrap();
-        std::fs::write(tmp.join("archietect.toml"), "[domains]\ngit = \"disabled\"\n").unwrap();
+        std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .current_dir(&tmp)
+            .status()
+            .unwrap();
+        std::fs::write(
+            tmp.join("archietect.toml"),
+            "[domains]\ngit = \"disabled\"\n",
+        )
+        .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
         let out = status(&idx, &graph);
@@ -2010,11 +2197,18 @@ mod same_project_relationship_tests {
     /// proving this is real co-location evidence, not a decorative constant.
     #[test]
     fn status_links_git_repository_to_code_by_shared_root() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-same-project-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-same-project-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::process::Command::new("git").arg("init").arg("-q").current_dir(&tmp).status().unwrap();
+        std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .current_dir(&tmp)
+            .status()
+            .unwrap();
         std::fs::write(
             tmp.join("schema.prisma"),
             "model Widget {\n  id   Int    @id @default(autoincrement())\n  name String\n}\n",
@@ -2022,11 +2216,20 @@ mod same_project_relationship_tests {
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(idx.files_scanned > 0, "sanity: the fixture must have real scanned files");
+        assert!(
+            idx.files_scanned > 0,
+            "sanity: the fixture must have real scanned files"
+        );
         let out = status(&idx, &graph);
 
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
-        assert_eq!(rels.len(), 1, "expected exactly one same_project_as relationship, got: {rels:?}");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
+        assert_eq!(
+            rels.len(),
+            1,
+            "expected exactly one same_project_as relationship, got: {rels:?}"
+        );
         let rel = &rels[0];
         assert_eq!(rel["kind"], "same_project_as");
         assert_eq!(rel["evidence"]["tier"], "Declared");
@@ -2036,7 +2239,10 @@ mod same_project_relationship_tests {
             what.contains(&root_str),
             "evidence text must cite the actual shared root path {root_str}, got: {what}"
         );
-        assert!(what.contains("same root path"), "evidence text must state the actual reason, got: {what}");
+        assert!(
+            what.contains("same root path"),
+            "evidence text must state the actual reason, got: {what}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2045,8 +2251,10 @@ mod same_project_relationship_tests {
     /// relationship — there is nothing on the git side to link from.
     #[test]
     fn no_relationship_when_no_git_repository() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-same-project-nogit-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-same-project-nogit-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
@@ -2056,11 +2264,19 @@ mod same_project_relationship_tests {
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(idx.files_scanned > 0, "sanity: the fixture must have real scanned files");
+        assert!(
+            idx.files_scanned > 0,
+            "sanity: the fixture must have real scanned files"
+        );
         let out = status(&idx, &graph);
 
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
-        assert!(rels.is_empty(), "no .git directory means no same_project_as relationship, got: {rels:?}");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
+        assert!(
+            rels.is_empty(),
+            "no .git directory means no same_project_as relationship, got: {rels:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2072,7 +2288,9 @@ mod same_project_relationship_tests {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0]["kind"], "same_project_as");
     }
@@ -2090,8 +2308,10 @@ mod impact_structural_only_tests {
     /// with "no entry found for key".
     #[test]
     fn impact_on_structural_only_concept_does_not_panic() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-impact-structural-only-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-impact-structural-only-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
@@ -2101,7 +2321,10 @@ mod impact_structural_only_tests {
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(!idx.concepts.contains_key("NotificationClient"), "sanity: must be structural-only, not a schema concept");
+        assert!(
+            !idx.concepts.contains_key("NotificationClient"),
+            "sanity: must be structural-only, not a schema concept"
+        );
 
         let out = impact(&idx, &graph, "NotificationClient");
         assert_eq!(out["target"], "NotificationClient");
@@ -2128,8 +2351,10 @@ mod owner_structural_only_tests {
     /// pins both: the real declaring directory must be found and reported.
     #[test]
     fn owner_on_structural_only_concept_finds_its_real_declaring_directory() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-owner-structural-only-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-owner-structural-only-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("services")).unwrap();
         std::fs::write(
@@ -2139,7 +2364,10 @@ mod owner_structural_only_tests {
         .unwrap();
 
         let (idx, graph) = crate::scan::scan(&tmp);
-        assert!(!idx.concepts.contains_key("NotificationClient"), "sanity: must be structural-only, not a schema concept");
+        assert!(
+            !idx.concepts.contains_key("NotificationClient"),
+            "sanity: must be structural-only, not a schema concept"
+        );
 
         let out = owner(&idx, &graph, "NotificationClient");
         assert_eq!(out["target"], "NotificationClient");
@@ -2155,8 +2383,10 @@ mod owner_structural_only_tests {
     /// unaffected by this fix — same ranked-directory behavior as before.
     #[test]
     fn owner_on_schema_concept_is_unaffected() {
-        let tmp = std::env::temp_dir()
-            .join(format!("archietect-owner-schema-unaffected-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-owner-schema-unaffected-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
@@ -2178,8 +2408,10 @@ mod built_from_relationship_tests {
     use super::*;
 
     fn tmp_project(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir()
-            .join(format!("archietect-built-from-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-built-from-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -2191,28 +2423,47 @@ mod built_from_relationship_tests {
     #[test]
     fn built_from_relationship_appears_for_a_real_distinct_build_context() {
         let root = tmp_project("real-context");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(root.join("backend")).unwrap();
         std::fs::write(
             root.join("docker-compose.yml"),
             "services:\n  api:\n    build:\n      context: ./backend\n",
         )
         .unwrap();
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
 
         let same_project = rels.iter().find(|r| r["kind"] == "same_project_as");
         assert!(same_project.is_none(), "sanity: no git repo here, so same_project_as legitimately absent — this fixture isolates built_from");
 
-        let built_from = rels.iter().find(|r| r["kind"] == "built_from").expect("expected a built_from relationship");
+        let built_from = rels
+            .iter()
+            .find(|r| r["kind"] == "built_from")
+            .expect("expected a built_from relationship");
         assert_eq!(built_from["to"], "backend");
         assert_eq!(built_from["evidence"]["tier"], "Declared");
         let what = built_from["evidence"]["what"].as_str().unwrap();
-        assert!(what.contains("./backend"), "evidence must cite the literal declared context, got: {what}");
-        assert!(what.contains("backend"), "evidence must cite the resolved directory, got: {what}");
+        assert!(
+            what.contains("./backend"),
+            "evidence must cite the literal declared context, got: {what}"
+        );
+        assert!(
+            what.contains("backend"),
+            "evidence must cite the resolved directory, got: {what}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2222,17 +2473,27 @@ mod built_from_relationship_tests {
     #[test]
     fn no_relationship_when_build_context_does_not_exist() {
         let root = tmp_project("missing-context");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         std::fs::write(
             root.join("docker-compose.yml"),
             "services:\n  api:\n    build:\n      context: ./does-not-exist\n",
         )
         .unwrap();
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
         assert!(
             rels.iter().all(|r| r["kind"] != "built_from"),
             "a non-existent build context must never produce a relationship, got: {rels:?}"
@@ -2248,17 +2509,27 @@ mod built_from_relationship_tests {
     #[test]
     fn no_built_from_relationship_for_trivial_root_context() {
         let root = tmp_project("root-context");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         std::fs::write(
             root.join("docker-compose.yml"),
             "services:\n  api:\n    build:\n      context: .\n",
         )
         .unwrap();
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
         assert!(
             rels.iter().all(|r| r["kind"] != "built_from"),
             "context: . (the project's own root) must not produce a redundant built_from relationship, got: {rels:?}"
@@ -2273,7 +2544,11 @@ mod built_from_relationship_tests {
     #[test]
     fn no_built_from_relationship_when_docker_domain_disabled() {
         let root = tmp_project("docker-disabled");
-        std::fs::write(root.join("schema.prisma"), "model Widget {\n  id Int @id\n}\n").unwrap();
+        std::fs::write(
+            root.join("schema.prisma"),
+            "model Widget {\n  id Int @id\n}\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(root.join("backend")).unwrap();
         std::fs::write(
             root.join("docker-compose.yml"),
@@ -2284,7 +2559,9 @@ mod built_from_relationship_tests {
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = status(&idx, &graph);
-        let rels = out["relationships"].as_array().expect("relationships must be an array");
+        let rels = out["relationships"]
+            .as_array()
+            .expect("relationships must be an array");
         assert!(
             rels.iter().all(|r| r["kind"] != "built_from"),
             "docker disabled by default must yield no built_from relationship, got: {rels:?}"
@@ -2300,7 +2577,8 @@ mod verdicts_tests {
 
     #[test]
     fn buckets_by_usage_with_correct_counts() {
-        let tmp = std::env::temp_dir().join(format!("archietect-verdicts-test-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("archietect-verdicts-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
@@ -2311,21 +2589,44 @@ mod verdicts_tests {
         std::fs::write(tmp.join("use.ts"), "db.widget.findMany()\n").unwrap();
 
         let (idx, _graph) = crate::scan::scan(&tmp);
-        assert!(!idx.concepts["Widget"].usage.is_empty(), "sanity: Widget must be observed used");
-        assert!(idx.concepts["Gadget"].usage.is_empty(), "sanity: Gadget must be declared-only");
+        assert!(
+            !idx.concepts["Widget"].usage.is_empty(),
+            "sanity: Widget must be observed used"
+        );
+        assert!(
+            idx.concepts["Gadget"].usage.is_empty(),
+            "sanity: Gadget must be declared-only"
+        );
 
         let out = verdicts(&idx);
         assert_eq!(out["ACTIVE"]["count"], json!(1));
-        assert!(out["ACTIVE"]["concepts"].as_array().unwrap().iter().any(|c| c == "Widget"), "{out}");
+        assert!(
+            out["ACTIVE"]["concepts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "Widget"),
+            "{out}"
+        );
         assert_eq!(out["DECLARED_ONLY"]["count"], json!(1));
-        assert!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().iter().any(|c| c == "Gadget"), "{out}");
+        assert!(
+            out["DECLARED_ONLY"]["concepts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "Gadget"),
+            "{out}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn lists_are_capped_but_count_reflects_the_real_total() {
-        let tmp = std::env::temp_dir().join(format!("archietect-verdicts-cap-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-verdicts-cap-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let mut schema = String::new();
@@ -2337,7 +2638,11 @@ mod verdicts_tests {
         let (idx, _graph) = crate::scan::scan(&tmp);
         let out = verdicts(&idx);
         assert_eq!(out["DECLARED_ONLY"]["count"], json!(30), "{out}");
-        assert_eq!(out["DECLARED_ONLY"]["concepts"].as_array().unwrap().len(), 25, "list must be capped even though count is real");
+        assert_eq!(
+            out["DECLARED_ONLY"]["concepts"].as_array().unwrap().len(),
+            25,
+            "list must be capped even though count is real"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2347,8 +2652,14 @@ mod verdicts_tests {
 mod intent_tests {
     use super::*;
 
-    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, StructuralGraph, std::path::PathBuf) {
-        let tmp = std::env::temp_dir().join(format!("archietect-intent-test-{name}-{}", std::process::id()));
+    fn scan_tmp(
+        name: &str,
+        files: &[(&str, &str)],
+    ) -> (Index, StructuralGraph, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-intent-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         for (rel, content) in files {
@@ -2399,7 +2710,10 @@ mod intent_tests {
                 ("schema.prisma", "model Church {\n  id Int @id\n  members Member[]\n}\nmodel Member {\n  id Int @id\n}\n"),
             ],
         );
-        assert_eq!(concept(&idx, &graph, "AdminProtectedRoute")["verdict"], "STRUCTURAL");
+        assert_eq!(
+            concept(&idx, &graph, "AdminProtectedRoute")["verdict"],
+            "STRUCTURAL"
+        );
         let out = plan(&idx, &graph, "AdminProtectedRoute");
         let component = &out["extend"][0];
         assert_eq!(component["canonical"], "AdminProtectedRoute", "{out}");
@@ -2410,7 +2724,10 @@ mod intent_tests {
         let out = plan(&idx, &graph, "Church");
         assert_eq!(out["extend"][0]["canonical"], "Church", "{out}");
         assert!(!idx.concepts["Church"].relations.is_empty());
-        assert_eq!(out["extend"][0]["related"], json!(idx.concepts["Church"].relations));
+        assert_eq!(
+            out["extend"][0]["related"],
+            json!(idx.concepts["Church"].relations)
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -2442,15 +2759,17 @@ mod intent_tests {
         // the queried term genuinely matches nothing by name. `create` is
         // still the right bucket — but the surrounding text must not
         // overclaim semantic certainty a name-only check can't back up.
-        let (idx, graph, tmp) = scan_tmp(
-            "absent",
-            &[("src/index.ts", "export class Invoice {}\n")],
-        );
+        let (idx, graph, tmp) =
+            scan_tmp("absent", &[("src/index.ts", "export class Invoice {}\n")]);
 
         let out = intent(&idx, &graph, "add zephyr notifications");
 
         assert!(
-            out["create"].as_array().unwrap().iter().any(|c| c == "zephyr"),
+            out["create"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "zephyr"),
             "expected 'zephyr' in create, got: {out}"
         );
         let summary = out["smallest_correct_change"].as_str().unwrap();
@@ -2478,7 +2797,9 @@ mod intent_tests {
 
         let extend = out["extend"].as_array().unwrap();
         assert!(
-            extend.iter().any(|e| e["concept"] == "invoice" && e["canonical"] == "Invoice"),
+            extend
+                .iter()
+                .any(|e| e["concept"] == "invoice" && e["canonical"] == "Invoice"),
             "expected 'invoice' to extend 'Invoice', got: {out}"
         );
 
@@ -2492,8 +2813,22 @@ mod intent_tests {
             &[("src/verify.rs", "pub fn verify_edit() {}\n")],
         );
         let out = intent(&idx, &graph, "change verify_edit");
-        assert!(out["extend"].as_array().unwrap().iter().any(|e| e["canonical"] == "verify_edit"), "{out}");
-        assert!(!out["create"].as_array().unwrap().iter().any(|e| e == "edit"), "{out}");
+        assert!(
+            out["extend"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["canonical"] == "verify_edit"),
+            "{out}"
+        );
+        assert!(
+            !out["create"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e == "edit"),
+            "{out}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -2511,15 +2846,23 @@ mod intent_tests {
     fn structural_only_concept_with_no_schema_declaration_still_extends() {
         let (idx, graph, tmp) = scan_tmp(
             "structural-only",
-            &[("src/models/glimmerpod.ts", "export class Glimmerpod {\n  id: string;\n}\n")],
+            &[(
+                "src/models/glimmerpod.ts",
+                "export class Glimmerpod {\n  id: string;\n}\n",
+            )],
         );
-        assert!(idx.concepts.is_empty(), "this fixture must have NO schema-declared concept: {idx:?}");
+        assert!(
+            idx.concepts.is_empty(),
+            "this fixture must have NO schema-declared concept: {idx:?}"
+        );
 
         let out = intent(&idx, &graph, "add glimmerpod scoring");
 
         let extend = out["extend"].as_array().unwrap();
         assert!(
-            extend.iter().any(|e| e["concept"] == "glimmerpod" && e["verdict"] == "STRUCTURAL"),
+            extend
+                .iter()
+                .any(|e| e["concept"] == "glimmerpod" && e["verdict"] == "STRUCTURAL"),
             "a structural-only 'Glimmerpod' class must route to extend, not create, got: {out}"
         );
         assert!(
@@ -2535,8 +2878,14 @@ mod intent_tests {
 mod guard_reason_text_tests {
     use super::*;
 
-    fn scan_tmp(name: &str, files: &[(&str, &str)]) -> (Index, StructuralGraph, std::path::PathBuf) {
-        let tmp = std::env::temp_dir().join(format!("archietect-guard-reason-test-{name}-{}", std::process::id()));
+    fn scan_tmp(
+        name: &str,
+        files: &[(&str, &str)],
+    ) -> (Index, StructuralGraph, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "archietect-guard-reason-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         for (rel, content) in files {
@@ -2570,18 +2919,39 @@ mod guard_reason_text_tests {
                     "db/migrations/001_create_zibbets.sql",
                     "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, email TEXT);",
                 ),
-                ("use.ts", "db.query('SELECT * FROM zibbets WHERE id = $1', [id])\n"),
+                (
+                    "use.ts",
+                    "db.query('SELECT * FROM zibbets WHERE id = $1', [id])\n",
+                ),
             ],
         );
 
-        let out = guard(&idx, &g, "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, name TEXT)");
+        let out = guard(
+            &idx,
+            &g,
+            "CREATE TABLE zibbets (id SERIAL PRIMARY KEY, name TEXT)",
+        );
 
-        assert_eq!(out["allowed"], json!(true), "law-002 exemption must still allow this: {out}");
+        assert_eq!(
+            out["allowed"],
+            json!(true),
+            "law-002 exemption must still allow this: {out}"
+        );
         let reason = out["reason"].as_str().unwrap();
-        assert!(!reason.contains("check out as new"), "must not claim 'new' for an existing table: {reason:?}");
-        assert!(reason.contains("zibbets"), "reason should name the re-declared table: {reason:?}");
+        assert!(
+            !reason.contains("check out as new"),
+            "must not claim 'new' for an existing table: {reason:?}"
+        );
+        assert!(
+            reason.contains("zibbets"),
+            "reason should name the re-declared table: {reason:?}"
+        );
         let findings = out["findings"].as_array().unwrap();
-        assert_eq!(findings[0]["status"], json!("exempt_exact_redeclaration"), "{out}");
+        assert_eq!(
+            findings[0]["status"],
+            json!("exempt_exact_redeclaration"),
+            "{out}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -2590,12 +2960,19 @@ mod guard_reason_text_tests {
     fn genuinely_new_table_still_says_new() {
         // Regression guard: the common, unexciting case (nothing matches
         // at all) must keep its original, correct wording.
-        let (idx, g, tmp) = scan_tmp("new", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp(
+            "new",
+            &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")],
+        );
 
         let out = guard(&idx, &g, "CREATE TABLE fwomps (id INT)");
 
         assert_eq!(out["allowed"], json!(true), "{out}");
-        assert_eq!(out["reason"], json!("1 proposed table(s) check out as new"), "{out}");
+        assert_eq!(
+            out["reason"],
+            json!("1 proposed table(s) check out as new"),
+            "{out}"
+        );
         assert_eq!(out["findings"][0]["status"], json!("new"), "{out}");
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2605,7 +2982,10 @@ mod guard_reason_text_tests {
     fn near_name_collision_still_blocks_with_original_wording() {
         // Regression guard: law-002's OTHER half — near-names must still
         // block, and this path's reason text is untouched by this fix.
-        let (idx, g, tmp) = scan_tmp("near", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp(
+            "near",
+            &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")],
+        );
 
         let out = guard(&idx, &g, "CREATE TABLE blorps (id INT)");
 
@@ -2619,17 +2999,29 @@ mod guard_reason_text_tests {
 
     #[test]
     fn mixed_exempt_and_new_are_both_named_honestly() {
-        let (idx, g, tmp) = scan_tmp("mixed", &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")]);
+        let (idx, g, tmp) = scan_tmp(
+            "mixed",
+            &[("schema.prisma", "model Blorp {\n  id Int @id\n}\n")],
+        );
 
-        let out = guard(&idx, &g, "CREATE TABLE \"Blorp\" (id INT); CREATE TABLE fwomps (id INT);");
+        let out = guard(
+            &idx,
+            &g,
+            "CREATE TABLE \"Blorp\" (id INT); CREATE TABLE fwomps (id INT);",
+        );
 
         assert_eq!(out["allowed"], json!(true), "{out}");
         let reason = out["reason"].as_str().unwrap();
-        assert!(reason.contains("1 proposed table(s) check out as new"), "{reason:?}");
+        assert!(
+            reason.contains("1 proposed table(s) check out as new"),
+            "{reason:?}"
+        );
         assert!(reason.contains("exact re-declaration"), "{reason:?}");
         let findings = out["findings"].as_array().unwrap();
         assert_eq!(findings.len(), 2);
-        assert!(findings.iter().any(|f| f["status"] == "exempt_exact_redeclaration"));
+        assert!(findings
+            .iter()
+            .any(|f| f["status"] == "exempt_exact_redeclaration"));
         assert!(findings.iter().any(|f| f["status"] == "new"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2648,13 +3040,24 @@ mod guard_reason_text_tests {
     fn structural_only_concept_with_no_schema_declaration_still_blocks() {
         let (idx, g, tmp) = scan_tmp(
             "structural-only",
-            &[("src/models/glimmerpod.ts", "export class Glimmerpod {\n  id: string;\n  name: string;\n}\n")],
+            &[(
+                "src/models/glimmerpod.ts",
+                "export class Glimmerpod {\n  id: string;\n  name: string;\n}\n",
+            )],
         );
         assert!(idx.concepts.is_empty(), "this fixture must have NO schema-declared concept — the whole point is testing structural-only evidence: {idx:?}");
 
-        let out = guard(&idx, &g, "CREATE TABLE glimmerpods (id SERIAL PRIMARY KEY, name TEXT)");
+        let out = guard(
+            &idx,
+            &g,
+            "CREATE TABLE glimmerpods (id SERIAL PRIMARY KEY, name TEXT)",
+        );
 
-        assert_eq!(out["allowed"], json!(false), "a structural-only concept with the same name must still block, got: {out}");
+        assert_eq!(
+            out["allowed"],
+            json!(false),
+            "a structural-only concept with the same name must still block, got: {out}"
+        );
         let findings = out["findings"].as_array().unwrap();
         assert_eq!(findings[0]["status"], json!("blocked"), "{out}");
         assert_eq!(findings[0]["verdict"], json!("STRUCTURAL"), "{out}");
@@ -2669,7 +3072,11 @@ mod duplicates_prefix_index_tests {
     use crate::model::Concept;
 
     fn concept(table: &str, file: &str, kind: &str) -> Concept {
-        Concept { table: Some(table.to_string()), declared_in: vec![(file.to_string(), kind.to_string())], ..Default::default() }
+        Concept {
+            table: Some(table.to_string()),
+            declared_in: vec![(file.to_string(), kind.to_string())],
+            ..Default::default()
+        }
     }
 
     /// `duplicates()` was rewritten from an O(n^2) full pairwise scan to a
@@ -2691,17 +3098,41 @@ mod duplicates_prefix_index_tests {
     ///     just returning everything.
     fn fixture_index() -> Index {
         let mut idx = Index::default();
-        idx.concepts.insert("UserAccount".into(), concept("user_accounts", "a.py", "python"));
-        idx.concepts.insert("UserAccountArchive".into(), concept("user_account_archives", "b.py", "python"));
-        idx.concepts.insert("InvoiceRecord".into(), concept("invoice_records", "c.py", "python"));
-        idx.concepts.insert("InvoicesArchive".into(), concept("invoices_archive", "d.py", "python"));
+        idx.concepts.insert(
+            "UserAccount".into(),
+            concept("user_accounts", "a.py", "python"),
+        );
+        idx.concepts.insert(
+            "UserAccountArchive".into(),
+            concept("user_account_archives", "b.py", "python"),
+        );
+        idx.concepts.insert(
+            "InvoiceRecord".into(),
+            concept("invoice_records", "c.py", "python"),
+        );
+        idx.concepts.insert(
+            "InvoicesArchive".into(),
+            concept("invoices_archive", "d.py", "python"),
+        );
         // sql-only vs ORM, sharing the token "Payment" — must land in
         // likely_same_concept_needs_alias, not suspected_duplicates.
-        idx.concepts.insert("PaymentGateway".into(), concept("payment_gateway", "schema.sql", "sql"));
-        idx.concepts.insert("PaymentGatewayModel".into(), concept("payment_gateway_models", "model.py", "python"));
+        idx.concepts.insert(
+            "PaymentGateway".into(),
+            concept("payment_gateway", "schema.sql", "sql"),
+        );
+        idx.concepts.insert(
+            "PaymentGatewayModel".into(),
+            concept("payment_gateway_models", "model.py", "python"),
+        );
         // Genuinely unrelated — must produce no pair at all.
-        idx.concepts.insert("ArticleComment".into(), concept("article_comments", "e.py", "python"));
-        idx.concepts.insert("ZebraCrossing".into(), concept("zebra_crossings", "f.py", "python"));
+        idx.concepts.insert(
+            "ArticleComment".into(),
+            concept("article_comments", "e.py", "python"),
+        );
+        idx.concepts.insert(
+            "ZebraCrossing".into(),
+            concept("zebra_crossings", "f.py", "python"),
+        );
         idx
     }
 
@@ -2711,7 +3142,10 @@ mod duplicates_prefix_index_tests {
             .iter()
             .map(|e| {
                 let c = e["concepts"].as_array().unwrap();
-                (c[0].as_str().unwrap().to_string(), c[1].as_str().unwrap().to_string())
+                (
+                    c[0].as_str().unwrap().to_string(),
+                    c[1].as_str().unwrap().to_string(),
+                )
             })
             .collect()
     }
@@ -2742,7 +3176,10 @@ mod duplicates_prefix_index_tests {
             .iter()
             .find(|e| e["concepts"][0] == "InvoiceRecord" && e["concepts"][1] == "InvoicesArchive")
             .expect("entry must exist");
-        assert_eq!(entry["shared_token"], "Invoice", "must report a's own token, not b's");
+        assert_eq!(
+            entry["shared_token"], "Invoice",
+            "must report a's own token, not b's"
+        );
     }
 
     #[test]
@@ -2752,7 +3189,10 @@ mod duplicates_prefix_index_tests {
         let dup_pairs = pair_set(&out["suspected_duplicates"]);
         let alias_pairs = pair_set(&out["likely_same_concept_needs_alias"]);
         assert!(
-            !dup_pairs.contains(&("PaymentGateway".to_string(), "PaymentGatewayModel".to_string())),
+            !dup_pairs.contains(&(
+                "PaymentGateway".to_string(),
+                "PaymentGatewayModel".to_string()
+            )),
             "sql-only/ORM pair must NOT land in suspected_duplicates"
         );
         assert!(
@@ -2769,7 +3209,8 @@ mod duplicates_prefix_index_tests {
         let alias_pairs = pair_set(&out["likely_same_concept_needs_alias"]);
         for (a, b) in dup_pairs.iter().chain(alias_pairs.iter()) {
             assert!(
-                !(a.contains("Article") && b.contains("Zebra")) && !(a.contains("Zebra") && b.contains("Article")),
+                !(a.contains("Article") && b.contains("Zebra"))
+                    && !(a.contains("Zebra") && b.contains("Article")),
                 "ArticleComment/ZebraCrossing share nothing and must never pair, got {a}/{b}"
             );
         }
@@ -2781,12 +3222,20 @@ mod duplicates_prefix_index_tests {
     /// truncate at 40 and this fixture is far smaller than that, so a set
     /// comparison is a legitimate stand-in for "identical results").
     fn brute_force_reference(idx: &Index) -> std::collections::BTreeSet<(String, String, String)> {
-        let names: Vec<&String> = idx.concepts.iter().filter(|(_, c)| c.table.is_some()).map(|(n, _)| n).collect();
+        let names: Vec<&String> = idx
+            .concepts
+            .iter()
+            .filter(|(_, c)| c.table.is_some())
+            .map(|(n, _)| n)
+            .collect();
         let mut out = std::collections::BTreeSet::new();
         for i in 0..names.len() {
             for j in (i + 1)..names.len() {
                 let (a, b) = (names[i], names[j]);
-                if let Some(t) = crate::model::name_tokens(a).into_iter().find(|t| t.len() >= 5 && names_concept(b, t)) {
+                if let Some(t) = crate::model::name_tokens(a)
+                    .into_iter()
+                    .find(|t| t.len() >= 5 && names_concept(b, t))
+                {
                     out.insert((a.clone(), b.clone(), t));
                 }
             }
@@ -2799,7 +3248,8 @@ mod duplicates_prefix_index_tests {
         let idx = fixture_index();
         let expected = brute_force_reference(&idx);
         let out = duplicates(&idx);
-        let mut actual: std::collections::BTreeSet<(String, String, String)> = std::collections::BTreeSet::new();
+        let mut actual: std::collections::BTreeSet<(String, String, String)> =
+            std::collections::BTreeSet::new();
         for arr_name in ["suspected_duplicates", "likely_same_concept_needs_alias"] {
             for e in out[arr_name].as_array().unwrap() {
                 let c = e["concepts"].as_array().unwrap();
@@ -2810,7 +3260,10 @@ mod duplicates_prefix_index_tests {
                 ));
             }
         }
-        assert_eq!(actual, expected, "prefix-bucketed duplicates() must find exactly what the O(n^2) reference finds");
+        assert_eq!(
+            actual, expected,
+            "prefix-bucketed duplicates() must find exactly what the O(n^2) reference finds"
+        );
     }
 }
 
@@ -2824,12 +3277,20 @@ mod duplicates_performance_tests {
     /// here (not shared) so this test file keeps a real, independent copy
     /// of "what the old code computed" even if that module is ever pruned.
     fn brute_force(idx: &Index) -> usize {
-        let names: Vec<&String> = idx.concepts.iter().filter(|(_, c)| c.table.is_some()).map(|(n, _)| n).collect();
+        let names: Vec<&String> = idx
+            .concepts
+            .iter()
+            .filter(|(_, c)| c.table.is_some())
+            .map(|(n, _)| n)
+            .collect();
         let mut count = 0;
         for i in 0..names.len() {
             for j in (i + 1)..names.len() {
                 let (a, b) = (names[i], names[j]);
-                if crate::model::name_tokens(a).into_iter().any(|t| t.len() >= 5 && names_concept(b, &t)) {
+                if crate::model::name_tokens(a)
+                    .into_iter()
+                    .any(|t| t.len() >= 5 && names_concept(b, &t))
+                {
                     count += 1;
                 }
             }
@@ -2865,7 +3326,11 @@ mod duplicates_performance_tests {
         let mut word: String = digits.iter().map(|&b| b as char).collect();
         word.push('q'); // pad to length 5 so it clears the `t.len() >= 5` filter
         let mut chars = word.chars();
-        format!("{}{}", chars.next().unwrap().to_ascii_uppercase(), chars.as_str())
+        format!(
+            "{}{}",
+            chars.next().unwrap().to_ascii_uppercase(),
+            chars.as_str()
+        )
     }
 
     /// A 3-letter code, globally unique per concept — shorter than 4 bytes
@@ -2927,14 +3392,23 @@ mod duplicates_performance_tests {
         let out = duplicates(&idx);
         let fast_elapsed = fast_start.elapsed();
         let actual_count = out["suspected_duplicates"].as_array().unwrap().len()
-            + out["likely_same_concept_needs_alias"].as_array().unwrap().len();
+            + out["likely_same_concept_needs_alias"]
+                .as_array()
+                .unwrap()
+                .len();
 
         // duplicates() truncates each list at 40 — the reference doesn't,
         // so this only asserts the fast path also saturates the cap
         // whenever the reference finds at least that many (the exact-count
         // test right below covers the no-truncation case precisely).
-        assert!(expected_count >= 40, "fixture must produce enough real pairs to exercise the truncate cap");
-        assert_eq!(actual_count, 40, "fast path must also saturate the same 40-pair cap");
+        assert!(
+            expected_count >= 40,
+            "fixture must produce enough real pairs to exercise the truncate cap"
+        );
+        assert_eq!(
+            actual_count, 40,
+            "fast path must also saturate the same 40-pair cap"
+        );
         println!(
             "brute-force O(n^2): {expected_count} pairs in {brute_elapsed:?}; prefix-bucketed: {actual_count} (capped) pairs in {fast_elapsed:?}"
         );
@@ -2950,11 +3424,20 @@ mod duplicates_performance_tests {
     fn prefix_bucketing_matches_brute_force_exactly_below_the_truncate_cap() {
         let idx = build_fixture(6, 3);
         let expected_count = brute_force(&idx);
-        assert!(expected_count < 40, "fixture must stay under the truncate cap for this to be a valid exact check");
+        assert!(
+            expected_count < 40,
+            "fixture must stay under the truncate cap for this to be a valid exact check"
+        );
         let out = duplicates(&idx);
         let actual_count = out["suspected_duplicates"].as_array().unwrap().len()
-            + out["likely_same_concept_needs_alias"].as_array().unwrap().len();
-        assert_eq!(actual_count, expected_count, "below the cap, counts must match EXACTLY, not just both saturate");
+            + out["likely_same_concept_needs_alias"]
+                .as_array()
+                .unwrap()
+                .len();
+        assert_eq!(
+            actual_count, expected_count,
+            "below the cap, counts must match EXACTLY, not just both saturate"
+        );
     }
 }
 
@@ -2997,7 +3480,11 @@ pub fn claim(idx: &Index, graph: &StructuralGraph, statement: &str) -> Value {
     let subject = subject_re
         .captures(statement)
         .and_then(|c| c.get(1).or(c.get(2)))
-        .map(|m| m.as_str().trim_matches(|c: char| c == '"' || c == '\'').to_string());
+        .map(|m| {
+            m.as_str()
+                .trim_matches(|c: char| c == '"' || c == '\'')
+                .to_string()
+        });
 
     let Some(subject) = subject else {
         return json!({
@@ -3104,16 +3591,21 @@ pub fn claim_structured(
 ) -> Value {
     let target = match target {
         Some(t) => t,
-        None => return json!({
-            "verdict": "UNVERIFIABLE",
-            "reason": "--target is required for structured claims",
-            "claim_type": claim_type,
-        }),
+        None => {
+            return json!({
+                "verdict": "UNVERIFIABLE",
+                "reason": "--target is required for structured claims",
+                "claim_type": claim_type,
+            })
+        }
     };
 
     let concept_result = concept(idx, graph, target);
     let verdict_str = concept_result["verdict"].as_str().unwrap_or("ABSENT");
-    let exists = matches!(verdict_str, "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" | "SYMBOL");
+    let exists = matches!(
+        verdict_str,
+        "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" | "SYMBOL"
+    );
     let insufficient = verdict_str == "INSUFFICIENT_COVERAGE";
 
     match claim_type {
@@ -3168,11 +3660,13 @@ pub fn claim_structured(
             // Claim: target is ONLY used within the --within directory
             let scope = match within {
                 Some(s) => s,
-                None => return json!({
-                    "verdict": "UNVERIFIABLE",
-                    "reason": "--within is required for isolation claims",
-                    "claim_type": "isolation",
-                }),
+                None => {
+                    return json!({
+                        "verdict": "UNVERIFIABLE",
+                        "reason": "--within is required for isolation claims",
+                        "claim_type": "isolation",
+                    })
+                }
             };
 
             if insufficient {
@@ -3186,10 +3680,19 @@ pub fn claim_structured(
             }
 
             // Parse comma-separated within prefixes: "src,tests" → ["src", "tests"]
-            let within_prefixes: Vec<&str> = scope.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let within_prefixes: Vec<&str> = scope
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
             // Parse comma-separated exclude prefixes: "tests,vendor" → ["tests", "vendor"]
             let exclude_prefixes: Vec<&str> = exclude
-                .map(|e| e.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect())
+                .map(|e| {
+                    e.split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let is_allowed = |file: &str| -> bool {
@@ -3198,14 +3701,17 @@ pub fn claim_structured(
                     return true;
                 }
                 // File must start with at least one within prefix
-                within_prefixes.iter().any(|prefix| file.starts_with(prefix))
+                within_prefixes
+                    .iter()
+                    .any(|prefix| file.starts_with(prefix))
             };
 
             // Check schema usage (ORM calls etc.)
             let outside_files: Vec<String> = concept_result["used_by_files"]
                 .as_array()
                 .map(|files| {
-                    files.iter()
+                    files
+                        .iter()
                         .filter_map(|f| f.as_str())
                         .filter(|f| !is_allowed(f))
                         .map(|f| f.to_string())
@@ -3214,11 +3720,12 @@ pub fn claim_structured(
                 .unwrap_or_default();
 
             // Check structural dependents
-            let structural_outside: Vec<String> = crate::structural::structural_dependents(graph, target, 3)
-                .into_iter()
-                .filter(|d| !is_allowed(&d.file))
-                .map(|d| d.file)
-                .collect();
+            let structural_outside: Vec<String> =
+                crate::structural::structural_dependents(graph, target, 3)
+                    .into_iter()
+                    .filter(|d| !is_allowed(&d.file))
+                    .map(|d| d.file)
+                    .collect();
 
             let all_outside: std::collections::BTreeSet<String> = outside_files
                 .into_iter()
@@ -3226,7 +3733,11 @@ pub fn claim_structured(
                 .collect();
 
             let within_display = within_prefixes.join(", ");
-            let exclude_display = if exclude_prefixes.is_empty() { String::new() } else { format!(" (excluding: {})", exclude_prefixes.join(", ")) };
+            let exclude_display = if exclude_prefixes.is_empty() {
+                String::new()
+            } else {
+                format!(" (excluding: {})", exclude_prefixes.join(", "))
+            };
             json!({
                 "claim_type": "isolation",
                 "target": target,

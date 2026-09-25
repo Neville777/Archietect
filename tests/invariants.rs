@@ -20,7 +20,9 @@ use archietect::{invariants, scan};
 use std::path::PathBuf;
 
 fn corpus_root(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("validation").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("validation")
+        .join(name)
 }
 
 /// Run invariant checks on a pre-built corpus repo.
@@ -136,8 +138,11 @@ fn structural_aspnetcore_realworld() {
     let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| s.name == "Article"
-            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
+        graph
+            .symbols
+            .values()
+            .any(|s| s.name == "Article"
+                && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "C# extractor failed to find the real Article domain class in a live ASP.NET Core repo"
     );
     assert!(
@@ -199,13 +204,19 @@ fn structural_scala_xml_realworld() {
     let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| s.name == "MetaData"
-            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
+        graph
+            .symbols
+            .values()
+            .any(|s| s.name == "MetaData"
+                && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Scala extractor failed to find the real MetaData class in scala-xml"
     );
     assert!(
-        graph.symbols.values().any(|s| s.name == "Comment"
-            && matches!(s.kind, archietect::structural::SymbolKind::Class)),
+        graph
+            .symbols
+            .values()
+            .any(|s| s.name == "Comment"
+                && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Scala extractor failed to find the real Comment class in scala-xml"
     );
 }
@@ -236,11 +247,17 @@ fn structural_rails_routes_realworld() {
     let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/articles"),
+        graph
+            .routes
+            .iter()
+            .any(|r| r.method == "RESOURCES" && r.path == "/articles"),
         "Rails extractor failed to find the real `resources :articles` route"
     );
     assert!(
-        graph.routes.iter().any(|r| r.method == "RESOURCES" && r.path == "/tags"),
+        graph
+            .routes
+            .iter()
+            .any(|r| r.method == "RESOURCES" && r.path == "/tags"),
         "Rails extractor failed to find the real `resources :tags` route"
     );
 }
@@ -280,15 +297,24 @@ fn structural_nuxt_devtools_realworld() {
     let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| matches!(s.kind, archietect::structural::SymbolKind::Class) && s.file.ends_with(".vue")),
+        graph.symbols.values().any(
+            |s| matches!(s.kind, archietect::structural::SymbolKind::Class)
+                && s.file.ends_with(".vue")
+        ),
         "Vue extractor found no .vue file registered as a component symbol"
     );
     assert!(
-        graph.routes.iter().any(|r| r.method == "GET" && r.file.ends_with(".vue")),
+        graph
+            .routes
+            .iter()
+            .any(|r| r.method == "GET" && r.file.ends_with(".vue")),
         "Nuxt page-routing convention (pages/**/*.vue) found no GET route"
     );
     assert!(
-        graph.routes.iter().any(|r| r.file.contains("server/api/") || r.file.contains("server/routes/")),
+        graph
+            .routes
+            .iter()
+            .any(|r| r.file.contains("server/api/") || r.file.contains("server/routes/")),
         "Nuxt server-API routing convention (server/api/name.method.ts) found no route"
     );
 }
@@ -302,7 +328,11 @@ fn structural_grpc_examples_realworld() {
     let (schema_prior, graph_prior) = archietect::store::load_raw(&root);
     let (_idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
     assert!(
-        graph.symbols.values().any(|s| s.name == "Greeter" && matches!(s.kind, archietect::structural::SymbolKind::Class)),
+        graph
+            .symbols
+            .values()
+            .any(|s| s.name == "Greeter"
+                && matches!(s.kind, archietect::structural::SymbolKind::Class)),
         "Protobuf extractor failed to find the real Greeter service"
     );
     assert!(
@@ -310,7 +340,10 @@ fn structural_grpc_examples_realworld() {
         "Protobuf extractor failed to find the real Greeter/SayHello rpc"
     );
     assert!(
-        graph.routes.iter().any(|r| r.path == "/RouteGuide/RouteChat"),
+        graph
+            .routes
+            .iter()
+            .any(|r| r.path == "/RouteGuide/RouteChat"),
         "Protobuf extractor failed to find the real RouteGuide/RouteChat streaming rpc"
     );
 }

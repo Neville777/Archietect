@@ -40,7 +40,7 @@ use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -146,7 +146,11 @@ fn current_head(root: &Path) -> Result<String> {
         .args(["rev-parse", "HEAD"])
         .output()
         .context("failed to run `git rev-parse HEAD`")?;
-    anyhow::ensure!(out.status.success(), "git rev-parse HEAD failed: {}", String::from_utf8_lossy(&out.stderr));
+    anyhow::ensure!(
+        out.status.success(),
+        "git rev-parse HEAD failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
@@ -191,7 +195,10 @@ const FORBIDDEN_PREFIX: &[&str] = &[".github/", ".git/", "laws/"];
 /// gap where a proposal weakens the very suite it's about to be judged by.
 fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
     let files = touched_files(patch_text);
-    anyhow::ensure!(!files.is_empty(), "patch does not appear to touch any files");
+    anyhow::ensure!(
+        !files.is_empty(),
+        "patch does not appear to touch any files"
+    );
     for f in &files {
         let p = std::path::Path::new(f);
         let escapes = p.is_absolute()
@@ -206,7 +213,9 @@ fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
         if escapes {
             bail!("proposal touches a path outside the repository: '{f}'");
         }
-        if FORBIDDEN_EXACT.contains(&f.as_str()) || FORBIDDEN_PREFIX.iter().any(|p| f.starts_with(p)) {
+        if FORBIDDEN_EXACT.contains(&f.as_str())
+            || FORBIDDEN_PREFIX.iter().any(|p| f.starts_with(p))
+        {
             bail!(
                 "proposal touches '{f}', which is part of Archietect's own validation machinery \
                  and is never permitted in a proposal patch"
@@ -223,7 +232,9 @@ fn check_scope(kind: Kind, patch_text: &str) -> Result<()> {
         }
         Kind::Extractor => {
             for f in &files {
-                let allowed = f == "src/structural.rs" || f.starts_with("tests/fixtures/") || f.starts_with("validation/");
+                let allowed = f == "src/structural.rs"
+                    || f.starts_with("tests/fixtures/")
+                    || f.starts_with("validation/");
                 if !allowed {
                     bail!(
                         "an extractor proposal may only touch src/structural.rs, tests/fixtures/**, \
@@ -382,7 +393,10 @@ pub fn test(root: &Path, id: u64) -> Result<Value> {
         .output()
         .context("failed to run `git worktree add` — is this an archietect repo under git?")?;
     if !add.status.success() {
-        bail!("git worktree add failed: {}", String::from_utf8_lossy(&add.stderr));
+        bail!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&add.stderr)
+        );
     }
 
     // `git worktree add` only carries tracked content — the real-corpus
@@ -399,7 +413,14 @@ pub fn test(root: &Path, id: u64) -> Result<Value> {
         let _ = std::fs::create_dir_all(worktree.join("validation"));
     }
 
-    let outcome = run_in_worktree(&worktree, &patch_file, &meta);
+    // A decision commonly governs a source change that is still pending in
+    // the caller's working tree. The proposal itself is deliberately limited
+    // to archietect.toml, so validate it together with that pending source
+    // patch — otherwise a decision linked to a genuinely new model can never
+    // pass because the detached HEAD worktree has not seen the model yet.
+    // Excluding archietect.toml avoids applying the same decision twice.
+    let seeded = seed_pending_source_changes(root, &worktree);
+    let outcome = seeded.and_then(|_| run_in_worktree(&worktree, &patch_file, &meta));
 
     let _ = Command::new("git")
         .current_dir(root)
@@ -409,12 +430,60 @@ pub fn test(root: &Path, id: u64) -> Result<Value> {
     let _ = std::fs::remove_dir_all(&worktree);
 
     let report = outcome?;
-    meta.status = if report.passed { Status::Passed } else { Status::Failed };
+    meta.status = if report.passed {
+        Status::Passed
+    } else {
+        Status::Failed
+    };
     meta.tested_head = Some(head);
     save_meta(root, id, &meta)?;
     save_result(root, id, &report)?;
 
     Ok(json!({ "id": id, "status": meta.status, "result": report }))
+}
+
+fn seed_pending_source_changes(root: &Path, worktree: &Path) -> Result<()> {
+    let diff = Command::new("git")
+        .current_dir(root)
+        .args([
+            "diff",
+            "HEAD",
+            "--binary",
+            "--",
+            ".",
+            ":(exclude)archietect.toml",
+        ])
+        .output()
+        .context("failed to read pending source changes for proposal test")?;
+    anyhow::ensure!(
+        diff.status.success(),
+        "git diff HEAD failed: {}",
+        String::from_utf8_lossy(&diff.stderr)
+    );
+    if diff.stdout.is_empty() {
+        return Ok(());
+    }
+    let mut child = Command::new("git")
+        .current_dir(worktree)
+        .args(["apply", "--whitespace=nowarn", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to apply pending source changes to proposal worktree")?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .expect("piped stdin")
+        .write_all(&diff.stdout)?;
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "pending source patch did not apply: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
 }
 
 fn run_in_worktree(worktree: &Path, patch_file: &Path, meta: &Meta) -> Result<ResultReport> {
@@ -512,7 +581,12 @@ fn preview_extractor(worktree: &Path, preview_repo: Option<&str>) -> Option<Valu
         return Some(json!({ "error": "preview build failed" }));
     }
     let bin = worktree.join("target").join("debug").join("archietect");
-    let out = Command::new(&bin).arg("--root").arg(repo).arg("status").output().ok()?;
+    let out = Command::new(&bin)
+        .arg("--root")
+        .arg(repo)
+        .arg("status")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return Some(json!({ "error": "preview run failed" }));
     }
@@ -546,7 +620,9 @@ pub fn accept(root: &Path, id: u64) -> Result<Value> {
             "repository HEAD has moved since this proposal was tested (tested against {h}, now at \
              {head_now}) — re-run `archietect proposal test {id}`"
         ),
-        None => bail!("proposal {id} has no recorded tested HEAD — run `archietect proposal test {id}` first"),
+        None => bail!(
+            "proposal {id} has no recorded tested HEAD — run `archietect proposal test {id}` first"
+        ),
     }
 
     let apply = Command::new("git")
@@ -556,7 +632,10 @@ pub fn accept(root: &Path, id: u64) -> Result<Value> {
         .output()
         .context("failed to run `git apply`")?;
     if !apply.status.success() {
-        bail!("git apply to the working tree failed: {}", String::from_utf8_lossy(&apply.stderr));
+        bail!(
+            "git apply to the working tree failed: {}",
+            String::from_utf8_lossy(&apply.stderr)
+        );
     }
 
     meta.status = Status::Accepted;

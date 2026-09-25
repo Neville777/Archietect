@@ -84,22 +84,40 @@ mod tests {
     #[test]
     fn just_now_and_minutes() {
         assert_eq!(age_label_at(NOW - 1_000, NOW), Some("just now".into()));
-        assert_eq!(age_label_at(NOW - 5 * MINUTE, NOW), Some("5 minutes ago".into()));
+        assert_eq!(
+            age_label_at(NOW - 5 * MINUTE, NOW),
+            Some("5 minutes ago".into())
+        );
         assert_eq!(age_label_at(NOW - MINUTE, NOW), Some("1 minute ago".into()));
     }
 
     #[test]
     fn hours_yesterday_and_days() {
-        assert_eq!(age_label_at(NOW - 3 * HOUR, NOW), Some("3 hours ago".into()));
-        assert_eq!(age_label_at(NOW - DAY - HOUR, NOW), Some("yesterday".into()));
+        assert_eq!(
+            age_label_at(NOW - 3 * HOUR, NOW),
+            Some("3 hours ago".into())
+        );
+        assert_eq!(
+            age_label_at(NOW - DAY - HOUR, NOW),
+            Some("yesterday".into())
+        );
         assert_eq!(age_label_at(NOW - 5 * DAY, NOW), Some("5 days ago".into()));
     }
 
     #[test]
     fn weeks_months_years() {
-        assert_eq!(age_label_at(NOW - 14 * DAY, NOW), Some("2 weeks ago".into()));
-        assert_eq!(age_label_at(NOW - 90 * DAY, NOW), Some("3 months ago".into()));
-        assert_eq!(age_label_at(NOW - 400 * DAY, NOW), Some("1 year ago".into()));
+        assert_eq!(
+            age_label_at(NOW - 14 * DAY, NOW),
+            Some("2 weeks ago".into())
+        );
+        assert_eq!(
+            age_label_at(NOW - 90 * DAY, NOW),
+            Some("3 months ago".into())
+        );
+        assert_eq!(
+            age_label_at(NOW - 400 * DAY, NOW),
+            Some("1 year ago".into())
+        );
     }
 
     #[test]
@@ -107,6 +125,9 @@ mod tests {
         // Sanity check against wall-clock reality, not a fixed constant —
         // catches a unit mistake (seconds vs ms) without hardcoding "today".
         let ms = now_ms();
-        assert!(ms > 1_700_000_000_000, "now_ms() looks like seconds, not milliseconds: {ms}");
+        assert!(
+            ms > 1_700_000_000_000,
+            "now_ms() looks like seconds, not milliseconds: {ms}"
+        );
     }
 }

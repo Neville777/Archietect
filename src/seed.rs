@@ -133,7 +133,12 @@ fn escape_toml_string(s: &str) -> String {
 /// Orchestrates: read README, extract candidates, drop any whose exact text
 /// OR id already exists among `idx.decisions` (a real prior scan — never
 /// re-derived here), optionally append the rest to archietect.toml.
-pub fn seed(root: &Path, idx: &Index, write: bool, proposed_by: Option<&str>) -> anyhow::Result<serde_json::Value> {
+pub fn seed(
+    root: &Path,
+    idx: &Index,
+    write: bool,
+    proposed_by: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
     let Some(readme) = read_readme(root) else {
         return Ok(serde_json::json!({
             "available": false,
@@ -141,12 +146,16 @@ pub fn seed(root: &Path, idx: &Index, write: bool, proposed_by: Option<&str>) ->
         }));
     };
 
-    let existing_text: std::collections::HashSet<&str> = idx.decisions.iter().map(|d| d.decision.as_str()).collect();
-    let existing_ids: std::collections::HashSet<&str> = idx.decisions.iter().map(|d| d.id.as_str()).collect();
+    let existing_text: std::collections::HashSet<&str> =
+        idx.decisions.iter().map(|d| d.decision.as_str()).collect();
+    let existing_ids: std::collections::HashSet<&str> =
+        idx.decisions.iter().map(|d| d.id.as_str()).collect();
 
     let new: Vec<Candidate> = extract_candidates(&readme)
         .into_iter()
-        .filter(|c| !existing_text.contains(c.decision.as_str()) && !existing_ids.contains(c.id.as_str()))
+        .filter(|c| {
+            !existing_text.contains(c.decision.as_str()) && !existing_ids.contains(c.id.as_str())
+        })
         .collect();
 
     if new.is_empty() {
@@ -182,7 +191,10 @@ pub fn seed(root: &Path, idx: &Index, write: bool, proposed_by: Option<&str>) ->
             block.push('\n');
         }
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&toml_path)?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&toml_path)?;
         f.write_all(block.as_bytes())?;
     }
 
@@ -230,7 +242,10 @@ Some prose about what this does.
         assert!(texts.contains(&"Never call the payment API from a background job."));
         assert!(texts.contains(&"All migrations must be reversible."));
         assert!(texts.contains(&"PRs require one reviewer."));
-        assert!(!texts.iter().any(|t| t.contains("prose about architecture")), "{texts:?}");
+        assert!(
+            !texts.iter().any(|t| t.contains("prose about architecture")),
+            "{texts:?}"
+        );
         assert_eq!(cands.len(), 3);
     }
 
@@ -252,7 +267,10 @@ Some prose about what this does.
 
     #[test]
     fn no_readme_is_unavailable_not_an_empty_result() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-noreadme-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-seed-test-noreadme-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let idx = Index::default();
@@ -263,7 +281,10 @@ Some prose about what this does.
 
     #[test]
     fn dry_run_finds_candidates_but_writes_nothing() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-dryrun-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-seed-test-dryrun-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("README.md"), "## Constraints\n- Never do X.\n").unwrap();
@@ -272,17 +293,25 @@ Some prose about what this does.
         let out = seed(&root, &idx, false, None).unwrap();
         assert_eq!(out["found"], serde_json::json!(1));
         assert_eq!(out["written"], serde_json::json!(false));
-        assert!(!root.join("archietect.toml").exists(), "dry run must not create archietect.toml");
+        assert!(
+            !root.join("archietect.toml").exists(),
+            "dry run must not create archietect.toml"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn write_appends_and_second_run_is_idempotent() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-write-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("archietect-seed-test-write-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("README.md"), "## Constraints\n- Never do X.\n- Always do Y.\n").unwrap();
+        std::fs::write(
+            root.join("README.md"),
+            "## Constraints\n- Never do X.\n- Always do Y.\n",
+        )
+        .unwrap();
         let idx = Index::default();
 
         let out = seed(&root, &idx, true, None).unwrap();
@@ -297,19 +326,30 @@ Some prose about what this does.
         // Index) and seed again — the two decisions just written must now
         // be recognized as already-declared and NOT duplicated.
         let (idx2, _graph) = crate::scan::scan(&root);
-        assert_eq!(idx2.decisions.len(), 2, "the two seeded decisions must round-trip through the real TOML parser");
+        assert_eq!(
+            idx2.decisions.len(),
+            2,
+            "the two seeded decisions must round-trip through the real TOML parser"
+        );
         let out2 = seed(&root, &idx2, true, None).unwrap();
         assert_eq!(out2["found"], serde_json::json!(0), "{out2}");
 
         let toml_text_after = std::fs::read_to_string(root.join("archietect.toml")).unwrap();
-        assert_eq!(toml_text.matches("Never do X.").count(), toml_text_after.matches("Never do X.").count(), "must not duplicate on a second run");
+        assert_eq!(
+            toml_text.matches("Never do X.").count(),
+            toml_text_after.matches("Never do X.").count(),
+            "must not duplicate on a second run"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn write_preserves_existing_file_content() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-preserve-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-seed-test-preserve-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("README.md"), "## Constraints\n- New rule here.\n").unwrap();
@@ -323,7 +363,10 @@ Some prose about what this does.
         seed(&root, &idx, true, None).unwrap();
 
         let toml_text = std::fs::read_to_string(root.join("archietect.toml")).unwrap();
-        assert!(toml_text.contains("A human's own comment, must survive."), "{toml_text}");
+        assert!(
+            toml_text.contains("A human's own comment, must survive."),
+            "{toml_text}"
+        );
         assert!(toml_text.contains("exclude = [\"target\"]"), "{toml_text}");
         assert!(toml_text.contains("New rule here."), "{toml_text}");
 
@@ -332,20 +375,34 @@ Some prose about what this does.
 
     #[test]
     fn proposed_by_is_written_and_round_trips_through_the_real_toml_parser() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-proposedby-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-seed-test-proposedby-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("README.md"), "## Constraints\n- Attributed rule.\n").unwrap();
+        std::fs::write(
+            root.join("README.md"),
+            "## Constraints\n- Attributed rule.\n",
+        )
+        .unwrap();
         let idx = Index::default();
 
         let out = seed(&root, &idx, true, Some("claude-sonnet-5")).unwrap();
         assert_eq!(out["proposed_by"], serde_json::json!("claude-sonnet-5"));
 
         let toml_text = std::fs::read_to_string(root.join("archietect.toml")).unwrap();
-        assert!(toml_text.contains("proposed_by = \"claude-sonnet-5\""), "{toml_text}");
+        assert!(
+            toml_text.contains("proposed_by = \"claude-sonnet-5\""),
+            "{toml_text}"
+        );
 
         let (idx2, _graph) = crate::scan::scan(&root);
-        let d = idx2.decisions.iter().find(|d| d.decision == "Attributed rule.").expect("seeded decision must round-trip");
+        let d = idx2
+            .decisions
+            .iter()
+            .find(|d| d.decision == "Attributed rule.")
+            .expect("seeded decision must round-trip");
         assert_eq!(d.proposed_by, "claude-sonnet-5");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -353,10 +410,17 @@ Some prose about what this does.
 
     #[test]
     fn no_proposed_by_omits_the_field_entirely_rather_than_writing_an_empty_one() {
-        let root = std::env::temp_dir().join(format!("archietect-seed-test-noattrib-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-seed-test-noattrib-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("README.md"), "## Constraints\n- Unattributed rule.\n").unwrap();
+        std::fs::write(
+            root.join("README.md"),
+            "## Constraints\n- Unattributed rule.\n",
+        )
+        .unwrap();
         let idx = Index::default();
 
         seed(&root, &idx, true, None).unwrap();
@@ -365,8 +429,15 @@ Some prose about what this does.
         assert!(!toml_text.contains("proposed_by"), "{toml_text}");
 
         let (idx2, _graph) = crate::scan::scan(&root);
-        let d = idx2.decisions.iter().find(|d| d.decision == "Unattributed rule.").expect("seeded decision must round-trip");
-        assert_eq!(d.proposed_by, "", "absent field must parse as empty, not a guessed value");
+        let d = idx2
+            .decisions
+            .iter()
+            .find(|d| d.decision == "Unattributed rule.")
+            .expect("seeded decision must round-trip");
+        assert_eq!(
+            d.proposed_by, "",
+            "absent field must parse as empty, not a guessed value"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

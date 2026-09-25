@@ -18,7 +18,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{docker_domain, documents_domain, permissions, photos_domain, query, root, scan, system_db};
+use crate::{
+    docker_domain, documents_domain, permissions, photos_domain, query, root, scan, system_db,
+};
 
 fn tool_defs() -> Value {
     let mut tools = tool_defs_inner();
@@ -28,7 +30,10 @@ fn tool_defs() -> Value {
     // each literal below, so a new tool can't forget them.
     if let Some(arr) = tools.as_array_mut() {
         for t in arr {
-            if let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(|p| p.as_object_mut()) {
+            if let Some(props) = t
+                .pointer_mut("/inputSchema/properties")
+                .and_then(|p| p.as_object_mut())
+            {
                 props.insert("only".to_string(), json!({
                     "type": "array", "items": { "type": "string" },
                     "description": "Return only these top-level keys of the result (e.g. [\"git\"] on `status`). Saves tokens when you need one slice of a large answer."
@@ -55,7 +60,10 @@ fn tool_defs() -> Value {
 /// display, not a place to reproduce an entire patch.
 fn describe_call(name: &str, args: &Value) -> String {
     fn field(args: &Value, key: &str) -> Option<String> {
-        args.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string())
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
     }
     fn truncate(s: &str, max: usize) -> String {
         if s.chars().count() <= max {
@@ -72,10 +80,12 @@ fn describe_call(name: &str, args: &Value) -> String {
         "claim" => field(args, "statement").map(|s| truncate(&s, 80)),
         "ci" => field(args, "diff").map(|s| truncate(&s, 60)),
         "history" => field(args, "concept"),
+        "impact_diff" => args.get("base").and_then(|v| v.as_str()).map(|s| s.to_string()),
         "proposal_submit" => field(args, "title"),
-        "proposal_inspect" | "proposal_test" | "proposal_accept" | "proposal_reject" => {
-            args.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string())
-        }
+        "proposal_inspect" | "proposal_test" | "proposal_accept" | "proposal_reject" => args
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .map(|n| n.to_string()),
         "permissions_check" => field(args, "path"),
         "documents_scan" | "photos_scan" => field(args, "dir"),
         _ => None,
@@ -120,7 +130,9 @@ const HEARTBEAT_INTERVAL_MS: i64 = 3_000;
 /// `mcp_client_connected`'s own doc for why that lives here rather than
 /// requiring a separate manual `system_register` call.
 fn flush_if_due(activity: &mut McpActivity, root: &Path, now: i64) {
-    let Some(tools) = activity.tools_since_heartbeat.get(root) else { return };
+    let Some(tools) = activity.tools_since_heartbeat.get(root) else {
+        return;
+    };
     if tools.is_empty() {
         return;
     }
@@ -132,16 +144,25 @@ fn flush_if_due(activity: &mut McpActivity, root: &Path, now: i64) {
     if !due {
         return;
     }
-    let Some((client_name, client_version)) = activity.client_info.clone() else { return };
+    let Some((client_name, client_version)) = activity.client_info.clone() else {
+        return;
+    };
     let tools: Vec<String> = tools.iter().cloned().collect();
     let first_contact = activity.recorded_connection_for.insert(root.to_path_buf());
-    let kind = if first_contact { "mcp_client_connected" } else { "mcp_client_active" };
-    let _ = crate::store::append_events(root, &[(
-        now,
-        kind.to_string(),
-        client_name,
-        json!({ "version": client_version, "tools": tools }).to_string(),
-    )]);
+    let kind = if first_contact {
+        "mcp_client_connected"
+    } else {
+        "mcp_client_active"
+    };
+    let _ = crate::store::append_events(
+        root,
+        &[(
+            now,
+            kind.to_string(),
+            client_name,
+            json!({ "version": client_version, "tools": tools }).to_string(),
+        )],
+    );
     activity.last_heartbeat_for.insert(root.to_path_buf(), now);
     if let Some(t) = activity.tools_since_heartbeat.get_mut(root) {
         t.clear();
@@ -207,6 +228,23 @@ fn tool_defs_inner() -> Value {
                 "term": { "type": "string" },
                 "root": root_prop
             }, "required": ["term"] }
+        },
+        {
+            "name": "impact_diff",
+            "description": "Compare staged and unstaged Git changes with a base ref. Reports changed files, affected declared/used concepts, changed symbols/routes, and affected importers. Static impact only; it does not claim runtime or browser behavior.",
+            "inputSchema": { "type": "object", "properties": {
+                "base": { "type": "string", "description": "Git ref/commit/branch to compare against (default HEAD)." },
+                "root": root_prop
+            } }
+        },
+        {
+            "name": "workflow_check",
+            "description": "Read-only prerequisite report for a proposed change. Missing optional evidence is advisory; explicit guard or verify_edit failures are blocked.",
+            "inputSchema": { "type": "object", "properties": {
+                "goal": { "type": "string" }, "impact_term": { "type": "string" },
+                "patch": { "type": "string" }, "file": { "type": "string" },
+                "content": { "type": "string" }, "root": root_prop
+            }, "required": ["goal"] }
         },
         {
             "name": "imports",
@@ -425,6 +463,27 @@ fn tool_defs_inner() -> Value {
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
         },
         {
+            "name": "runtime_verify_http",
+            "description": "LIVE, READ-ONLY HTTP evidence. Performs one bounded unauthenticated GET against an explicit http:// URL and reports status, selected headers, body size and HTML title. It never follows redirects, sends credentials/cookies, executes JavaScript, or writes the index. This proves network reachability only, not browser hydration or authenticated behavior.",
+            "inputSchema": { "type": "object", "properties": {
+                "url": { "type": "string", "description": "Absolute http:// URL to probe." },
+                "timeout_ms": { "type": "number", "description": "Timeout in milliseconds, clamped to 1..=30000 (default 5000)." },
+                "qaforge": { "type": "boolean", "description": "Wrap the result in the versioned qaforge.evidence.v1 envelope for ingestion." },
+                "root": root_prop
+            }, "required": ["url"] }
+        },
+        {
+            "name": "runtime_verify_browser",
+            "description": "LIVE, READ-ONLY browser evidence. Opens one explicit http:// or https:// URL in a fresh headless Playwright context and reports title, final URL, response status, console errors/warnings, page errors, failed requests, and basic DOM accessibility counts. It uses no cookies, storage state, credentials, or headed browser, and never writes the index. Requires Node.js and the target project's installed Playwright package. This does not prove authenticated behaviour, security, or visual correctness.",
+            "inputSchema": { "type": "object", "properties": {
+                "url": { "type": "string", "description": "Absolute http:// or https:// URL to open." },
+                "timeout_ms": { "type": "number", "description": "Navigation timeout in milliseconds, clamped to 1..=30000 (default 10000)." },
+                "settle_ms": { "type": "number", "description": "Bounded wait after DOMContentLoaded, clamped to 0..=3000 (default 250)." },
+                "qaforge": { "type": "boolean", "description": "Wrap the result in the versioned qaforge.evidence.v1 envelope for ingestion." },
+                "root": root_prop
+            }, "required": ["url"] }
+        },
+        {
             "name": "docker_observe",
             "description": "LIVE container state — the one tool in this server that shells out (to `docker compose ps --format json --all`), unlike every other tool here which only reads what's already indexed. For each root-level compose file, reports each DECLARED service's real, current state right now: running, or observed NOT running. Requires 'docker' to already be enabled via [domains.docker], same gate the declarative docker scan uses. Silent (no resources) for a compose file the command can't be run against — missing `docker`, unreachable daemon, timeout — never a guessed or stale state.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -447,12 +506,16 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     // Without this, each one was a full cold scan — five times the cost for
     // one question. stdin is read one line at a time, sequentially, so a
     // plain HashMap needs no lock here either.
-    let mut cache: std::collections::HashMap<PathBuf, (crate::model::Index, crate::structural::StructuralGraph)> = std::collections::HashMap::new();
+    let mut cache: std::collections::HashMap<
+        PathBuf,
+        (crate::model::Index, crate::structural::StructuralGraph),
+    > = std::collections::HashMap::new();
     // Track archietect.db mtime per root so the cache is invalidated
     // when the index changes on disk (archietect init ran in another
     // terminal, a migration updated the DB, etc.). Checked on every
     // tool call — hot-reload in 55ms via load_cached, never stale.
-    let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> = std::collections::HashMap::new();
+    let mut db_mtimes: std::collections::HashMap<PathBuf, std::time::SystemTime> =
+        std::collections::HashMap::new();
     // Captured from `initialize`'s `clientInfo` (name/version) — every real
     // MCP client sends this per the protocol spec, and until now archietect
     // just ignored it. Recorded once per (session, root actually touched)
@@ -493,8 +556,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
             "initialize" => {
                 if let Some(ci) = msg["params"].get("clientInfo") {
                     activity.lock().unwrap().client_info = Some((
-                        ci.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
-                        ci.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        ci.get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        ci.get("version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                     ));
                 }
                 Ok(json!({
@@ -510,21 +579,33 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                 let name = msg["params"]["name"].as_str().unwrap_or("");
                 let args = &msg["params"]["arguments"];
                 let root = root::resolve(
-                    args.get("root").and_then(|r| r.as_str()).map(PathBuf::from)
+                    args.get("root")
+                        .and_then(|r| r.as_str())
+                        .map(PathBuf::from)
                         .or_else(|| default_root.clone()),
                     &std::env::current_dir().unwrap_or_default(),
-                ).ok();
+                )
+                .ok();
                 match root {
-                    None => Err((-32602i64, "no repository root: pass `root` or start the server with --root".to_string())),
-                    Some(root) if !root.exists() => {
-                        Err((-32602i64, format!("root does not exist: {}", root.display())))
-                    }
+                    None => Err((
+                        -32602i64,
+                        "no repository root: pass `root` or start the server with --root"
+                            .to_string(),
+                    )),
+                    Some(root) if !root.exists() => Err((
+                        -32602i64,
+                        format!("root does not exist: {}", root.display()),
+                    )),
                     Some(root) => {
                         {
                             let mut guard = activity.lock().unwrap();
                             if guard.client_info.is_some() && !name.is_empty() {
                                 let desc = describe_call(name, args);
-                                guard.tools_since_heartbeat.entry(root.clone()).or_default().insert(desc);
+                                guard
+                                    .tools_since_heartbeat
+                                    .entry(root.clone())
+                                    .or_default()
+                                    .insert(desc);
                             }
                             let now = crate::humanize::now_ms();
                             flush_if_due(&mut guard, &root, now);
@@ -536,9 +617,8 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         // cache now tracks DB mtime per root and re-runs
                         // load_cached (55ms) the instant the file is newer.
                         let db_path = root.join("archietect.db");
-                        let current_db_mtime = std::fs::metadata(&db_path)
-                            .and_then(|m| m.modified())
-                            .ok();
+                        let current_db_mtime =
+                            std::fs::metadata(&db_path).and_then(|m| m.modified()).ok();
                         if let Some(current) = current_db_mtime {
                             let known = db_mtimes.get(&root).copied();
                             if known.map(|k| k != current).unwrap_or(false) {
@@ -573,27 +653,61 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             }
                         };
                         let mut out = match name {
-                            "concept" => query::concept(&idx, &graph, args["term"].as_str().unwrap_or("")),
-                            "intent" => query::intent(&idx, &graph, args["text"].as_str().unwrap_or("")),
-                            "impact" => query::impact(&idx, &graph, args["term"].as_str().unwrap_or("")),
-                            "imports" => query::imports(&graph, args["file"].as_str().unwrap_or("")),
-                            "guard" => query::guard(&idx, &graph, args["sql"].as_str().unwrap_or("")),
-                            "plan" => query::plan(&idx, &graph, args["text"].as_str().unwrap_or("")),
-                            "owner" => query::owner(&idx, &graph, args["term"].as_str().unwrap_or("")),
+                            "concept" => {
+                                query::concept(&idx, &graph, args["term"].as_str().unwrap_or(""))
+                            }
+                            "intent" => {
+                                query::intent(&idx, &graph, args["text"].as_str().unwrap_or(""))
+                            }
+                            "impact" => {
+                                query::impact(&idx, &graph, args["term"].as_str().unwrap_or(""))
+                            }
+                            "impact_diff" => {
+                                let base = args.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
+                                crate::diff_impact::impact_report(&root, base, &idx, &graph)
+                            }
+                            "workflow_check" => crate::workflow::workflow_check(
+                                &root, &idx, &graph,
+                                args.get("goal").and_then(|v| v.as_str()).unwrap_or(""),
+                                args.get("impact_term").and_then(|v| v.as_str()),
+                                args.get("patch").and_then(|v| v.as_str()),
+                                args.get("file").and_then(|v| v.as_str()),
+                                args.get("content").and_then(|v| v.as_str()),
+                            ),
+                            "imports" => {
+                                query::imports(&graph, args["file"].as_str().unwrap_or(""))
+                            }
+                            "guard" => {
+                                query::guard(&idx, &graph, args["sql"].as_str().unwrap_or(""))
+                            }
+                            "plan" => {
+                                query::plan(&idx, &graph, args["text"].as_str().unwrap_or(""))
+                            }
+                            "owner" => {
+                                query::owner(&idx, &graph, args["term"].as_str().unwrap_or(""))
+                            }
                             "claim" => {
                                 let claim_type = args.get("type").and_then(|v| v.as_str());
                                 if let Some(ct) = claim_type {
                                     query::claim_structured(
-                                        &idx, &graph, ct,
+                                        &idx,
+                                        &graph,
+                                        ct,
                                         args.get("target").and_then(|v| v.as_str()),
-                                        args.get("min").and_then(|v| v.as_u64()).map(|n| n as usize),
+                                        args.get("min")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as usize),
                                         args.get("within").and_then(|v| v.as_str()),
                                         args.get("exclude").and_then(|v| v.as_str()),
                                     )
                                 } else {
-                                    query::claim(&idx, &graph, args["statement"].as_str().unwrap_or(""))
+                                    query::claim(
+                                        &idx,
+                                        &graph,
+                                        args["statement"].as_str().unwrap_or(""),
+                                    )
                                 }
-                            },
+                            }
                             "duplicates" => query::duplicates(&idx),
                             "duplicate_logic" => query::duplicate_logic(&graph),
                             "verdicts" => query::verdicts(&idx),
@@ -611,8 +725,17 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             "status" => query::status(&idx, &graph),
                             "doctor" => query::doctor(&idx, &graph, &root),
                             "tour" => query::tour(&idx, &graph),
-                            "history" if args.get("digest").and_then(|d| d.as_bool()).unwrap_or(false) => {
-                                crate::store::history_digest(&root, args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize)
+                            "history"
+                                if args
+                                    .get("digest")
+                                    .and_then(|d| d.as_bool())
+                                    .unwrap_or(false) =>
+                            {
+                                crate::store::history_digest(
+                                    &root,
+                                    args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50)
+                                        as usize,
+                                )
                             }
                             "history" => json!({
                                 "events": crate::store::read_history(
@@ -622,23 +745,43 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 ),
                                 "note": "Append-only architectural timeline, newest first, written by the daemon, `archietect ci`, or an MCP client (mcp_client_connected on first tool call, mcp_client_active as a roughly-60s heartbeat thereafter).",
                             }),
-                            "ci" => query::ci(&idx, &graph, args["diff"].as_str().unwrap_or(""), args.get("strict").and_then(|s| s.as_bool()).unwrap_or(false)),
+                            "ci" => query::ci(
+                                &idx,
+                                &graph,
+                                args["diff"].as_str().unwrap_or(""),
+                                args.get("strict")
+                                    .and_then(|s| s.as_bool())
+                                    .unwrap_or(false),
+                            ),
                             "proposal_submit" => {
                                 let kind_str = args["kind"].as_str().unwrap_or("");
-                                match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
-                                    Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
+                                match serde_json::from_value::<crate::proposal::Kind>(json!(
+                                    kind_str
+                                )) {
+                                    Err(_) => {
+                                        json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") })
+                                    }
                                     Ok(kind) => {
                                         let patch_text = args["patch"].as_str().unwrap_or("");
-                                        let tmp = std::env::temp_dir().join(format!("archietect-mcp-proposal-{}.diff", std::process::id()));
+                                        let tmp = std::env::temp_dir().join(format!(
+                                            "archietect-mcp-proposal-{}.diff",
+                                            std::process::id()
+                                        ));
                                         match std::fs::write(&tmp, patch_text) {
-                                            Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
+                                            Err(e) => {
+                                                json!({ "error": format!("failed to stage patch: {e}") })
+                                            }
                                             Ok(()) => {
                                                 let out = crate::proposal::submit(
-                                                    &root, kind,
+                                                    &root,
+                                                    kind,
                                                     args["title"].as_str().unwrap_or(""),
-                                                    args.get("description").and_then(|d| d.as_str()).unwrap_or(""),
+                                                    args.get("description")
+                                                        .and_then(|d| d.as_str())
+                                                        .unwrap_or(""),
                                                     args.get("lang").and_then(|l| l.as_str()),
-                                                    args.get("preview_repo").and_then(|p| p.as_str()),
+                                                    args.get("preview_repo")
+                                                        .and_then(|p| p.as_str()),
                                                     "ai",
                                                     &tmp,
                                                 );
@@ -653,33 +796,55 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 }
                             }
                             "proposal_list" => crate::proposal::list(&root),
-                            "proposal_inspect" => match crate::proposal::inspect(&root, args["id"].as_u64().unwrap_or(0)) {
+                            "proposal_inspect" => match crate::proposal::inspect(
+                                &root,
+                                args["id"].as_u64().unwrap_or(0),
+                            ) {
                                 Ok(v) => v,
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
-                            "proposal_test" => match crate::proposal::test(&root, args["id"].as_u64().unwrap_or(0)) {
+                            "proposal_test" => {
+                                match crate::proposal::test(&root, args["id"].as_u64().unwrap_or(0))
+                                {
+                                    Ok(v) => v,
+                                    Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                            "proposal_accept" => match crate::proposal::accept(
+                                &root,
+                                args["id"].as_u64().unwrap_or(0),
+                            ) {
                                 Ok(v) => v,
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
-                            "proposal_accept" => match crate::proposal::accept(&root, args["id"].as_u64().unwrap_or(0)) {
+                            "proposal_reject" => match crate::proposal::reject(
+                                &root,
+                                args["id"].as_u64().unwrap_or(0),
+                                args.get("purge").and_then(|p| p.as_bool()).unwrap_or(false),
+                            ) {
                                 Ok(v) => v,
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
-                            "proposal_reject" => match crate::proposal::reject(&root, args["id"].as_u64().unwrap_or(0), args.get("purge").and_then(|p| p.as_bool()).unwrap_or(false)) {
-                                Ok(v) => v,
-                                Err(e) => json!({ "error": e.to_string() }),
-                            },
-                            "permissions" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                            "permissions" => match permissions::default_global_config_path()
+                                .and_then(|g| permissions::load(&g, &root))
+                            {
                                 Ok(cfg) => permissions::report(&cfg),
                                 Err(e) => json!({ "error": e.to_string() }),
                             },
-                            "permissions_check" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                            "permissions_check" => match permissions::default_global_config_path()
+                                .and_then(|g| permissions::load(&g, &root))
+                            {
                                 Ok(cfg) => {
                                     let path_str = args["path"].as_str().unwrap_or("");
                                     let domain = args["domain"].as_str().unwrap_or("code");
                                     let candidate = PathBuf::from(path_str);
-                                    let full_path = if candidate.is_absolute() { candidate } else { root.join(&candidate) };
-                                    let decision = permissions::check_resource(&cfg, domain, &full_path);
+                                    let full_path = if candidate.is_absolute() {
+                                        candidate
+                                    } else {
+                                        root.join(&candidate)
+                                    };
+                                    let decision =
+                                        permissions::check_resource(&cfg, domain, &full_path);
                                     json!({
                                         "path": full_path.display().to_string(),
                                         "domain": domain,
@@ -691,7 +856,11 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             },
                             "register" => {
                                 let mut out = crate::register::register(&idx, &graph, &root);
-                                if args.get("since_last").and_then(|s| s.as_bool()).unwrap_or(false) {
+                                if args
+                                    .get("since_last")
+                                    .and_then(|s| s.as_bool())
+                                    .unwrap_or(false)
+                                {
                                     let delta = crate::register::diff_since_last(&root, &out);
                                     out["since_last_session"] = delta;
                                 }
@@ -706,7 +875,9 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             // MCP tool — genuinely needs no root at all,
                             // since rest.rs's dispatch has a root-independent
                             // path this server does not).
-                            "system_list" => match system_db::default_db_path().and_then(|db| system_db::list_projects(&db).map(|p| (db, p))) {
+                            "system_list" => match system_db::default_db_path()
+                                .and_then(|db| system_db::list_projects(&db).map(|p| (db, p)))
+                            {
                                 Ok((db_path, projects)) => json!({
                                     "projects": projects.iter().map(|p| json!({
                                         "root": p.root,
@@ -720,7 +891,9 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             },
                             "system_query" => {
                                 let term = args["term"].as_str().unwrap_or("");
-                                match system_db::default_db_path().and_then(|db| system_db::query_registered_projects(&db, term).map(|r| (db, r))) {
+                                match system_db::default_db_path().and_then(|db| {
+                                    system_db::query_registered_projects(&db, term).map(|r| (db, r))
+                                }) {
                                     Ok((db_path, results)) => json!({
                                         "term": term,
                                         "results": results.iter().map(|r| json!({
@@ -735,7 +908,9 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 }
                             }
                             "system_status" => {
-                                match system_db::default_db_path().and_then(|db| system_db::status_registered_projects(&db).map(|r| (db, r))) {
+                                match system_db::default_db_path().and_then(|db| {
+                                    system_db::status_registered_projects(&db).map(|r| (db, r))
+                                }) {
                                     Ok((db_path, results)) => json!({
                                         "projects": results.iter().map(|r| json!({
                                             "root": r.root,
@@ -753,7 +928,9 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             // documents the REST token gate by contrast) —
                             // no token needed here, unlike REST's
                             // /system/register.
-                            "system_register" => match system_db::default_db_path().and_then(|db| system_db::register_project(&db, &root).map(|proj| (db, proj))) {
+                            "system_register" => match system_db::default_db_path().and_then(|db| {
+                                system_db::register_project(&db, &root).map(|proj| (db, proj))
+                            }) {
                                 Ok((db_path, proj)) => json!({
                                     "registered": proj.root,
                                     "name": proj.name,
@@ -777,21 +954,25 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 } else {
                                     let dir = PathBuf::from(dir_str);
                                     let result: anyhow::Result<Value> = (|| {
-                                        let global_path = permissions::default_global_config_path()?;
+                                        let global_path =
+                                            permissions::default_global_config_path()?;
                                         let cfg = permissions::load(&global_path, &root)?;
-                                        let confirmations_path = permissions::default_confirmations_path()?;
-                                        let (enabled, resources) = documents_domain::scan_if_allowed(
-                                            &cfg,
-                                            &confirmations_path,
-                                            &dir,
-                                            &permissions::NonInteractiveAsker,
-                                        )?;
+                                        let confirmations_path =
+                                            permissions::default_confirmations_path()?;
+                                        let (enabled, resources) =
+                                            documents_domain::scan_if_allowed(
+                                                &cfg,
+                                                &confirmations_path,
+                                                &dir,
+                                                &permissions::NonInteractiveAsker,
+                                            )?;
                                         Ok(json!({
                                             "dir": dir.display().to_string(),
                                             "enabled": enabled,
                                             "resources": resources,
                                         }))
-                                    })();
+                                    })(
+                                    );
                                     match result {
                                         Ok(v) => v,
                                         Err(e) => json!({ "error": e.to_string() }),
@@ -808,9 +989,11 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 } else {
                                     let dir = PathBuf::from(dir_str);
                                     let result: anyhow::Result<Value> = (|| {
-                                        let global_path = permissions::default_global_config_path()?;
+                                        let global_path =
+                                            permissions::default_global_config_path()?;
                                         let cfg = permissions::load(&global_path, &root)?;
-                                        let confirmations_path = permissions::default_confirmations_path()?;
+                                        let confirmations_path =
+                                            permissions::default_confirmations_path()?;
                                         let (enabled, resources) = photos_domain::scan_if_allowed(
                                             &cfg,
                                             &confirmations_path,
@@ -822,7 +1005,8 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                             "enabled": enabled,
                                             "resources": resources,
                                         }))
-                                    })();
+                                    })(
+                                    );
                                     match result {
                                         Ok(v) => v,
                                         Err(e) => json!({ "error": e.to_string() }),
@@ -836,16 +1020,19 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 let result: anyhow::Result<Value> = (|| {
                                     let global_path = permissions::default_global_config_path()?;
                                     let cfg = permissions::load(&global_path, &root)?;
-                                    let confirmations_path = permissions::default_confirmations_path()?;
+                                    let confirmations_path =
+                                        permissions::default_confirmations_path()?;
                                     let home = crate::messages_domain::default_home()?;
-                                    let (enabled, resources) = crate::messages_domain::scan_if_allowed(
-                                        &cfg,
-                                        &confirmations_path,
-                                        &home,
-                                        &permissions::NonInteractiveAsker,
-                                    )?;
+                                    let (enabled, resources) =
+                                        crate::messages_domain::scan_if_allowed(
+                                            &cfg,
+                                            &confirmations_path,
+                                            &home,
+                                            &permissions::NonInteractiveAsker,
+                                        )?;
                                     Ok(json!({ "enabled": enabled, "resources": resources }))
-                                })();
+                                })(
+                                );
                                 match result {
                                     Ok(v) => v,
                                     Err(e) => json!({ "error": e.to_string() }),
@@ -856,12 +1043,60 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                             // `permissions::domain_allowed` gate the
                             // declarative docker scan uses.
                             "docker_observe" => {
-                                match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
+                                match permissions::default_global_config_path()
+                                    .and_then(|g| permissions::load(&g, &root))
+                                {
                                     Ok(cfg) => {
                                         let resources = docker_domain::scan_observed(&cfg, &root);
                                         json!({ "resources": resources })
                                     }
                                     Err(e) => json!({ "error": e.to_string() }),
+                                }
+                            }
+                            "runtime_verify_http" => {
+                                let url = args["url"].as_str().unwrap_or("");
+                                if url.is_empty() {
+                                    json!({ "error": "missing required 'url' argument" })
+                                } else {
+                                    match crate::runtime::verify_http(
+                                        url,
+                                        args["timeout_ms"].as_u64(),
+                                    ) {
+                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) =>
+                                            crate::evidence::qaforge_envelope(value, "archietect.runtime.verify_http", json!({ "url": url }), Some(&root)),
+                                        Ok(value) => value,
+                                        Err(error) => json!({
+                                            "evidence": "RUNTIME",
+                                            "kind": "http_probe_error",
+                                            "verdict": "UNVERIFIED",
+                                            "url": url,
+                                            "error": error.to_string(),
+                                            "note": "No successful HTTP response was observed; this is not evidence that the target is absent."
+                                        }),
+                                    }
+                                }
+                            }
+                            "runtime_verify_browser" => {
+                                let url = args["url"].as_str().unwrap_or("");
+                                if url.is_empty() {
+                                    json!({ "error": "missing required 'url' argument" })
+                                } else {
+                                    match crate::runtime::verify_browser(
+                                        url,
+                                        args["timeout_ms"].as_u64(),
+                                        args["settle_ms"].as_u64(),
+                                    ) {
+                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) =>
+                                            crate::evidence::qaforge_envelope(value, "archietect.runtime.verify_browser", json!({ "url": url }), Some(&root)),
+                                        Ok(value) => value,
+                                        Err(error) => json!({
+                                            "evidence": "BROWSER",
+                                            "kind": "browser_verification_error",
+                                            "url": url,
+                                            "error": error.to_string(),
+                                            "note": "No successful browser verification was observed; this is not evidence that the target is absent."
+                                        }),
+                                    }
                                 }
                             }
                             other => json!({ "error": format!("unknown tool {other}") }),
@@ -880,8 +1115,15 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                         // JSON array of strings or a comma-separated string.
                         let only: Option<Vec<String>> = match &args["only"] {
                             Value::Array(items) => {
-                                let keys: Vec<String> = items.iter().filter_map(|x| x.as_str().map(String::from)).collect();
-                                if keys.is_empty() { None } else { Some(keys) }
+                                let keys: Vec<String> = items
+                                    .iter()
+                                    .filter_map(|x| x.as_str().map(String::from))
+                                    .collect();
+                                if keys.is_empty() {
+                                    None
+                                } else {
+                                    Some(keys)
+                                }
                             }
                             Value::String(s) => crate::shape::parse_only(Some(s)),
                             _ => None,
@@ -935,7 +1177,10 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-mcp-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-mcp-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -949,7 +1194,10 @@ mod tests {
     /// as it arrives: decoupling reads from a fixed timeout means a
     /// hung/broken server fails a test loudly instead of blocking it
     /// forever.
-    fn spawn_mcp(project_root: &Path, home: &Path) -> (ChildGuard, std::process::ChildStdin, mpsc::Receiver<String>) {
+    fn spawn_mcp(
+        project_root: &Path,
+        home: &Path,
+    ) -> (ChildGuard, std::process::ChildStdin, mpsc::Receiver<String>) {
         let mut child = Command::new(bin_path())
             .args(["mcp", "--root", project_root.to_str().unwrap()])
             .env("HOME", home)
@@ -1014,16 +1262,40 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        for expected in ["permissions", "register", "system_list", "system_query", "system_status", "system_register", "documents_scan"] {
-            assert!(names.contains(&expected), "expected tool '{expected}' in tools/list, got: {names:?}");
+        for expected in [
+            "permissions",
+            "register",
+            "system_list",
+            "system_query",
+            "system_status",
+            "system_register",
+            "documents_scan",
+            "workflow_check",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "expected tool '{expected}' in tools/list, got: {names:?}"
+            );
         }
 
-        let register_resp = call(&mut stdin, &rx, 3, "tools/call", json!({ "name": "system_register", "arguments": {} }));
+        let register_resp = call(
+            &mut stdin,
+            &rx,
+            3,
+            "tools/call",
+            json!({ "name": "system_register", "arguments": {} }),
+        );
         let registered = tool_result(&register_resp);
         let canonical = project.canonicalize().unwrap().display().to_string();
         assert_eq!(registered["registered"].as_str().unwrap(), canonical);
 
-        let list_resp = call(&mut stdin, &rx, 4, "tools/call", json!({ "name": "system_list", "arguments": {} }));
+        let list_resp = call(
+            &mut stdin,
+            &rx,
+            4,
+            "tools/call",
+            json!({ "name": "system_list", "arguments": {} }),
+        );
         let listed = tool_result(&list_resp);
         let projects = listed["projects"].as_array().unwrap();
         assert!(
@@ -1032,16 +1304,33 @@ mod tests {
         );
 
         let query_resp = call(
-            &mut stdin, &rx, 5, "tools/call",
+            &mut stdin,
+            &rx,
+            5,
+            "tools/call",
             json!({ "name": "system_query", "arguments": { "term": "Anything" } }),
         );
         let queried = tool_result(&query_resp);
-        assert_eq!(queried["results"].as_array().unwrap().len(), 1, "expected exactly the one registered project, got: {queried}");
+        assert_eq!(
+            queried["results"].as_array().unwrap().len(),
+            1,
+            "expected exactly the one registered project, got: {queried}"
+        );
 
-        let status_resp = call(&mut stdin, &rx, 7, "tools/call", json!({ "name": "system_status", "arguments": {} }));
+        let status_resp = call(
+            &mut stdin,
+            &rx,
+            7,
+            "tools/call",
+            json!({ "name": "system_status", "arguments": {} }),
+        );
         let statuses = tool_result(&status_resp);
         let status_projects = statuses["projects"].as_array().unwrap();
-        assert_eq!(status_projects.len(), 1, "expected exactly the one registered project, got: {statuses}");
+        assert_eq!(
+            status_projects.len(),
+            1,
+            "expected exactly the one registered project, got: {statuses}"
+        );
         assert!(
             status_projects[0]["status"].is_null(),
             "this project was registered but never `init`'d, so its status must honestly report null, not fabricate counts — got: {statuses}"
@@ -1051,19 +1340,42 @@ mod tests {
         // project has no schema and no unclassified files, so the only
         // unknowns are the domain-level ones — docker disabled by default.
         let reg_resp = call(
-            &mut stdin, &rx, 8, "tools/call",
+            &mut stdin,
+            &rx,
+            8,
+            "tools/call",
             json!({ "name": "register", "arguments": { "only": ["not_known", "known"], "compact": true } }),
         );
         let reg = tool_result(&reg_resp);
-        assert!(reg.get("boundary").is_none(), "`only` must drop unselected keys, got: {reg}");
-        assert!(reg.get("note").is_none(), "`compact` must drop prose, got: {reg}");
         assert!(
-            reg["not_known"].as_array().unwrap().iter().any(|e| e["kind"] == "domain_disabled" && e["domain"] == "docker"),
+            reg.get("boundary").is_none(),
+            "`only` must drop unselected keys, got: {reg}"
+        );
+        assert!(
+            reg.get("note").is_none(),
+            "`compact` must drop prose, got: {reg}"
+        );
+        assert!(
+            reg["not_known"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["kind"] == "domain_disabled" && e["domain"] == "docker"),
             "docker is default-disabled and must be stated as not looked at, got: {reg}"
         );
-        assert_eq!(reg["known"]["domains_enabled"], json!(["code", "git"]), "got: {reg}");
+        assert_eq!(
+            reg["known"]["domains_enabled"],
+            json!(["code", "git"]),
+            "got: {reg}"
+        );
 
-        let perms_resp = call(&mut stdin, &rx, 6, "tools/call", json!({ "name": "permissions", "arguments": {} }));
+        let perms_resp = call(
+            &mut stdin,
+            &rx,
+            6,
+            "tools/call",
+            json!({ "name": "permissions", "arguments": {} }),
+        );
         let perms = tool_result(&perms_resp);
         assert!(
             perms["domains"]
@@ -1085,7 +1397,10 @@ mod tests {
 
         let start = std::time::Instant::now();
         let resp = call(
-            &mut stdin, &rx, 2, "tools/call",
+            &mut stdin,
+            &rx,
+            2,
+            "tools/call",
             json!({ "name": "documents_scan", "arguments": { "dir": project.to_str().unwrap() } }),
         );
         let elapsed = start.elapsed();
@@ -1116,10 +1431,22 @@ mod tests {
         let home = tmp_dir("home-lone-call");
         let project = tmp_dir("project-lone-call");
         let (_guard, mut stdin, rx) = spawn_mcp(&project, &home);
-        let _ = call(&mut stdin, &rx, 1, "initialize", json!({
-            "clientInfo": { "name": "lone-call-test", "version": "9.9.9" }
-        }));
-        let _ = call(&mut stdin, &rx, 2, "tools/call", json!({ "name": "doctor", "arguments": {} }));
+        let _ = call(
+            &mut stdin,
+            &rx,
+            1,
+            "initialize",
+            json!({
+                "clientInfo": { "name": "lone-call-test", "version": "9.9.9" }
+            }),
+        );
+        let _ = call(
+            &mut stdin,
+            &rx,
+            2,
+            "tools/call",
+            json!({ "name": "doctor", "arguments": {} }),
+        );
 
         // Nothing sent after this — real wall-clock wait, comfortably past
         // HEARTBEAT_INTERVAL_MS (3s) plus the flusher's own 500ms tick.
@@ -1129,7 +1456,10 @@ mod tests {
         let found = events.iter().any(|e| {
             e["kind"] == "mcp_client_connected"
                 && e["concept"] == "lone-call-test"
-                && e["detail"]["tools"].as_array().map(|t| t.iter().any(|x| x == "doctor")).unwrap_or(false)
+                && e["detail"]["tools"]
+                    .as_array()
+                    .map(|t| t.iter().any(|x| x == "doctor"))
+                    .unwrap_or(false)
         });
         assert!(
             found,

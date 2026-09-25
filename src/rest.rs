@@ -175,8 +175,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    docker_domain, documents_domain, laws, model::Index, permissions, photos_domain, query, root, scan, store,
-    system_db, structural::StructuralGraph,
+    docker_domain, documents_domain, laws, model::Index, permissions, photos_domain, query, root,
+    scan, store, structural::StructuralGraph, system_db,
 };
 
 /// Minimal percent-decoding for query values ('+' and %XX). Deliberately
@@ -228,10 +228,12 @@ fn generate_token() -> String {
     for (i, chunk) in bytes.chunks_mut(8).enumerate() {
         let mut h = RandomState::new().build_hasher();
         h.write_usize(i);
-        h.write_u64(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0));
+        h.write_u64(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+        );
         chunk.copy_from_slice(&h.finish().to_le_bytes()[..chunk.len()]);
     }
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -268,9 +270,7 @@ fn allowed_mutation_origin(req: &tiny_http::Request) -> bool {
     let Some(host_port) = origin.strip_prefix("http://") else {
         return false;
     };
-    if host_port.is_empty()
-        || host_port.contains(['/', '?', '#', '@'])
-        || host_port.contains('\0')
+    if host_port.is_empty() || host_port.contains(['/', '?', '#', '@']) || host_port.contains('\0')
     {
         return false;
     }
@@ -278,7 +278,9 @@ fn allowed_mutation_origin(req: &tiny_http::Request) -> bool {
     // Accept an optional numeric port, but never credentials, paths, or an
     // arbitrary hostname.  Browsers serialize IPv6 loopback as [::1].
     let host = if let Some(rest) = host_port.strip_prefix('[') {
-        let Some(end) = rest.find(']') else { return false };
+        let Some(end) = rest.find(']') else {
+            return false;
+        };
         if &rest[..end] != "::1" || !valid_optional_port(&rest[end + 1..]) {
             return false;
         }
@@ -289,7 +291,9 @@ fn allowed_mutation_origin(req: &tiny_http::Request) -> bool {
             .filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
             .map_or((host_port, None), |(host, port)| (host, Some(port)));
         if let Some(port) = port {
-            if !valid_port(port) { return false; }
+            if !valid_port(port) {
+                return false;
+            }
         }
         host
     };
@@ -326,7 +330,12 @@ type Cache = std::sync::Mutex<HashMap<PathBuf, (Index, StructuralGraph)>>;
 type RootLocks = std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>;
 
 fn lock_for_root(locks: &RootLocks, root: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
-    locks.lock().unwrap().entry(root.to_path_buf()).or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(()))).clone()
+    locks
+        .lock()
+        .unwrap()
+        .entry(root.to_path_buf())
+        .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
+        .clone()
 }
 
 /// One filesystem watcher per root, kept alive only to keep it watching —
@@ -366,7 +375,13 @@ fn ensure_watcher(watchers: &Watchers, root: &Path) {
         // for every OTHER directory in this root.
         let _ = watcher.watch(&dir, notify::RecursiveMode::NonRecursive);
     }
-    map.insert(root.to_path_buf(), RootWatch { _watcher: watcher, dirty });
+    map.insert(
+        root.to_path_buf(),
+        RootWatch {
+            _watcher: watcher,
+            dirty,
+        },
+    );
 }
 
 /// `true` when a rescan is actually needed: either no watcher exists yet
@@ -401,8 +416,10 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     eprintln!("mutating requests (proposal submit/test/accept/reject, system/register) require &token={token}");
 
     let cache: std::sync::Arc<Cache> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
-    let root_locks: std::sync::Arc<RootLocks> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
-    let watchers: std::sync::Arc<Watchers> = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let root_locks: std::sync::Arc<RootLocks> =
+        std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let watchers: std::sync::Arc<Watchers> =
+        std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
     let default_root = std::sync::Arc::new(default_root);
     // See `crate::exe_mtime`'s doc comment — same staleness detection as the
     // MCP server, for the same reason: this is a long-running process that
@@ -423,7 +440,17 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
         let watchers = watchers.clone();
         let default_root = default_root.clone();
         let token = token.clone();
-        std::thread::spawn(move || handle_request(req, &token, &default_root, &cache, &root_locks, &watchers, started_mtime));
+        std::thread::spawn(move || {
+            handle_request(
+                req,
+                &token,
+                &default_root,
+                &cache,
+                &root_locks,
+                &watchers,
+                started_mtime,
+            )
+        });
     }
     Ok(())
 }
@@ -446,9 +473,24 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
 /// `/known-files`, `/declaration-files`, and `/file-concepts` each ended up
 /// as one-off hand-rolled cache peeks with duplicated logic).
 const INDEX_ENDPOINTS: &[&str] = &[
-    "/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-    "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts", "/ci", "/register",
-    "/known-files", "/declaration-files", "/file-concepts",
+    "/concept",
+    "/intent",
+    "/impact",
+    "/imports",
+    "/owner",
+    "/guard",
+    "/plan",
+    "/status",
+    "/doctor",
+    "/tour",
+    "/duplicates",
+    "/duplicate-logic",
+    "/verdicts",
+    "/ci",
+    "/register",
+    "/known-files",
+    "/declaration-files",
+    "/file-concepts",
 ];
 
 /// Computes the answer for one of `INDEX_ENDPOINTS` from an `(idx, graph)`
@@ -456,7 +498,13 @@ const INDEX_ENDPOINTS: &[&str] = &[
 /// straight from the cache via `?peek=1` (see `handle_request`). The two
 /// callers must never diverge in what they compute from the same data, so
 /// this is the ONLY place that logic lives.
-fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path, p: &HashMap<String, String>) -> Value {
+fn answer_from_index(
+    ep: &str,
+    idx: &Index,
+    graph: &StructuralGraph,
+    root: &Path,
+    p: &HashMap<String, String>,
+) -> Value {
     let q = p.get("q").map(|s| s.as_str()).unwrap_or("");
     match ep {
         "/concept" => query::concept(idx, graph, q),
@@ -508,7 +556,8 @@ fn answer_from_index(ep: &str, idx: &Index, graph: &StructuralGraph, root: &Path
                 .collect();
             for sym in graph.symbols.values() {
                 if sym.file == file && sym.linked_concept.is_none() {
-                    concepts.push(json!({ "name": sym.name, "kinds": [format!("{:?}", sym.kind)] }));
+                    concepts
+                        .push(json!({ "name": sym.name, "kinds": [format!("{:?}", sym.kind)] }));
                 }
             }
             json!({ "file": file, "concepts": concepts })
@@ -526,77 +575,75 @@ fn handle_request(
     watchers: &Watchers,
     started_mtime: Option<std::time::SystemTime>,
 ) {
-        let (path, mut p) = params(req.url());
-        if MUTATING_ENDPOINTS.contains(&path.as_str()) && !allowed_mutation_origin(&req) {
-            let body = json!({
-                "error": "origin rejected — mutating REST requests must come from the local archietect GUI",
-            });
-            let response = tiny_http::Response::from_string(
-                serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
-            )
-            .with_status_code(403)
-            .with_header(
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .unwrap(),
-            );
-            let _ = req.respond(response);
-            return;
-        }
-        // Mutating and large-payload clients may use POST with a standard
-        // application/x-www-form-urlencoded body. Merge it with the query
-        // parameters so every endpoint keeps one parameter model while
-        // patches and tokens stay out of browser history and URL limits.
-        if req.method().to_string().eq_ignore_ascii_case("POST") {
-            let mut body = String::new();
-            let mut limited = req.as_reader().take(8 * 1024 * 1024 + 1);
-            if limited.read_to_string(&mut body).is_ok() && body.len() <= 8 * 1024 * 1024 {
-                let content_type = req.headers().iter()
-                    .find(|h| h.field.equiv("Content-Type"))
-                    .map(|h| h.value.as_str().split(';').next().unwrap_or("").trim())
-                    .unwrap_or("");
-                let body_params = if content_type.eq_ignore_ascii_case("application/json") {
-                    match serde_json::from_str::<Value>(&body) {
-                        Ok(Value::Object(values)) => values.into_iter().map(|(key, value)| {
+    let (path, mut p) = params(req.url());
+    if MUTATING_ENDPOINTS.contains(&path.as_str()) && !allowed_mutation_origin(&req) {
+        let body = json!({
+            "error": "origin rejected — mutating REST requests must come from the local archietect GUI",
+        });
+        let response = tiny_http::Response::from_string(
+            serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+        )
+        .with_status_code(403)
+        .with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+        );
+        let _ = req.respond(response);
+        return;
+    }
+    // Mutating and large-payload clients may use POST with a standard
+    // application/x-www-form-urlencoded body. Merge it with the query
+    // parameters so every endpoint keeps one parameter model while
+    // patches and tokens stay out of browser history and URL limits.
+    if req.method().to_string().eq_ignore_ascii_case("POST") {
+        let mut body = String::new();
+        let mut limited = req.as_reader().take(8 * 1024 * 1024 + 1);
+        if limited.read_to_string(&mut body).is_ok() && body.len() <= 8 * 1024 * 1024 {
+            let content_type = req
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("Content-Type"))
+                .map(|h| h.value.as_str().split(';').next().unwrap_or("").trim())
+                .unwrap_or("");
+            let body_params = if content_type.eq_ignore_ascii_case("application/json") {
+                match serde_json::from_str::<Value>(&body) {
+                    Ok(Value::Object(values)) => values
+                        .into_iter()
+                        .map(|(key, value)| {
                             let value = match value {
                                 Value::String(s) => s,
                                 Value::Null => String::new(),
                                 other => other.to_string(),
                             };
                             (key, value)
-                        }).collect(),
-                        Ok(_) => {
-                            respond_json(req, 400, json!({"error":"JSON request body must be an object"}));
-                            return;
-                        }
-                        Err(e) => {
-                            respond_json(req, 400, json!({"error":format!("invalid JSON request body: {e}")}));
-                            return;
-                        }
+                        })
+                        .collect(),
+                    Ok(_) => {
+                        respond_json(
+                            req,
+                            400,
+                            json!({"error":"JSON request body must be an object"}),
+                        );
+                        return;
                     }
-                } else {
-                    let (_, body_params) = params(&format!("/?{body}"));
-                    body_params
-                };
-                p.extend(body_params);
+                    Err(e) => {
+                        respond_json(
+                            req,
+                            400,
+                            json!({"error":format!("invalid JSON request body: {e}")}),
+                        );
+                        return;
+                    }
+                }
             } else {
-                let response = tiny_http::Response::from_string("{\"error\":\"request body exceeds 8 MiB limit\"}")
-                    .with_status_code(413)
-                    .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap());
-                let _ = req.respond(response);
-                return;
-            }
-        }
-
-        if MUTATING_ENDPOINTS.contains(&path.as_str())
-            && p.get("token").map(|t| t.as_str()) != Some(token)
-        {
-            let body = json!({
-                "error": "missing or incorrect token — pass &token=<value printed when `archietect serve` started>",
-            });
+                let (_, body_params) = params(&format!("/?{body}"));
+                body_params
+            };
+            p.extend(body_params);
+        } else {
             let response = tiny_http::Response::from_string(
-                serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+                "{\"error\":\"request body exceeds 8 MiB limit\"}",
             )
-            .with_status_code(401)
+            .with_status_code(413)
             .with_header(
                 tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                     .unwrap(),
@@ -604,458 +651,550 @@ fn handle_request(
             let _ = req.respond(response);
             return;
         }
+    }
 
-        let root_param = p.get("root")
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
-            .or_else(|| default_root.clone());
-        let root_given = root_param.is_some();
-        // `resolve()` only ever errs when an explicit root was given but is
-        // invalid (e.g. doesn't exist) — the no-root fallback (marker search
-        // from cwd) always succeeds. Keep the real message (root.rs already
-        // says exactly what's wrong, e.g. "root does not exist: <path>")
-        // instead of discarding it via `.ok()` and showing a generic
-        // "no root" message that's misleading when a root WAS provided.
-        let root_result = root::resolve(
-            root_param,
-            &std::env::current_dir().unwrap_or_default(),
+    if MUTATING_ENDPOINTS.contains(&path.as_str())
+        && p.get("token").map(|t| t.as_str()) != Some(token)
+    {
+        let body = json!({
+            "error": "missing or incorrect token — pass &token=<value printed when `archietect serve` started>",
+        });
+        let response = tiny_http::Response::from_string(
+            serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
+        )
+        .with_status_code(401)
+        .with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
         );
+        let _ = req.respond(response);
+        return;
+    }
 
-        // GUI v0 — the embedded read-only dashboard, itself a client of the
-        // JSON endpoints below. No logic lives in it.
-        if path == "/" {
-            let response = tiny_http::Response::from_string(include_str!("../ui/index.html"))
-                .with_header(
-                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-                        .unwrap(),
-                );
-            let _ = req.respond(response);
-            return;
-        }
+    let root_param = p
+        .get("root")
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| default_root.clone());
+    let root_given = root_param.is_some();
+    // `resolve()` only ever errs when an explicit root was given but is
+    // invalid (e.g. doesn't exist) — the no-root fallback (marker search
+    // from cwd) always succeeds. Keep the real message (root.rs already
+    // says exactly what's wrong, e.g. "root does not exist: <path>")
+    // instead of discarding it via `.ok()` and showing a generic
+    // "no root" message that's misleading when a root WAS provided.
+    let root_result = root::resolve(root_param, &std::env::current_dir().unwrap_or_default());
 
-        let mut body: Value = match (path.as_str(), root_result) {
-            ("/laws", _) => laws::registry_json(),
-            // No scan triggered — reports on a scan already in flight (or
-            // already finished) on another thread. See ScanProgress's doc.
-            // File lists are capped (most-recently-done, first-remaining) so
-            // a repo with thousands of files doesn't ship a huge payload on
-            // every ~400ms poll; the *_total counts give the real sizes.
-            ("/scan-progress", Ok(root)) => match scan::scan_progress(&root) {
-                Some(s) => {
-                    const CAP: usize = 50;
-                    let done_shown: Vec<&String> = s.done_files.iter().rev().take(CAP).collect();
-                    let remaining_shown: Vec<&String> = s.remaining_files.iter().take(CAP).collect();
-                    json!({
-                        "done": s.done,
-                        "total": s.total,
-                        "done_files": done_shown,
-                        "done_files_total": s.done_files.len(),
-                        "remaining_files": remaining_shown,
-                        "remaining_files_total": s.remaining_files.len(),
-                    })
-                }
-                None => json!({ "done": null, "total": null }),
-            },
-            // No root needed — same reasoning as /laws: this answers from
-            // ~/.archietect/system.db directly, not from any one project.
-            ("/system/list", _) => match system_db::default_db_path().and_then(|db| system_db::list_projects(&db).map(|p| (db, p))) {
-                Ok((db_path, projects)) => json!({
-                    "projects": projects.iter().map(|p| json!({
-                        "root": p.root,
-                        "name": p.name,
-                        "first_registered_ms": p.first_registered_ms,
-                        "last_seen_ms": p.last_seen_ms,
-                    })).collect::<Vec<_>>(),
-                    "system_db": db_path.display().to_string(),
-                }),
-                Err(e) => json!({ "error": e.to_string() }),
-            },
-            ("/system/query", _) => {
-                let term = p.get("q").map(|s| s.as_str()).unwrap_or("");
-                match system_db::default_db_path().and_then(|db| system_db::query_registered_projects(&db, term).map(|r| (db, r))) {
-                    Ok((db_path, results)) => json!({
-                        "term": term,
-                        "results": results.iter().map(|r| json!({
-                            "root": r.root,
-                            "name": r.name,
-                            "found": r.found,
-                        })).collect::<Vec<_>>(),
-                        "system_db": db_path.display().to_string(),
-                        "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
-                    }),
-                    Err(e) => json!({ "error": e.to_string() }),
-                }
+    // GUI v0 — the embedded read-only dashboard, itself a client of the
+    // JSON endpoints below. No logic lives in it.
+    if path == "/" {
+        let response = tiny_http::Response::from_string(include_str!("../ui/index.html"))
+            .with_header(
+                tiny_http::Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"text/html; charset=utf-8"[..],
+                )
+                .unwrap(),
+            );
+        let _ = req.respond(response);
+        return;
+    }
+
+    let mut body: Value = match (path.as_str(), root_result) {
+        ("/laws", _) => laws::registry_json(),
+        // No scan triggered — reports on a scan already in flight (or
+        // already finished) on another thread. See ScanProgress's doc.
+        // File lists are capped (most-recently-done, first-remaining) so
+        // a repo with thousands of files doesn't ship a huge payload on
+        // every ~400ms poll; the *_total counts give the real sizes.
+        ("/scan-progress", Ok(root)) => match scan::scan_progress(&root) {
+            Some(s) => {
+                const CAP: usize = 50;
+                let done_shown: Vec<&String> = s.done_files.iter().rev().take(CAP).collect();
+                let remaining_shown: Vec<&String> = s.remaining_files.iter().take(CAP).collect();
+                json!({
+                    "done": s.done,
+                    "total": s.total,
+                    "done_files": done_shown,
+                    "done_files_total": s.done_files.len(),
+                    "remaining_files": remaining_shown,
+                    "remaining_files_total": s.remaining_files.len(),
+                })
             }
-            // No root needed — same reasoning as /system/list and /laws.
-            ("/system/status", _) => match system_db::default_db_path().and_then(|db| system_db::status_registered_projects(&db).map(|r| (db, r))) {
+            None => json!({ "done": null, "total": null }),
+        },
+        // No root needed — same reasoning as /laws: this answers from
+        // ~/.archietect/system.db directly, not from any one project.
+        ("/system/list", _) => match system_db::default_db_path()
+            .and_then(|db| system_db::list_projects(&db).map(|p| (db, p)))
+        {
+            Ok((db_path, projects)) => json!({
+                "projects": projects.iter().map(|p| json!({
+                    "root": p.root,
+                    "name": p.name,
+                    "first_registered_ms": p.first_registered_ms,
+                    "last_seen_ms": p.last_seen_ms,
+                })).collect::<Vec<_>>(),
+                "system_db": db_path.display().to_string(),
+            }),
+            Err(e) => json!({ "error": e.to_string() }),
+        },
+        ("/system/query", _) => {
+            let term = p.get("q").map(|s| s.as_str()).unwrap_or("");
+            match system_db::default_db_path()
+                .and_then(|db| system_db::query_registered_projects(&db, term).map(|r| (db, r)))
+            {
                 Ok((db_path, results)) => json!({
-                    "projects": results.iter().map(|r| json!({
+                    "term": term,
+                    "results": results.iter().map(|r| json!({
                         "root": r.root,
                         "name": r.name,
-                        "status": r.status,
+                        "found": r.found,
                     })).collect::<Vec<_>>(),
                     "system_db": db_path.display().to_string(),
                     "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
                 }),
                 Err(e) => json!({ "error": e.to_string() }),
-            },
-            (_, Err(_)) if !root_given => json!({ "error": "no repository root: pass ?root=/path or start with --root" }),
-            // A root WAS given but `resolve()` rejected it — surface its
-            // real reason (e.g. "root does not exist: <path>") instead of
-            // the generic no-root message above, which would wrongly imply
-            // nothing was passed at all.
-            (_, Err(e)) => json!({ "error": e.to_string() }),
-            // The one branch that answers from a scan — either a fresh one
-            // (default) or the last one already sitting in `cache` (?peek=1,
-            // for INDEX_ENDPOINTS only). Everything else (non-index queries
-            // and writes) is handled below in the plain `(ep, Ok(root))` arm
-            // and never touches `cache`/`root_locks`/`scan_with_prior` at
-            // all — see INDEX_ENDPOINTS's own doc for why that split exists.
-            (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) && p.contains_key("peek") => {
-                match cache.lock().unwrap().get(&root) {
-                    Some((idx, graph)) => answer_from_index(ep, idx, graph, &root, &p),
-                    // Deliberately does NOT fall through to a scan: a peek
-                    // caller (a GUI drill-down click nested inside a tab
-                    // that's already open) is explicitly saying "don't pay
-                    // scan cost for this," so an empty cache means "load a
-                    // tab first," not "scan now anyway."
-                    None => json!({ "error": "no scan of this root yet this session — load a tab first" }),
+            }
+        }
+        // No root needed — same reasoning as /system/list and /laws.
+        ("/system/status", _) => match system_db::default_db_path()
+            .and_then(|db| system_db::status_registered_projects(&db).map(|r| (db, r)))
+        {
+            Ok((db_path, results)) => json!({
+                "projects": results.iter().map(|r| json!({
+                    "root": r.root,
+                    "name": r.name,
+                    "status": r.status,
+                })).collect::<Vec<_>>(),
+                "system_db": db_path.display().to_string(),
+                "note": "each project's own archietect.db is read live and read-only on every call; system.db itself stores only pointers and is never updated by this command.",
+            }),
+            Err(e) => json!({ "error": e.to_string() }),
+        },
+        (_, Err(_)) if !root_given => {
+            json!({ "error": "no repository root: pass ?root=/path or start with --root" })
+        }
+        // A root WAS given but `resolve()` rejected it — surface its
+        // real reason (e.g. "root does not exist: <path>") instead of
+        // the generic no-root message above, which would wrongly imply
+        // nothing was passed at all.
+        (_, Err(e)) => json!({ "error": e.to_string() }),
+        // The one branch that answers from a scan — either a fresh one
+        // (default) or the last one already sitting in `cache` (?peek=1,
+        // for INDEX_ENDPOINTS only). Everything else (non-index queries
+        // and writes) is handled below in the plain `(ep, Ok(root))` arm
+        // and never touches `cache`/`root_locks`/`scan_with_prior` at
+        // all — see INDEX_ENDPOINTS's own doc for why that split exists.
+        (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) && p.contains_key("peek") => {
+            match cache.lock().unwrap().get(&root) {
+                Some((idx, graph)) => answer_from_index(ep, idx, graph, &root, &p),
+                // Deliberately does NOT fall through to a scan: a peek
+                // caller (a GUI drill-down click nested inside a tab
+                // that's already open) is explicitly saying "don't pay
+                // scan cost for this," so an empty cache means "load a
+                // tab first," not "scan now anyway."
+                None => {
+                    json!({ "error": "no scan of this root yet this session — load a tab first" })
                 }
             }
-            (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) => {
-                // Fast path: a watcher already confirms nothing relevant
-                // has changed since this root's cache was built — answer
-                // straight from it, the exact computation ?peek=1 uses,
-                // just entered automatically whenever it's actually still
-                // valid instead of requiring the caller to assert it. See
-                // this module's "Watcher-driven cache invalidation" doc.
-                // `is_dirty_or_unwatched` + this lookup happen under one
-                // cache lock acquisition (not two) so a concurrent
-                // remove/insert on another thread can't be observed as a
-                // hit-then-miss race — worst case here is just falling
-                // through to a real scan, never a wrong answer.
-                let fast_path = if is_dirty_or_unwatched(watchers, &root) {
-                    None
-                } else {
-                    cache.lock().unwrap().get(&root).map(|(idx, graph)| answer_from_index(ep, idx, graph, &root, &p))
-                };
-                match fast_path {
-                    Some(result) => result,
-                    None => {
-                // Serialize scans of THIS root — see RootLocks's doc — but
-                // with try_lock, not a blocking lock: a blocking lock meant
-                // every request that arrived while a scan was already
-                // running for this root queued up BEHIND it, and every
-                // subsequent reload/poll/tab-switch added yet another
-                // request to that same queue — found live, 13+ CLOSE-WAIT
-                // connections and dozens of blocked threads piled up from
-                // repeated reload clicks, each waiting its turn behind an
-                // ever-growing backlog that outpaced how fast it could
-                // drain. None of that work was ever going to be seen by
-                // anyone; the client that asked for it had already moved
-                // on. try_lock instead fails FAST when a scan is already in
-                // flight, telling the caller to watch /scan-progress and
-                // retry — which is exactly the polling loop the GUI already
-                // runs — instead of silently joining a line.
-                let root_lock = lock_for_root(root_locks, &root);
-                let scan_outcome = match root_lock.try_lock() {
-                    Err(_) => json!({
-                        "scanning": true,
-                        "error": "a scan for this root is already in progress — check /scan-progress and retry shortly",
-                    }),
-                    Ok(_root_guard) => {
-                        // ONE scan per request, incremental against THIS
-                        // process's last result for this root — not a fresh
-                        // cold scan every time. Refreshed and re-stored
-                        // before dispatch, so every endpoint below reads the
-                        // same warm index.
-                        //
-                        // Falls back to the persisted archietect.db (the
-                        // same on-disk state `archietect status`/the watch
-                        // daemon read and write) when this ROOT hasn't been
-                        // touched yet by THIS process's in-memory cache —
-                        // otherwise every server restart looked like a full
-                        // cold scan even when a complete, up-to-date
-                        // archietect.db already existed on disk from a
-                        // previous run: nothing was ever actually lost, the
-                        // REST layer just never checked disk for a prior it
-                        // didn't itself just build. `scan::scan()` (the CLI
-                        // path) already does this; REST didn't.
-                        let prior = cache.lock().unwrap().remove(&root);
-                        let (schema_prior, graph_prior) = match prior {
-                            Some((s, g)) => (Some(s), Some(g)),
-                            None => store::load_raw(&root),
-                        };
-                        // Registered/cleared BEFORE scanning, not after —
-                        // see this module's "Watcher-driven cache
-                        // invalidation" doc for why that order is the only
-                        // safe one (a change landing during the scan must
-                        // leave the root dirty for the NEXT request).
-                        ensure_watcher(watchers, &root);
-                        clear_dirty(watchers, &root);
-                        let (idx, graph) = scan::scan_with_prior(&root, schema_prior, graph_prior);
-                        let result = answer_from_index(ep, &idx, &graph, &root, &p);
-                        cache.lock().unwrap().insert(root, (idx, graph));
-                        result
-                    }
-                };
-                scan_outcome
-                    }
-                }
-            }
-            // Everything below never touched `idx`/`graph` even before this
-            // split existed — it only ever needed `root` — so it no longer
-            // waits on `root_locks` or pays `scan_with_prior`'s cost at all.
-            (ep, Ok(root)) => {
-                match ep {
-                        // ?digest=true returns store::history_digest instead
-                        // of the raw event list — a narrative-quality
-                        // summary of the window, still fully deterministic.
-                        "/history" if p.get("digest").map(|s| s == "true").unwrap_or(false) => {
-                            store::history_digest(&root, p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50))
-                        }
-                        "/history" => json!({
-                            "events": store::read_history(
-                                &root,
-                                p.get("q").map(|s| s.as_str()),
-                                p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
-                            )
+        }
+        (ep, Ok(root)) if INDEX_ENDPOINTS.contains(&ep) => {
+            // Fast path: a watcher already confirms nothing relevant
+            // has changed since this root's cache was built — answer
+            // straight from it, the exact computation ?peek=1 uses,
+            // just entered automatically whenever it's actually still
+            // valid instead of requiring the caller to assert it. See
+            // this module's "Watcher-driven cache invalidation" doc.
+            // `is_dirty_or_unwatched` + this lookup happen under one
+            // cache lock acquisition (not two) so a concurrent
+            // remove/insert on another thread can't be observed as a
+            // hit-then-miss race — worst case here is just falling
+            // through to a real scan, never a wrong answer.
+            let fast_path = if is_dirty_or_unwatched(watchers, &root) {
+                None
+            } else {
+                cache
+                    .lock()
+                    .unwrap()
+                    .get(&root)
+                    .map(|(idx, graph)| answer_from_index(ep, idx, graph, &root, &p))
+            };
+            match fast_path {
+                Some(result) => result,
+                None => {
+                    // Serialize scans of THIS root — see RootLocks's doc — but
+                    // with try_lock, not a blocking lock: a blocking lock meant
+                    // every request that arrived while a scan was already
+                    // running for this root queued up BEHIND it, and every
+                    // subsequent reload/poll/tab-switch added yet another
+                    // request to that same queue — found live, 13+ CLOSE-WAIT
+                    // connections and dozens of blocked threads piled up from
+                    // repeated reload clicks, each waiting its turn behind an
+                    // ever-growing backlog that outpaced how fast it could
+                    // drain. None of that work was ever going to be seen by
+                    // anyone; the client that asked for it had already moved
+                    // on. try_lock instead fails FAST when a scan is already in
+                    // flight, telling the caller to watch /scan-progress and
+                    // retry — which is exactly the polling loop the GUI already
+                    // runs — instead of silently joining a line.
+                    let root_lock = lock_for_root(root_locks, &root);
+                    let scan_outcome = match root_lock.try_lock() {
+                        Err(_) => json!({
+                            "scanning": true,
+                            "error": "a scan for this root is already in progress — check /scan-progress and retry shortly",
                         }),
-                        // AI-extension protocol. The one exception to this
-                        // module's read-only design (see the header comment)
-                        // — `test`/`accept`/`reject` do write, but only ever
-                        // under .archietect/proposals/ or, for `accept`, the
-                        // working tree itself, uncommitted; never archietect.db.
-                        // `patch` here is a query param like everything else
-                        // in this file ("identifiers and short text, not
-                        // arbitrary payloads" — see `decode()` above): fine
-                        // for a small patch, but a large diff should go
-                        // through the CLI or the MCP tool instead.
-                        "/proposal/submit" => {
-                            let kind_str = p.get("kind").map(|s| s.as_str()).unwrap_or("");
-                            match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
-                                Err(_) => json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") }),
-                                Ok(kind) => {
-                                    let tmp = std::env::temp_dir().join(format!("archietect-rest-proposal-{}.diff", std::process::id()));
-                                    match std::fs::write(&tmp, p.get("patch").map(|s| s.as_str()).unwrap_or("")) {
-                                        Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
-                                        Ok(()) => {
-                                            let out = crate::proposal::submit(
-                                                &root, kind,
-                                                p.get("title").map(|s| s.as_str()).unwrap_or(""),
-                                                p.get("description").map(|s| s.as_str()).unwrap_or(""),
-                                                p.get("lang").map(|s| s.as_str()),
-                                                p.get("preview_repo").map(|s| s.as_str()),
-                                                "ai",
-                                                &tmp,
-                                            );
-                                            let _ = std::fs::remove_file(&tmp);
-                                            match out { Ok(v) => v, Err(e) => json!({ "error": e.to_string() }) }
-                                        }
+                        Ok(_root_guard) => {
+                            // ONE scan per request, incremental against THIS
+                            // process's last result for this root — not a fresh
+                            // cold scan every time. Refreshed and re-stored
+                            // before dispatch, so every endpoint below reads the
+                            // same warm index.
+                            //
+                            // Falls back to the persisted archietect.db (the
+                            // same on-disk state `archietect status`/the watch
+                            // daemon read and write) when this ROOT hasn't been
+                            // touched yet by THIS process's in-memory cache —
+                            // otherwise every server restart looked like a full
+                            // cold scan even when a complete, up-to-date
+                            // archietect.db already existed on disk from a
+                            // previous run: nothing was ever actually lost, the
+                            // REST layer just never checked disk for a prior it
+                            // didn't itself just build. `scan::scan()` (the CLI
+                            // path) already does this; REST didn't.
+                            let prior = cache.lock().unwrap().remove(&root);
+                            let (schema_prior, graph_prior) = match prior {
+                                Some((s, g)) => (Some(s), Some(g)),
+                                None => store::load_raw(&root),
+                            };
+                            // Registered/cleared BEFORE scanning, not after —
+                            // see this module's "Watcher-driven cache
+                            // invalidation" doc for why that order is the only
+                            // safe one (a change landing during the scan must
+                            // leave the root dirty for the NEXT request).
+                            ensure_watcher(watchers, &root);
+                            clear_dirty(watchers, &root);
+                            let (idx, graph) =
+                                scan::scan_with_prior(&root, schema_prior, graph_prior);
+                            let result = answer_from_index(ep, &idx, &graph, &root, &p);
+                            cache.lock().unwrap().insert(root, (idx, graph));
+                            result
+                        }
+                    };
+                    scan_outcome
+                }
+            }
+        }
+        // Everything below never touched `idx`/`graph` even before this
+        // split existed — it only ever needed `root` — so it no longer
+        // waits on `root_locks` or pays `scan_with_prior`'s cost at all.
+        (ep, Ok(root)) => {
+            match ep {
+                // ?digest=true returns store::history_digest instead
+                // of the raw event list — a narrative-quality
+                // summary of the window, still fully deterministic.
+                "/history" if p.get("digest").map(|s| s == "true").unwrap_or(false) => {
+                    store::history_digest(
+                        &root,
+                        p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
+                    )
+                }
+                "/history" => json!({
+                    "events": store::read_history(
+                        &root,
+                        p.get("q").map(|s| s.as_str()),
+                        p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50),
+                    )
+                }),
+                // AI-extension protocol. The one exception to this
+                // module's read-only design (see the header comment)
+                // — `test`/`accept`/`reject` do write, but only ever
+                // under .archietect/proposals/ or, for `accept`, the
+                // working tree itself, uncommitted; never archietect.db.
+                // `patch` here is a query param like everything else
+                // in this file ("identifiers and short text, not
+                // arbitrary payloads" — see `decode()` above): fine
+                // for a small patch, but a large diff should go
+                // through the CLI or the MCP tool instead.
+                "/proposal/submit" => {
+                    let kind_str = p.get("kind").map(|s| s.as_str()).unwrap_or("");
+                    match serde_json::from_value::<crate::proposal::Kind>(json!(kind_str)) {
+                        Err(_) => {
+                            json!({ "error": format!("unknown proposal kind '{kind_str}' — expected extractor, decision, or alias") })
+                        }
+                        Ok(kind) => {
+                            let tmp = std::env::temp_dir().join(format!(
+                                "archietect-rest-proposal-{}.diff",
+                                std::process::id()
+                            ));
+                            match std::fs::write(
+                                &tmp,
+                                p.get("patch").map(|s| s.as_str()).unwrap_or(""),
+                            ) {
+                                Err(e) => json!({ "error": format!("failed to stage patch: {e}") }),
+                                Ok(()) => {
+                                    let out = crate::proposal::submit(
+                                        &root,
+                                        kind,
+                                        p.get("title").map(|s| s.as_str()).unwrap_or(""),
+                                        p.get("description").map(|s| s.as_str()).unwrap_or(""),
+                                        p.get("lang").map(|s| s.as_str()),
+                                        p.get("preview_repo").map(|s| s.as_str()),
+                                        "ai",
+                                        &tmp,
+                                    );
+                                    let _ = std::fs::remove_file(&tmp);
+                                    match out {
+                                        Ok(v) => v,
+                                        Err(e) => json!({ "error": e.to_string() }),
                                     }
                                 }
                             }
                         }
-                        "/proposal/list" => crate::proposal::list(&root),
-                        "/proposal/inspect" => match crate::proposal::inspect(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
-                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        "/proposal/test" => match crate::proposal::test(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
-                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        "/proposal/accept" => match crate::proposal::accept(&root, p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0)) {
-                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        "/proposal/reject" => match crate::proposal::reject(
-                            &root,
-                            p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
-                            p.get("purge").map(|s| s == "true").unwrap_or(false),
-                        ) {
-                            Ok(v) => v, Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        // Token-gated (see MUTATING_ENDPOINTS) — writes a
-                        // pointer for THIS request's resolved root into
-                        // ~/.archietect/system.db.
-                        "/system/register" => match system_db::default_db_path().and_then(|db| system_db::register_project(&db, &root).map(|proj| (db, proj))) {
-                            Ok((db_path, proj)) => json!({
-                                "registered": proj.root,
-                                "name": proj.name,
-                                "first_registered_ms": proj.first_registered_ms,
-                                "last_seen_ms": proj.last_seen_ms,
-                                "system_db": db_path.display().to_string(),
-                            }),
+                    }
+                }
+                "/proposal/list" => crate::proposal::list(&root),
+                "/proposal/inspect" => match crate::proposal::inspect(
+                    &root,
+                    p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                "/proposal/test" => match crate::proposal::test(
+                    &root,
+                    p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                "/proposal/accept" => match crate::proposal::accept(
+                    &root,
+                    p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                "/proposal/reject" => match crate::proposal::reject(
+                    &root,
+                    p.get("id").and_then(|i| i.parse().ok()).unwrap_or(0),
+                    p.get("purge").map(|s| s == "true").unwrap_or(false),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                // Token-gated (see MUTATING_ENDPOINTS) — writes a
+                // pointer for THIS request's resolved root into
+                // ~/.archietect/system.db.
+                "/system/register" => match system_db::default_db_path()
+                    .and_then(|db| system_db::register_project(&db, &root).map(|proj| (db, proj)))
+                {
+                    Ok((db_path, proj)) => json!({
+                        "registered": proj.root,
+                        "name": proj.name,
+                        "first_registered_ms": proj.first_registered_ms,
+                        "last_seen_ms": proj.last_seen_ms,
+                        "system_db": db_path.display().to_string(),
+                    }),
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                "/permissions" => match permissions::default_global_config_path()
+                    .and_then(|g| permissions::load(&g, &root))
+                {
+                    Ok(cfg) => permissions::report(&cfg),
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                // Read-only, no token: answers one path/domain pair
+                // with a reason (`?path=...&domain=code`, domain
+                // defaults to "code"). Same check_resource() a
+                // pre-tool-use hook calls locally over the CLI,
+                // exposed here so a remote MCP/REST client can ask
+                // the same boundary question, not just a local
+                // process.
+                "/permissions/check" => match permissions::default_global_config_path()
+                    .and_then(|g| permissions::load(&g, &root))
+                {
+                    Ok(cfg) => {
+                        let path_str = p.get("path").map(|s| s.as_str()).unwrap_or("");
+                        let domain = p.get("domain").map(|s| s.as_str()).unwrap_or("code");
+                        let candidate = std::path::PathBuf::from(path_str);
+                        let full_path = if candidate.is_absolute() {
+                            candidate
+                        } else {
+                            root.join(&candidate)
+                        };
+                        let decision = permissions::check_resource(&cfg, domain, &full_path);
+                        json!({
+                            "path": full_path.display().to_string(),
+                            "domain": domain,
+                            "allowed": decision.allowed,
+                            "reason": decision.reason,
+                        })
+                    }
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                // See this module's doc: always NonInteractiveAsker —
+                // never blocks waiting for a y/N answer that can
+                // never arrive over a network transport.
+                "/documents/scan" => match p.get("dir") {
+                    None => json!({ "error": "missing required ?dir=<path> parameter" }),
+                    Some(dir_str) => {
+                        let dir = PathBuf::from(dir_str);
+                        let result: anyhow::Result<Value> = (|| {
+                            let global_path = permissions::default_global_config_path()?;
+                            let cfg = permissions::load(&global_path, &root)?;
+                            let confirmations_path = permissions::default_confirmations_path()?;
+                            let (enabled, resources) = documents_domain::scan_if_allowed(
+                                &cfg,
+                                &confirmations_path,
+                                &dir,
+                                &permissions::NonInteractiveAsker,
+                            )?;
+                            Ok(json!({
+                                "dir": dir.display().to_string(),
+                                "enabled": enabled,
+                                "resources": resources,
+                            }))
+                        })();
+                        match result {
+                            Ok(v) => v,
                             Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        "/permissions" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
-                            Ok(cfg) => permissions::report(&cfg),
-                            Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        // Read-only, no token: answers one path/domain pair
-                        // with a reason (`?path=...&domain=code`, domain
-                        // defaults to "code"). Same check_resource() a
-                        // pre-tool-use hook calls locally over the CLI,
-                        // exposed here so a remote MCP/REST client can ask
-                        // the same boundary question, not just a local
-                        // process.
-                        "/permissions/check" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
-                            Ok(cfg) => {
-                                let path_str = p.get("path").map(|s| s.as_str()).unwrap_or("");
-                                let domain = p.get("domain").map(|s| s.as_str()).unwrap_or("code");
-                                let candidate = std::path::PathBuf::from(path_str);
-                                let full_path = if candidate.is_absolute() { candidate } else { root.join(&candidate) };
-                                let decision = permissions::check_resource(&cfg, domain, &full_path);
-                                json!({
-                                    "path": full_path.display().to_string(),
-                                    "domain": domain,
-                                    "allowed": decision.allowed,
-                                    "reason": decision.reason,
-                                })
-                            }
-                            Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        // See this module's doc: always NonInteractiveAsker —
-                        // never blocks waiting for a y/N answer that can
-                        // never arrive over a network transport.
-                        "/documents/scan" => match p.get("dir") {
-                            None => json!({ "error": "missing required ?dir=<path> parameter" }),
-                            Some(dir_str) => {
-                                let dir = PathBuf::from(dir_str);
-                                let result: anyhow::Result<Value> = (|| {
-                                    let global_path = permissions::default_global_config_path()?;
-                                    let cfg = permissions::load(&global_path, &root)?;
-                                    let confirmations_path = permissions::default_confirmations_path()?;
-                                    let (enabled, resources) = documents_domain::scan_if_allowed(
-                                        &cfg,
-                                        &confirmations_path,
-                                        &dir,
-                                        &permissions::NonInteractiveAsker,
-                                    )?;
-                                    Ok(json!({
-                                        "dir": dir.display().to_string(),
-                                        "enabled": enabled,
-                                        "resources": resources,
-                                    }))
-                                })();
-                                match result {
-                                    Ok(v) => v,
-                                    Err(e) => json!({ "error": e.to_string() }),
-                                }
-                            }
-                        },
-                        // Same NonInteractiveAsker contract as /documents/scan
-                        // above — see this module's doc.
-                        "/photos/scan" => match p.get("dir") {
-                            None => json!({ "error": "missing required ?dir=<path> parameter" }),
-                            Some(dir_str) => {
-                                let dir = PathBuf::from(dir_str);
-                                let result: anyhow::Result<Value> = (|| {
-                                    let global_path = permissions::default_global_config_path()?;
-                                    let cfg = permissions::load(&global_path, &root)?;
-                                    let confirmations_path = permissions::default_confirmations_path()?;
-                                    let (enabled, resources) = photos_domain::scan_if_allowed(
-                                        &cfg,
-                                        &confirmations_path,
-                                        &dir,
-                                        &permissions::NonInteractiveAsker,
-                                    )?;
-                                    Ok(json!({
-                                        "dir": dir.display().to_string(),
-                                        "enabled": enabled,
-                                        "resources": resources,
-                                    }))
-                                })();
-                                match result {
-                                    Ok(v) => v,
-                                    Err(e) => json!({ "error": e.to_string() }),
-                                }
-                            }
-                        },
-                        // No ?dir= — unlike Documents/Photos, this domain has
-                        // no caller-named target; it checks a fixed set of
-                        // well-known local message-store locations under
-                        // $HOME. Same NonInteractiveAsker contract.
-                        "/messages/scan" => {
-                            let result: anyhow::Result<Value> = (|| {
-                                let global_path = permissions::default_global_config_path()?;
-                                let cfg = permissions::load(&global_path, &root)?;
-                                let confirmations_path = permissions::default_confirmations_path()?;
-                                let home = crate::messages_domain::default_home()?;
-                                let (enabled, resources) = crate::messages_domain::scan_if_allowed(
-                                    &cfg,
-                                    &confirmations_path,
-                                    &home,
-                                    &permissions::NonInteractiveAsker,
-                                )?;
-                                Ok(json!({ "enabled": enabled, "resources": resources }))
-                            })();
-                            match result {
-                                Ok(v) => v,
-                                Err(e) => json!({ "error": e.to_string() }),
-                            }
                         }
-                        // LIVE — shells out to `docker compose ps`, unlike
-                        // every other endpoint here. Same
-                        // `permissions::domain_allowed` gate the declarative
-                        // docker scan uses. See `docker_domain::scan_observed`.
-                        "/docker/observe" => match permissions::default_global_config_path().and_then(|g| permissions::load(&g, &root)) {
-                            Ok(cfg) => {
-                                let resources = docker_domain::scan_observed(&cfg, &root);
-                                json!({ "resources": resources })
-                            }
+                    }
+                },
+                // Same NonInteractiveAsker contract as /documents/scan
+                // above — see this module's doc.
+                "/photos/scan" => match p.get("dir") {
+                    None => json!({ "error": "missing required ?dir=<path> parameter" }),
+                    Some(dir_str) => {
+                        let dir = PathBuf::from(dir_str);
+                        let result: anyhow::Result<Value> = (|| {
+                            let global_path = permissions::default_global_config_path()?;
+                            let cfg = permissions::load(&global_path, &root)?;
+                            let confirmations_path = permissions::default_confirmations_path()?;
+                            let (enabled, resources) = photos_domain::scan_if_allowed(
+                                &cfg,
+                                &confirmations_path,
+                                &dir,
+                                &permissions::NonInteractiveAsker,
+                            )?;
+                            Ok(json!({
+                                "dir": dir.display().to_string(),
+                                "enabled": enabled,
+                                "resources": resources,
+                            }))
+                        })();
+                        match result {
+                            Ok(v) => v,
                             Err(e) => json!({ "error": e.to_string() }),
-                        },
-                        "/git/diff" => match std::process::Command::new("git").current_dir(&root).args(["diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv"]).output() {
-                            Ok(out) if out.status.success() => json!({ "diff": String::from_utf8_lossy(&out.stdout), "staged": true }),
-                            Ok(out) => json!({ "error": format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr)) }),
-                            Err(e) => json!({ "error": format!("failed to run git diff: {e}") }),
-                        },
-                        other => json!({
-                            "error": format!("unknown endpoint {other}"),
-                            "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-                                          "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts",
-                                          "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
-                                          "/system/list", "/system/query", "/system/status", "/system/register",
-                                          "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe", "/git/diff",
-                                          "/proposal/submit", "/proposal/list", "/proposal/inspect",
-                                          "/proposal/test", "/proposal/accept", "/proposal/reject"],
-                        }),
+                        }
+                    }
+                },
+                // No ?dir= — unlike Documents/Photos, this domain has
+                // no caller-named target; it checks a fixed set of
+                // well-known local message-store locations under
+                // $HOME. Same NonInteractiveAsker contract.
+                "/messages/scan" => {
+                    let result: anyhow::Result<Value> = (|| {
+                        let global_path = permissions::default_global_config_path()?;
+                        let cfg = permissions::load(&global_path, &root)?;
+                        let confirmations_path = permissions::default_confirmations_path()?;
+                        let home = crate::messages_domain::default_home()?;
+                        let (enabled, resources) = crate::messages_domain::scan_if_allowed(
+                            &cfg,
+                            &confirmations_path,
+                            &home,
+                            &permissions::NonInteractiveAsker,
+                        )?;
+                        Ok(json!({ "enabled": enabled, "resources": resources }))
+                    })();
+                    match result {
+                        Ok(v) => v,
+                        Err(e) => json!({ "error": e.to_string() }),
+                    }
                 }
-            }
-        };
-
-        if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
-            if now != started {
-                if let Value::Object(ref mut map) = body {
-                    map.insert("_stale_binary_warning".to_string(), json!(
-                        "This REST server process has been running since before the archietect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart the `archietect serve` process to pick up the current build."
-                    ));
-                }
+                // LIVE — shells out to `docker compose ps`, unlike
+                // every other endpoint here. Same
+                // `permissions::domain_allowed` gate the declarative
+                // docker scan uses. See `docker_domain::scan_observed`.
+                "/docker/observe" => match permissions::default_global_config_path()
+                    .and_then(|g| permissions::load(&g, &root))
+                {
+                    Ok(cfg) => {
+                        let resources = docker_domain::scan_observed(&cfg, &root);
+                        json!({ "resources": resources })
+                    }
+                    Err(e) => json!({ "error": e.to_string() }),
+                },
+                "/git/diff" => match std::process::Command::new("git")
+                    .current_dir(&root)
+                    .args([
+                        "diff",
+                        "--cached",
+                        "--full-index",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                    ])
+                    .output()
+                {
+                    Ok(out) if out.status.success() => {
+                        json!({ "diff": String::from_utf8_lossy(&out.stdout), "staged": true })
+                    }
+                    Ok(out) => {
+                        json!({ "error": format!("git diff failed: {}", String::from_utf8_lossy(&out.stderr)) })
+                    }
+                    Err(e) => json!({ "error": format!("failed to run git diff: {e}") }),
+                },
+                other => json!({
+                    "error": format!("unknown endpoint {other}"),
+                    "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
+                                  "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts",
+                                  "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
+                                  "/system/list", "/system/query", "/system/status", "/system/register",
+                                  "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe", "/git/diff",
+                                  "/proposal/submit", "/proposal/list", "/proposal/inspect",
+                                  "/proposal/test", "/proposal/accept", "/proposal/reject"],
+                }),
             }
         }
+    };
 
-        // Output shaping (src/shape.rs): `?only=a,b` and `?compact=true`.
-        // Applied here, at the one serialization point, so no endpoint's
-        // output changes unless the caller asks.
-        let body = crate::shape::apply(
-            body,
-            crate::shape::parse_only(p.get("only").map(|s| s.as_str())).as_deref(),
-            p.get("compact").map(|s| s == "true" || s == "1").unwrap_or(false),
-        );
-        let data = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
-        // No Access-Control-Allow-Origin header: the embedded GUI at "/" is
-        // same-origin and needs none; a page on any OTHER origin has no
-        // business reading these responses, and without this header the
-        // browser won't let it, regardless of what request it manages to send.
-        let response = tiny_http::Response::from_string(data).with_header(
-            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
-        );
-        let _ = req.respond(response);
+    if let (Some(started), Some(now)) = (started_mtime, crate::exe_mtime()) {
+        if now != started {
+            if let Value::Object(ref mut map) = body {
+                map.insert("_stale_binary_warning".to_string(), json!(
+                        "This REST server process has been running since before the archietect binary on disk was last rebuilt — it is answering from OLD code in memory. Restart the `archietect serve` process to pick up the current build."
+                    ));
+            }
+        }
+    }
+
+    // Output shaping (src/shape.rs): `?only=a,b` and `?compact=true`.
+    // Applied here, at the one serialization point, so no endpoint's
+    // output changes unless the caller asks.
+    let body = crate::shape::apply(
+        body,
+        crate::shape::parse_only(p.get("only").map(|s| s.as_str())).as_deref(),
+        p.get("compact")
+            .map(|s| s == "true" || s == "1")
+            .unwrap_or(false),
+    );
+    let data = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
+    // No Access-Control-Allow-Origin header: the embedded GUI at "/" is
+    // same-origin and needs none; a page on any OTHER origin has no
+    // business reading these responses, and without this header the
+    // browser won't let it, regardless of what request it manages to send.
+    let response = tiny_http::Response::from_string(data).with_header(
+        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
+    );
+    let _ = req.respond(response);
 }
 
 fn respond_json(req: tiny_http::Request, status: u16, body: Value) {
     let response = tiny_http::Response::from_string(
         serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into()),
-    ).with_status_code(status).with_header(
+    )
+    .with_status_code(status)
+    .with_header(
         tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap(),
     );
     let _ = req.respond(response);
@@ -1086,7 +1225,10 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-rest-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-rest-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -1100,7 +1242,13 @@ mod tests {
     /// way an operator running this command themselves would read it.
     fn spawn_server(project_root: &Path, home: &Path, port: u16) -> (ChildGuard, String) {
         let mut child = Command::new(bin_path())
-            .args(["serve", "--root", project_root.to_str().unwrap(), "--port", &port.to_string()])
+            .args([
+                "serve",
+                "--root",
+                project_root.to_str().unwrap(),
+                "--port",
+                &port.to_string(),
+            ])
             .env("HOME", home)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1134,7 +1282,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(connected, "server on port {port} never accepted a connection");
+        assert!(
+            connected,
+            "server on port {port} never accepted a connection"
+        );
 
         (ChildGuard(child), token)
     }
@@ -1147,11 +1298,17 @@ mod tests {
     /// instead of hanging this whole test suite forever.
     fn http_get(port: u16, path_and_query: &str) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let req = format!("GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let req = format!(
+            "GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        );
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = Vec::new();
-        stream.read_to_end(&mut resp).expect("reading response (or it hung/timed out)");
+        stream
+            .read_to_end(&mut resp)
+            .expect("reading response (or it hung/timed out)");
         let resp = String::from_utf8_lossy(&resp);
         let status = resp
             .lines()
@@ -1171,40 +1328,78 @@ mod tests {
 
     fn http_post_json(port: u16, path: &str, json_body: &str) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json_body}", json_body.len());
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = Vec::new();
         stream.read_to_end(&mut resp).expect("reading response");
         let resp = String::from_utf8_lossy(&resp);
-        let status = resp.lines().next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-        (status, resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+        let status = resp
+            .lines()
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (
+            status,
+            resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string(),
+        )
     }
 
-    fn http_post_form_with_origin(port: u16, path: &str, form: &str, origin: Option<&str>) -> (u16, String) {
+    fn http_post_form_with_origin(
+        port: u16,
+        path: &str,
+        form: &str,
+        origin: Option<&str>,
+    ) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let origin_header = origin.map(|o| format!("Origin: {o}\r\n")).unwrap_or_default();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let origin_header = origin
+            .map(|o| format!("Origin: {o}\r\n"))
+            .unwrap_or_default();
         let req = format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{origin_header}Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{form}", form.len());
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = Vec::new();
         stream.read_to_end(&mut resp).expect("reading response");
         let resp = String::from_utf8_lossy(&resp);
-        let status = resp.lines().next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-        (status, resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string())
+        let status = resp
+            .lines()
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (
+            status,
+            resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string(),
+        )
     }
 
     fn form_encode(value: &str) -> String {
         value
             .bytes()
             .map(|b| match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    (b as char).to_string()
+                }
                 b => format!("%{b:02X}"),
             })
             .collect()
     }
 
-    fn http_post_form_query_token(port: u16, path: &str, token: &str, fields: &[(&str, &str)]) -> (u16, String) {
+    fn http_post_form_query_token(
+        port: u16,
+        path: &str,
+        token: &str,
+        fields: &[(&str, &str)],
+    ) -> (u16, String) {
         let path = format!("{path}?token={}", form_encode(token));
         let form = fields
             .iter()
@@ -1222,8 +1417,17 @@ mod tests {
             &["add", "README.md"][..],
             &["commit", "-qm", "initial"][..],
         ] {
-            let out = Command::new("git").current_dir(project).args(args).output().unwrap();
-            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            let out = Command::new("git")
+                .current_dir(project)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
     }
 
@@ -1238,10 +1442,16 @@ mod tests {
         let (_guard, token) = spawn_server(&project, &home, 17402);
 
         let (status, body) = http_get(17402, "/system/register");
-        assert_eq!(status, 401, "registering with no token must be rejected, got body: {body}");
+        assert_eq!(
+            status, 401,
+            "registering with no token must be rejected, got body: {body}"
+        );
 
         let (status, body) = http_get(17402, &format!("/system/register?token={token}"));
-        assert_eq!(status, 200, "registering with the correct token must succeed, got: {body}");
+        assert_eq!(
+            status, 200,
+            "registering with the correct token must succeed, got: {body}"
+        );
         let v: Value = serde_json::from_str(&body).unwrap();
         let canonical = project.canonicalize().unwrap().display().to_string();
         assert_eq!(v["registered"].as_str().unwrap(), canonical);
@@ -1263,12 +1473,22 @@ mod tests {
         let (_guard, _token) = spawn_server(&project, &home, 17403);
 
         let (status, _) = http_get(17403, "/system/list");
-        assert_eq!(status, 200, "GET /system/list (read-only) must not require a token");
+        assert_eq!(
+            status, 200,
+            "GET /system/list (read-only) must not require a token"
+        );
 
         let (status, body) = http_get(17403, "/system/query?q=NothingRegisteredYet");
-        assert_eq!(status, 200, "GET /system/query (read-only) must not require a token");
+        assert_eq!(
+            status, 200,
+            "GET /system/query (read-only) must not require a token"
+        );
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["results"].as_array().unwrap().len(), 0, "nothing registered yet, got: {body}");
+        assert_eq!(
+            v["results"].as_array().unwrap().len(),
+            0,
+            "nothing registered yet, got: {body}"
+        );
     }
 
     #[test]
@@ -1296,11 +1516,17 @@ mod tests {
         assert_eq!(status, 200);
 
         let (status, body) = http_get(17407, "/system/status");
-        assert_eq!(status, 200, "GET /system/status (read-only) must not require a token, got: {body}");
+        assert_eq!(
+            status, 200,
+            "GET /system/status (read-only) must not require a token, got: {body}"
+        );
         let v: Value = serde_json::from_str(&body).unwrap();
         let projects = v["projects"].as_array().unwrap();
         let canonical = project.canonicalize().unwrap().display().to_string();
-        let entry = projects.iter().find(|p| p["root"] == canonical).expect("registered project must appear");
+        let entry = projects
+            .iter()
+            .find(|p| p["root"] == canonical)
+            .expect("registered project must appear");
         assert_eq!(
             entry["status"]["concepts_declared"].as_u64(),
             Some(1),
@@ -1340,17 +1566,37 @@ mod tests {
         let (_guard, _token) = spawn_server(&project, &home, 17408);
 
         let (status, body) = http_get(17408, "/register");
-        assert_eq!(status, 200, "GET /register (read-only) must not require a token, got: {body}");
+        assert_eq!(
+            status, 200,
+            "GET /register (read-only) must not require a token, got: {body}"
+        );
         let v: Value = serde_json::from_str(&body).unwrap();
-        let kinds: Vec<&str> = v["not_known"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
-        assert!(kinds.contains(&"unsupported_language"), "the .lua file must surface, got: {body}");
-        assert!(kinds.contains(&"usage_unobserved"), "the declared-only Widget must surface, got: {body}");
-        assert!(kinds.contains(&"domain_disabled"), "docker is default-disabled, got: {body}");
+        let kinds: Vec<&str> = v["not_known"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap())
+            .collect();
+        assert!(
+            kinds.contains(&"unsupported_language"),
+            "the .lua file must surface, got: {body}"
+        );
+        assert!(
+            kinds.contains(&"usage_unobserved"),
+            "the declared-only Widget must surface, got: {body}"
+        );
+        assert!(
+            kinds.contains(&"domain_disabled"),
+            "docker is default-disabled, got: {body}"
+        );
         // shaping applies here too: one slice, no prose
         let (status, body) = http_get(17408, "/register?only=known&compact=true");
         assert_eq!(status, 200);
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert!(v.get("not_known").is_none() && v["known"]["files_scanned"].as_u64() == Some(1), "got: {body}");
+        assert!(
+            v.get("not_known").is_none() && v["known"]["files_scanned"].as_u64() == Some(1),
+            "got: {body}"
+        );
     }
 
     #[test]
@@ -1387,7 +1633,10 @@ mod tests {
         let (_guard, _token) = spawn_server(&project, &home, 17406);
 
         let (status, _) = http_get(17406, "/proposal/submit?kind=decision");
-        assert_eq!(status, 401, "proposal/submit with no token must still be rejected");
+        assert_eq!(
+            status, 401,
+            "proposal/submit with no token must still be rejected"
+        );
     }
 
     #[test]
@@ -1395,8 +1644,15 @@ mod tests {
         let home = tmp_dir("home-post-proposal");
         let project = tmp_dir("project-post-proposal");
         let (_guard, _token) = spawn_server(&project, &home, 17412);
-        let (status, _) = http_post_form(17412, "/proposal/submit", "kind=decision&title=missing-token");
-        assert_eq!(status, 401, "POST proposal endpoints must require the startup token");
+        let (status, _) = http_post_form(
+            17412,
+            "/proposal/submit",
+            "kind=decision&title=missing-token",
+        );
+        assert_eq!(
+            status, 401,
+            "POST proposal endpoints must require the startup token"
+        );
     }
 
     #[test]
@@ -1406,16 +1662,41 @@ mod tests {
         let (_guard, token) = spawn_server(&project, &home, 17413);
         let form = format!("token={token}&kind=decision&title=origin-check");
 
-        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("https://evil.example"));
-        assert_eq!(status, 403, "cross-origin mutation must be rejected before token evaluation");
+        let (status, _) = http_post_form_with_origin(
+            17413,
+            "/proposal/submit",
+            &form,
+            Some("https://evil.example"),
+        );
+        assert_eq!(
+            status, 403,
+            "cross-origin mutation must be rejected before token evaluation"
+        );
 
-        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("http://localhost:3000"));
-        assert_ne!(status, 403, "localhost GUI origin should pass origin validation");
+        let (status, _) = http_post_form_with_origin(
+            17413,
+            "/proposal/submit",
+            &form,
+            Some("http://localhost:3000"),
+        );
+        assert_ne!(
+            status, 403,
+            "localhost GUI origin should pass origin validation"
+        );
 
-        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("http://127.0.0.1:7373"));
-        assert_ne!(status, 403, "127.0.0.1 GUI origin should pass origin validation");
+        let (status, _) = http_post_form_with_origin(
+            17413,
+            "/proposal/submit",
+            &form,
+            Some("http://127.0.0.1:7373"),
+        );
+        assert_ne!(
+            status, 403,
+            "127.0.0.1 GUI origin should pass origin validation"
+        );
 
-        let (status, _) = http_post_form_with_origin(17413, "/proposal/submit", &form, Some("null"));
+        let (status, _) =
+            http_post_form_with_origin(17413, "/proposal/submit", &form, Some("null"));
         assert_eq!(status, 403, "opaque browser origins must be rejected");
     }
 
@@ -1427,7 +1708,10 @@ mod tests {
         let (status, body) = http_post_form(17411, "/ci", "diff=");
         assert_eq!(status, 200, "got: {body}");
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert!(v.get("governance_receipt").is_some(), "POST /ci must return a governance receipt: {body}");
+        assert!(
+            v.get("governance_receipt").is_some(),
+            "POST /ci must return a governance receipt: {body}"
+        );
     }
 
     #[test]
@@ -1437,7 +1721,10 @@ mod tests {
         let (_guard, _token) = spawn_server(&project, &home, 17416);
         let (status, body) = http_post_json(17416, "/ci", r#"{"diff":""}"#);
         assert_eq!(status, 200, "got: {body}");
-        assert!(serde_json::from_str::<Value>(&body).unwrap().get("governance_receipt").is_some());
+        assert!(serde_json::from_str::<Value>(&body)
+            .unwrap()
+            .get("governance_receipt")
+            .is_some());
     }
 
     #[test]
@@ -1454,23 +1741,45 @@ mod tests {
             17413,
             "/proposal/submit",
             &accept_token,
-            &[("kind", "decision"), ("title", "REST lifecycle policy"), ("patch", add_policy)],
+            &[
+                ("kind", "decision"),
+                ("title", "REST lifecycle policy"),
+                ("patch", add_policy),
+            ],
         );
         assert_eq!(status, 200, "submit failed: {body}");
         let submitted: Value = serde_json::from_str(&body).unwrap();
-        let id = submitted["id"].as_u64().expect("submit must return proposal id");
+        let id = submitted["id"]
+            .as_u64()
+            .expect("submit must return proposal id");
         assert_eq!(submitted["status"], "pending");
 
-        let (status, body) = post(17413, "/proposal/test", &accept_token, &[("id", &id.to_string())]);
+        let (status, body) = post(
+            17413,
+            "/proposal/test",
+            &accept_token,
+            &[("id", &id.to_string())],
+        );
         assert_eq!(status, 200, "test failed: {body}");
         let tested: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(tested["status"], "passed", "proposal test must pass: {body}");
+        assert_eq!(
+            tested["status"], "passed",
+            "proposal test must pass: {body}"
+        );
 
-        let (status, body) = post(17413, "/proposal/accept", &accept_token, &[("id", &id.to_string())]);
+        let (status, body) = post(
+            17413,
+            "/proposal/accept",
+            &accept_token,
+            &[("id", &id.to_string())],
+        );
         assert_eq!(status, 200, "accept failed: {body}");
         let accepted: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(accepted["status"], "accepted");
-        assert!(accept_project.join("archietect.toml").is_file(), "accept must apply the patch to the working tree");
+        assert!(
+            accept_project.join("archietect.toml").is_file(),
+            "accept must apply the patch to the working tree"
+        );
 
         let reject_home = tmp_dir("home-post-proposal-reject");
         let reject_project = tmp_dir("project-post-proposal-reject");
@@ -1481,13 +1790,27 @@ mod tests {
             17414,
             "/proposal/submit",
             &reject_token,
-            &[("kind", "decision"), ("title", "rejected policy"), ("patch", add_policy)],
+            &[
+                ("kind", "decision"),
+                ("title", "rejected policy"),
+                ("patch", add_policy),
+            ],
         );
         assert_eq!(status, 200, "reject submit failed: {body}");
-        let rejected_id = serde_json::from_str::<Value>(&body).unwrap()["id"].as_u64().unwrap();
-        let (status, body) = post(17414, "/proposal/reject", &reject_token, &[("id", &rejected_id.to_string()), ("purge", "false")]);
+        let rejected_id = serde_json::from_str::<Value>(&body).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let (status, body) = post(
+            17414,
+            "/proposal/reject",
+            &reject_token,
+            &[("id", &rejected_id.to_string()), ("purge", "false")],
+        );
         assert_eq!(status, 200, "reject failed: {body}");
-        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["status"], "rejected");
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["status"],
+            "rejected"
+        );
     }
 
     #[test]
@@ -1498,7 +1821,10 @@ mod tests {
         let oversized = format!("diff={}", "x".repeat(8 * 1024 * 1024 + 1));
         let (status, body) = http_post_form(17415, "/ci", &oversized);
         assert_eq!(status, 413, "oversized POST must be rejected: {body}");
-        assert!(body.contains("8 MiB"), "response should explain the limit: {body}");
+        assert!(
+            body.contains("8 MiB"),
+            "response should explain the limit: {body}"
+        );
     }
 
     /// End-to-end proof of the watcher-driven cache invalidation described
@@ -1531,7 +1857,10 @@ mod tests {
         let (status, body) = http_get(17410, "/doctor");
         assert_eq!(status, 200, "got: {body}");
         let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["counts"]["concepts"], 1, "sanity: fixture must start with exactly Widget, got: {body}");
+        assert_eq!(
+            v["counts"]["concepts"], 1,
+            "sanity: fixture must start with exactly Widget, got: {body}"
+        );
 
         // A real edit to a real declaration file — this is exactly the
         // event class `watch.rs`'s own `relevant()` must say yes to.
@@ -1580,7 +1909,10 @@ mod tests {
         let (status, body) = http_get(17410, "/doctor");
         let fast_elapsed = fast_start.elapsed();
         assert_eq!(status, 200, "got: {body}");
-        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["counts"]["concepts"], 2);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["counts"]["concepts"],
+            2
+        );
 
         println!("scan-triggering request: {scan_elapsed:?}; cache-only request: {fast_elapsed:?}");
         assert!(

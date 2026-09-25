@@ -142,15 +142,16 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
     // unstructured domain with no explicit config entry — a prior interactive
     // confirmation recorded "yes". Same rule `domain_allowed_with_confirmation`
     // applies at scan time, restated here without prompting.
-    let effectively_enabled = |domain: &str, allowed: bool, source: &str, structured: bool| -> bool {
-        if allowed {
-            return true;
-        }
-        if !structured && !source.ends_with("-config") {
-            return confirmed_for(domain) == Some(true);
-        }
-        false
-    };
+    let effectively_enabled =
+        |domain: &str, allowed: bool, source: &str, structured: bool| -> bool {
+            if allowed {
+                return true;
+            }
+            if !structured && !source.ends_with("-config") {
+                return confirmed_for(domain) == Some(true);
+            }
+            false
+        };
 
     let mut not_known: Vec<Value> = Vec::new();
 
@@ -159,10 +160,17 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
     // one place a language nobody ever classified becomes visible at all.
     let unclassified = crate::scan::unclassified_files(root, &idx.excludes, 5000);
     if !unclassified.is_empty() {
-        let mut languages: Vec<String> = unclassified.iter().map(|(_, ext)| format!(".{ext} (unclassified)")).collect();
+        let mut languages: Vec<String> = unclassified
+            .iter()
+            .map(|(_, ext)| format!(".{ext} (unclassified)"))
+            .collect();
         languages.sort();
         languages.dedup();
-        let files: Vec<&str> = unclassified.iter().take(LIST_CAP).map(|(rel, _)| rel.as_str()).collect();
+        let files: Vec<&str> = unclassified
+            .iter()
+            .take(LIST_CAP)
+            .map(|(rel, _)| rel.as_str())
+            .collect();
         not_known.push(json!({
             "kind": "unsupported_language",
             "languages": languages,
@@ -180,7 +188,11 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
             continue;
         };
         let explicit = source.ends_with("-config");
-        let confirmed = if *structured { None } else { confirmed_for(domain) };
+        let confirmed = if *structured {
+            None
+        } else {
+            confirmed_for(domain)
+        };
 
         if effectively_enabled(domain, *allowed, source, *structured) {
             domains_enabled.push(domain.clone());
@@ -236,7 +248,9 @@ pub fn register(idx: &Index, _graph: &StructuralGraph, root: &Path) -> Value {
     let dead: Vec<&String> = idx
         .concepts
         .iter()
-        .filter(|(_, c)| c.usage.is_empty() && c.declared_in.iter().any(|(_, k)| k != "prisma-enum"))
+        .filter(|(_, c)| {
+            c.usage.is_empty() && c.declared_in.iter().any(|(_, k)| k != "prisma-enum")
+        })
         .map(|(n, _)| n)
         .collect();
     if !dead.is_empty() {
@@ -300,7 +314,12 @@ fn snapshot_of(out: &Value) -> Value {
         .as_array()
         .map(|a| {
             a.iter()
-                .map(|e| (e["kind"].as_str().unwrap_or("").to_string(), e["domain"].as_str().unwrap_or("").to_string()))
+                .map(|e| {
+                    (
+                        e["kind"].as_str().unwrap_or("").to_string(),
+                        e["domain"].as_str().unwrap_or("").to_string(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -334,13 +353,18 @@ fn snapshot_of(out: &Value) -> Value {
 /// than a delta of zero — there is no "no changes," there is no baseline.
 pub fn diff_since_last(root: &Path, current: &Value) -> Value {
     let path = snapshot_path(root);
-    let previous: Option<Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let previous: Option<Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
 
     let now = snapshot_of(current);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&now).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&now).unwrap_or_default(),
+    );
 
     let Some(prev) = previous else {
         return json!({
@@ -352,16 +376,36 @@ pub fn diff_since_last(root: &Path, current: &Value) -> Value {
     let as_of_ms = prev["taken_ms"].as_i64().unwrap_or(0);
     let prev_not_known: std::collections::BTreeSet<(String, String)> = prev["not_known_pairs"]
         .as_array()
-        .map(|a| a.iter().filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string()))).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string())))
+                .collect()
+        })
         .unwrap_or_default();
     let now_not_known: std::collections::BTreeSet<(String, String)> = now["not_known_pairs"]
         .as_array()
-        .map(|a| a.iter().filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string()))).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| Some((p[0].as_str()?.to_string(), p[1].as_str()?.to_string())))
+                .collect()
+        })
         .unwrap_or_default();
-    let prev_domains: std::collections::BTreeSet<String> =
-        prev["domains_enabled"].as_array().map(|a| a.iter().filter_map(|d| d.as_str().map(String::from)).collect()).unwrap_or_default();
-    let now_domains: std::collections::BTreeSet<String> =
-        now["domains_enabled"].as_array().map(|a| a.iter().filter_map(|d| d.as_str().map(String::from)).collect()).unwrap_or_default();
+    let prev_domains: std::collections::BTreeSet<String> = prev["domains_enabled"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|d| d.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let now_domains: std::collections::BTreeSet<String> = now["domains_enabled"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|d| d.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
 
     json!({
         "available": true,
@@ -382,7 +426,10 @@ mod tests {
     use super::*;
 
     fn fixture(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-register-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-register-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         std::fs::write(
@@ -399,7 +446,12 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|e| (e["kind"].as_str().unwrap().to_string(), e["domain"].as_str().unwrap_or("").to_string()))
+            .map(|e| {
+                (
+                    e["kind"].as_str().unwrap().to_string(),
+                    e["domain"].as_str().unwrap_or("").to_string(),
+                )
+            })
             .collect()
     }
 
@@ -436,7 +488,10 @@ mod tests {
                     "{name}'s DomainDescriptor.structured disagrees with permissions::is_structured_domain"
                 );
                 if !d.structured {
-                    assert!(d.scan_invocation.is_some(), "{name} is unstructured but declares no scan_invocation");
+                    assert!(
+                        d.scan_invocation.is_some(),
+                        "{name} is unstructured but declares no scan_invocation"
+                    );
                 }
                 // Deliberately NOT asserting not_producible's tiers are
                 // disjoint from producible_tiers: a `not_producible` row
@@ -451,7 +506,11 @@ mod tests {
         // actually knows about — no descriptor for a domain nobody can enable.
         let known: Vec<&str> = crate::permissions::known_domains().collect();
         for d in ALL_DOMAINS {
-            assert!(known.contains(&d.name), "{} has a DomainDescriptor but is not in permissions::known_domains()", d.name);
+            assert!(
+                known.contains(&d.name),
+                "{} has a DomainDescriptor but is not in permissions::known_domains()",
+                d.name
+            );
         }
     }
 
@@ -490,51 +549,119 @@ mod tests {
         let out = register(&idx, &graph, &root);
         let ks = kinds(&out);
 
-        let lua = out["not_known"].as_array().unwrap().iter().find(|e| e["kind"] == "unsupported_language").expect("unsupported_language entry");
-        assert!(lua["files"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().ends_with("handler.lua")), "{lua}");
+        let lua = out["not_known"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "unsupported_language")
+            .expect("unsupported_language entry");
+        assert!(
+            lua["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f.as_str().unwrap().ends_with("handler.lua")),
+            "{lua}"
+        );
         assert_eq!(lua["file_count"], 1);
 
-        let dead = out["not_known"].as_array().unwrap().iter().find(|e| e["kind"] == "usage_unobserved").expect("usage_unobserved entry");
-        assert!(dead["concepts"].as_array().unwrap().iter().any(|c| c == "Widget"), "{dead}");
+        let dead = out["not_known"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "usage_unobserved")
+            .expect("usage_unobserved entry");
+        assert!(
+            dead["concepts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "Widget"),
+            "{dead}"
+        );
         assert_eq!(dead["concept_count"], 1);
 
-        assert!(ks.contains(&("domain_disabled".into(), "docker".into())), "{ks:?}");
+        assert!(
+            ks.contains(&("domain_disabled".into(), "docker".into())),
+            "{ks:?}"
+        );
         // git is default-enabled → its unproducible tier is stated, not a disabled entry
-        assert!(ks.contains(&("tier_not_producible".into(), "git".into())), "{ks:?}");
-        assert!(!ks.contains(&("domain_disabled".into(), "git".into())), "{ks:?}");
+        assert!(
+            ks.contains(&("tier_not_producible".into(), "git".into())),
+            "{ks:?}"
+        );
+        assert!(
+            !ks.contains(&("domain_disabled".into(), "git".into())),
+            "{ks:?}"
+        );
         // documents: never asked, no config → unconfirmed, and boundary says confirmed: null
-        assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())), "{ks:?}");
-        let docs = out["boundary"]["domains"].as_array().unwrap().iter().find(|d| d["domain"] == "documents").unwrap();
+        assert!(
+            ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())),
+            "{ks:?}"
+        );
+        let docs = out["boundary"]["domains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["domain"] == "documents")
+            .unwrap();
         assert!(docs["confirmed"].is_null());
         // photos and messages: same unconfirmed-unstructured-domain shape as
         // documents — regression pin for the real bug found while adding
         // messages_domain: photos_domain existed for a while before this but
         // was never added to IMPLEMENTED_DOMAINS, so register() silently
         // couldn't reason about it as known-but-unconfirmed at all.
-        assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())), "{ks:?}");
-        assert!(ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())), "{ks:?}");
+        assert!(
+            ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())),
+            "{ks:?}"
+        );
+        assert!(
+            ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())),
+            "{ks:?}"
+        );
         assert!(!ks.contains(&("tier_not_producible".into(), "photos".into())), "unconfirmed domains must not ALSO show tier_not_producible — that's for enabled domains only: {ks:?}");
-        assert!(!ks.contains(&("tier_not_producible".into(), "messages".into())), "{ks:?}");
+        assert!(
+            !ks.contains(&("tier_not_producible".into(), "messages".into())),
+            "{ks:?}"
+        );
 
         // messages_domain has no --dir flag (it checks well-known paths
         // under $HOME, not a caller-named directory) — the generic
         // how_to_establish template must not claim a flag that doesn't
         // exist, unlike photos/documents which genuinely take --dir.
-        let messages_entry = out["not_known"].as_array().unwrap().iter()
+        let messages_entry = out["not_known"]
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|e| e["kind"] == "unstructured_domain_unconfirmed" && e["domain"] == "messages")
             .expect("messages unconfirmed entry");
         let msg_how = messages_entry["how_to_establish"].as_str().unwrap();
-        assert!(!msg_how.contains("--dir"), "messages scan takes no --dir flag: {msg_how}");
+        assert!(
+            !msg_how.contains("--dir"),
+            "messages scan takes no --dir flag: {msg_how}"
+        );
         assert!(msg_how.contains("archietect messages scan"), "{msg_how}");
 
-        let photos_entry = out["not_known"].as_array().unwrap().iter()
+        let photos_entry = out["not_known"]
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|e| e["kind"] == "unstructured_domain_unconfirmed" && e["domain"] == "photos")
             .expect("photos unconfirmed entry");
-        assert!(photos_entry["how_to_establish"].as_str().unwrap().contains("--dir"), "photos scan DOES take --dir, unlike messages: {photos_entry}");
+        assert!(
+            photos_entry["how_to_establish"]
+                .as_str()
+                .unwrap()
+                .contains("--dir"),
+            "photos scan DOES take --dir, unlike messages: {photos_entry}"
+        );
         // code + git enabled, docker not
         assert_eq!(out["known"]["domains_enabled"], json!(["code", "git"]));
         // no docker tier entry while docker is disabled — that would be double-counting
-        assert!(!ks.contains(&("tier_not_producible".into(), "docker".into())), "{ks:?}");
+        assert!(
+            !ks.contains(&("tier_not_producible".into(), "docker".into())),
+            "{ks:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -553,18 +680,29 @@ mod tests {
         let home = root.join("home");
         std::fs::create_dir_all(&home).unwrap();
         let _h = HomeGuard::set(&home);
-        std::fs::write(root.join("archietect.toml"), "[domains]\ndocker = \"enabled\"\n").unwrap();
+        std::fs::write(
+            root.join("archietect.toml"),
+            "[domains]\ndocker = \"enabled\"\n",
+        )
+        .unwrap();
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = register(&idx, &graph, &root);
         let ks = kinds(&out);
 
-        assert!(!ks.contains(&("domain_disabled".into(), "docker".into())), "{ks:?}");
+        assert!(
+            !ks.contains(&("domain_disabled".into(), "docker".into())),
+            "{ks:?}"
+        );
         assert!(
             !ks.contains(&("tier_not_producible".into(), "docker".into())),
             "docker's Observed tier is producible via scan_observed now — a tier_not_producible row would be stale, got: {ks:?}"
         );
-        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "docker"));
+        assert!(out["known"]["domains_enabled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d == "docker"));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -580,22 +718,48 @@ mod tests {
         // Write through the REAL persist path, not a hand-rolled file.
         struct Yes;
         impl crate::permissions::ConfirmationAsker for Yes {
-            fn confirm(&self, _: &str) -> bool { true }
+            fn confirm(&self, _: &str) -> bool {
+                true
+            }
         }
         let confirmations = crate::permissions::default_confirmations_path().unwrap();
-        assert!(confirmations.starts_with(&home), "test must not touch the real confirmations file");
+        assert!(
+            confirmations.starts_with(&home),
+            "test must not touch the real confirmations file"
+        );
         let cfg = crate::permissions::PermissionConfig::default();
-        assert!(crate::permissions::domain_allowed_with_confirmation(&cfg, &confirmations, "documents", &Yes).unwrap());
+        assert!(crate::permissions::domain_allowed_with_confirmation(
+            &cfg,
+            &confirmations,
+            "documents",
+            &Yes
+        )
+        .unwrap());
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = register(&idx, &graph, &root);
-        let docs = out["boundary"]["domains"].as_array().unwrap().iter().find(|d| d["domain"] == "documents").unwrap();
+        let docs = out["boundary"]["domains"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["domain"] == "documents")
+            .unwrap();
         assert_eq!(docs["confirmed"], json!(true));
-        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "documents"));
+        assert!(out["known"]["domains_enabled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d == "documents"));
         let ks = kinds(&out);
-        assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())), "{ks:?}");
+        assert!(
+            !ks.contains(&("unstructured_domain_unconfirmed".into(), "documents".into())),
+            "{ks:?}"
+        );
         // enabled → what it still can't produce is stated
-        assert!(ks.contains(&("tier_not_producible".into(), "documents".into())), "{ks:?}");
+        assert!(
+            ks.contains(&("tier_not_producible".into(), "documents".into())),
+            "{ks:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -610,22 +774,56 @@ mod tests {
 
         struct Yes;
         impl crate::permissions::ConfirmationAsker for Yes {
-            fn confirm(&self, _: &str) -> bool { true }
+            fn confirm(&self, _: &str) -> bool {
+                true
+            }
         }
         let confirmations = crate::permissions::default_confirmations_path().unwrap();
         let cfg = crate::permissions::PermissionConfig::default();
-        assert!(crate::permissions::domain_allowed_with_confirmation(&cfg, &confirmations, "photos", &Yes).unwrap());
-        assert!(crate::permissions::domain_allowed_with_confirmation(&cfg, &confirmations, "messages", &Yes).unwrap());
+        assert!(crate::permissions::domain_allowed_with_confirmation(
+            &cfg,
+            &confirmations,
+            "photos",
+            &Yes
+        )
+        .unwrap());
+        assert!(crate::permissions::domain_allowed_with_confirmation(
+            &cfg,
+            &confirmations,
+            "messages",
+            &Yes
+        )
+        .unwrap());
 
         let (idx, graph) = crate::scan::scan(&root);
         let out = register(&idx, &graph, &root);
-        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "photos"));
-        assert!(out["known"]["domains_enabled"].as_array().unwrap().iter().any(|d| d == "messages"));
+        assert!(out["known"]["domains_enabled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d == "photos"));
+        assert!(out["known"]["domains_enabled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d == "messages"));
         let ks = kinds(&out);
-        assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())), "{ks:?}");
-        assert!(!ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())), "{ks:?}");
-        assert!(ks.contains(&("tier_not_producible".into(), "photos".into())), "{ks:?}");
-        assert!(ks.contains(&("tier_not_producible".into(), "messages".into())), "{ks:?}");
+        assert!(
+            !ks.contains(&("unstructured_domain_unconfirmed".into(), "photos".into())),
+            "{ks:?}"
+        );
+        assert!(
+            !ks.contains(&("unstructured_domain_unconfirmed".into(), "messages".into())),
+            "{ks:?}"
+        );
+        assert!(
+            ks.contains(&("tier_not_producible".into(), "photos".into())),
+            "{ks:?}"
+        );
+        assert!(
+            ks.contains(&("tier_not_producible".into(), "messages".into())),
+            "{ks:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -633,7 +831,10 @@ mod tests {
     #[test]
     fn omits_categories_with_no_instances() {
         let _g = HOME_LOCK.lock().unwrap();
-        let root = std::env::temp_dir().join(format!("archietect-register-test-clean-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "archietect-register-test-clean-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.ts"), "export class A {}\n").unwrap();
@@ -644,8 +845,14 @@ mod tests {
         let (idx, graph) = crate::scan::scan(&root);
         let out = register(&idx, &graph, &root);
         let ks = kinds(&out);
-        assert!(!ks.iter().any(|(k, _)| k == "unsupported_language"), "no .lua here → no entry, got {ks:?}");
-        assert!(!ks.iter().any(|(k, _)| k == "usage_unobserved"), "no schema concepts here → no entry, got {ks:?}");
+        assert!(
+            !ks.iter().any(|(k, _)| k == "unsupported_language"),
+            "no .lua here → no entry, got {ks:?}"
+        );
+        assert!(
+            !ks.iter().any(|(k, _)| k == "usage_unobserved"),
+            "no schema concepts here → no entry, got {ks:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -662,7 +869,10 @@ mod tests {
         let out = register(&idx, &graph, &root);
         let delta = diff_since_last(&root, &out);
         assert_eq!(delta["available"], json!(false));
-        assert!(snapshot_path(&root).exists(), "first call must still write a snapshot for the NEXT call to diff against");
+        assert!(
+            snapshot_path(&root).exists(),
+            "first call must still write a snapshot for the NEXT call to diff against"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -700,15 +910,27 @@ mod tests {
         assert_eq!(second["available"], json!(true));
         assert!(second["as_of_label"].is_string(), "{second}");
         assert_eq!(second["concepts_declared_delta"], json!(1), "{second}");
-        assert_eq!(second["domains_enabled_added"], json!(["docker"]), "{second}");
-        assert_eq!(second["domains_enabled_removed"], json!([] as [String; 0]), "{second}");
+        assert_eq!(
+            second["domains_enabled_added"],
+            json!(["docker"]),
+            "{second}"
+        );
+        assert_eq!(
+            second["domains_enabled_removed"],
+            json!([] as [String; 0]),
+            "{second}"
+        );
 
         // Calling AGAIN with no further changes must diff against the
         // SECOND snapshot, not stay pinned to the first — zero deltas now.
         let third = diff_since_last(&root, &out2);
         assert_eq!(third["available"], json!(true));
         assert_eq!(third["concepts_declared_delta"], json!(0), "{third}");
-        assert_eq!(third["domains_enabled_added"], json!([] as [String; 0]), "{third}");
+        assert_eq!(
+            third["domains_enabled_added"],
+            json!([] as [String; 0]),
+            "{third}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

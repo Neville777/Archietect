@@ -78,8 +78,12 @@ pub fn scan_if_allowed(
     dir: &Path,
     asker: &dyn ConfirmationAsker,
 ) -> Result<(bool, Vec<Resource>)> {
-    let allowed =
-        crate::permissions::domain_allowed_with_confirmation(cfg, confirmations_path, "photos", asker)?;
+    let allowed = crate::permissions::domain_allowed_with_confirmation(
+        cfg,
+        confirmations_path,
+        "photos",
+        asker,
+    )?;
     if !allowed {
         return Ok((false, Vec::new()));
     }
@@ -110,16 +114,25 @@ pub fn scan_if_allowed(
 /// `documents_domain.rs`/`git_domain.rs`/`docker_domain.rs` already use.
 pub fn scan(dir: &Path) -> Vec<Resource> {
     let mut resources = Vec::new();
-    let dir_name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string());
+    let dir_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| dir.display().to_string());
 
-    let Ok(entries) = std::fs::read_dir(dir) else { return resources };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return resources;
+    };
     for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if !file_type.is_file() {
             continue; // no recursion into subdirectories — see module doc
         }
         let path = entry.path();
-        let Some(ext) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) else { continue };
+        let Some(ext) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) else {
+            continue;
+        };
         if !PHOTO_EXTENSIONS.contains(&ext.as_str()) {
             continue;
         }
@@ -188,8 +201,10 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir()
-            .join(format!("archietect-photos-domain-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-photos-domain-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -203,21 +218,38 @@ mod tests {
         std::fs::write(dir.join("readme.txt"), b"not a photo").unwrap();
 
         let resources = scan(&dir);
-        assert_eq!(resources.len(), 2, "expected exactly the .jpg and .png files, got: {resources:?}");
+        assert_eq!(
+            resources.len(),
+            2,
+            "expected exactly the .jpg and .png files, got: {resources:?}"
+        );
 
-        let jpg = resources.iter().find(|r| r.attributes.get("extension").map(String::as_str) == Some("jpg"))
+        let jpg = resources
+            .iter()
+            .find(|r| r.attributes.get("extension").map(String::as_str) == Some("jpg"))
             .expect("expected a .jpg resource");
         assert_eq!(jpg.domain, "photos");
         assert_eq!(jpg.kind, "photo");
-        assert_eq!(jpg.attributes.get("filename").map(String::as_str), Some("photo.jpg"));
-        assert_eq!(jpg.attributes.get("size_bytes").map(String::as_str), Some("15"));
+        assert_eq!(
+            jpg.attributes.get("filename").map(String::as_str),
+            Some("photo.jpg")
+        );
+        assert_eq!(
+            jpg.attributes.get("size_bytes").map(String::as_str),
+            Some("15")
+        );
         assert!(jpg.attributes.contains_key("modified_unix_ms"));
         assert_eq!(jpg.evidence[0].tier, Tier::Derived);
         assert!(jpg.evidence[0].what.contains("content never read"));
 
-        let png = resources.iter().find(|r| r.attributes.get("extension").map(String::as_str) == Some("png"))
+        let png = resources
+            .iter()
+            .find(|r| r.attributes.get("extension").map(String::as_str) == Some("png"))
             .expect("expected a .png resource");
-        assert_eq!(png.attributes.get("filename").map(String::as_str), Some("image.png"));
+        assert_eq!(
+            png.attributes.get("filename").map(String::as_str),
+            Some("image.png")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -227,7 +259,10 @@ mod tests {
         let dir = tmp_dir("empty");
         assert!(scan(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(scan(&dir).is_empty(), "a missing directory must yield empty, not panic");
+        assert!(
+            scan(&dir).is_empty(),
+            "a missing directory must yield empty, not panic"
+        );
     }
 
     #[test]
@@ -250,9 +285,21 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert_eq!(resources.len(), 2);
-        let big_resource = resources.iter().find(|r| r.attributes.get("filename").map(String::as_str) == Some("big.png")).unwrap();
-        assert_eq!(big_resource.attributes.get("size_bytes").map(String::as_str), Some((50 * 1024 * 1024).to_string()).as_deref());
-        assert!(elapsed.as_secs() < 2, "scanning must only stat files, not read them — took {elapsed:?}");
+        let big_resource = resources
+            .iter()
+            .find(|r| r.attributes.get("filename").map(String::as_str) == Some("big.png"))
+            .unwrap();
+        assert_eq!(
+            big_resource
+                .attributes
+                .get("size_bytes")
+                .map(String::as_str),
+            Some((50 * 1024 * 1024).to_string()).as_deref()
+        );
+        assert!(
+            elapsed.as_secs() < 2,
+            "scanning must only stat files, not read them — took {elapsed:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -265,8 +312,15 @@ mod tests {
         std::fs::write(dir.join("top.jpg"), b"top level").unwrap();
 
         let resources = scan(&dir);
-        assert_eq!(resources.len(), 1, "expected only the top-level file, got: {resources:?}");
-        assert_eq!(resources[0].attributes.get("filename").map(String::as_str), Some("top.jpg"));
+        assert_eq!(
+            resources.len(),
+            1,
+            "expected only the top-level file, got: {resources:?}"
+        );
+        assert_eq!(
+            resources[0].attributes.get("filename").map(String::as_str),
+            Some("top.jpg")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -275,8 +329,10 @@ mod tests {
     fn scan_if_allowed_blocks_when_confirmation_says_no() {
         let dir = tmp_dir("confirm-no");
         std::fs::write(dir.join("a.jpg"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-photos-test-confirm-no-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-photos-test-confirm-no-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
@@ -292,8 +348,10 @@ mod tests {
     fn scan_if_allowed_permits_and_persists_when_confirmation_says_yes() {
         let dir = tmp_dir("confirm-yes");
         std::fs::write(dir.join("a.jpg"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-photos-test-confirm-yes-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-photos-test-confirm-yes-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
@@ -304,7 +362,10 @@ mod tests {
         // A second call with an asker that would say NO must not be
         // consulted — the "yes" from above is already persisted.
         let (allowed_again, _) = scan_if_allowed(&cfg, &confirmations, &dir, &AlwaysNo).unwrap();
-        assert!(allowed_again, "a prior persisted 'yes' must not be re-asked and overturned silently");
+        assert!(
+            allowed_again,
+            "a prior persisted 'yes' must not be re-asked and overturned silently"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
         let _ = std::fs::remove_dir_all(&dir);
@@ -319,20 +380,31 @@ mod tests {
     fn non_interactive_decline_is_not_persisted_so_a_later_interactive_run_still_asks() {
         let dir = tmp_dir("non-interactive");
         std::fs::write(dir.join("a.jpg"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-photos-test-non-interactive-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-photos-test-non-interactive-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
-        let (allowed, resources) =
-            scan_if_allowed(&cfg, &confirmations, &dir, &crate::permissions::NonInteractiveAsker).unwrap();
+        let (allowed, resources) = scan_if_allowed(
+            &cfg,
+            &confirmations,
+            &dir,
+            &crate::permissions::NonInteractiveAsker,
+        )
+        .unwrap();
         assert!(!allowed, "fail closed with no real TTY");
         assert!(resources.is_empty());
 
         // A later run that CAN ask must actually be asked — not pre-empted
         // by the earlier no-TTY call's "no".
-        let (allowed_again, resources_again) = scan_if_allowed(&cfg, &confirmations, &dir, &AlwaysYes).unwrap();
-        assert!(allowed_again, "the interactive run must be asked, not blocked by a prior non-interactive decline");
+        let (allowed_again, resources_again) =
+            scan_if_allowed(&cfg, &confirmations, &dir, &AlwaysYes).unwrap();
+        assert!(
+            allowed_again,
+            "the interactive run must be asked, not blocked by a prior non-interactive decline"
+        );
         assert_eq!(resources_again.len(), 1);
 
         let _ = std::fs::remove_file(&confirmations);
@@ -343,13 +415,21 @@ mod tests {
     fn scan_if_allowed_respects_explicit_attribute_restriction() {
         let dir = tmp_dir("attr-restrict");
         std::fs::write(dir.join("a.jpg"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-photos-test-attr-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-photos-test-attr-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
 
-        let global = std::env::temp_dir()
-            .join(format!("archietect-photos-test-attr-global-{}.toml", std::process::id()));
-        std::fs::write(&global, "[domains.photos]\nstate = \"enabled\"\nattributes = [\"filename\"]\n").unwrap();
+        let global = std::env::temp_dir().join(format!(
+            "archietect-photos-test-attr-global-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &global,
+            "[domains.photos]\nstate = \"enabled\"\nattributes = [\"filename\"]\n",
+        )
+        .unwrap();
         let project_dir = tmp_dir("attr-restrict-project");
         let cfg = crate::permissions::load(&global, &project_dir).unwrap();
 

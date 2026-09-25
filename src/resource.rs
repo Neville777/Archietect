@@ -122,7 +122,9 @@ mod tests {
             handler: "Widget".into(),
             file: "src/routes.ts".into(),
         };
-        let rel = r.relationship_to("Widget").expect("expected a relationship");
+        let rel = r
+            .relationship_to("Widget")
+            .expect("expected a relationship");
         assert_eq!(rel.from.0, "GET /widgets");
         assert_eq!(rel.kind, "handles");
         assert_eq!(rel.to.0, "Widget");
@@ -138,7 +140,9 @@ mod tests {
             handler: "unknown".into(),
             file: "src/routes.ts".into(),
         };
-        let rel = r.relationship_to("widgets").expect("expected a relationship");
+        let rel = r
+            .relationship_to("widgets")
+            .expect("expected a relationship");
         assert_eq!(rel.evidence.tier, Tier::Named);
     }
 

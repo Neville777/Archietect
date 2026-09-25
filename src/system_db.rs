@@ -54,9 +54,11 @@ fn now_ms() -> i64 {
 
 fn open(db_path: &Path) -> Result<Connection> {
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    let conn = Connection::open(db_path).with_context(|| format!("opening {}", db_path.display()))?;
+    let conn =
+        Connection::open(db_path).with_context(|| format!("opening {}", db_path.display()))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS projects (
             root_path TEXT PRIMARY KEY,
@@ -98,7 +100,12 @@ pub fn register_project(db_path: &Path, project_root: &Path) -> Result<ProjectPo
         |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
     )?;
 
-    Ok(ProjectPointer { root: root_str, name, first_registered_ms, last_seen_ms })
+    Ok(ProjectPointer {
+        root: root_str,
+        name,
+        first_registered_ms,
+        last_seen_ms,
+    })
 }
 
 /// Every registered project pointer — root path, name, and timestamps only.
@@ -160,7 +167,11 @@ pub fn query_registered_projects(db_path: &Path, term: &str) -> Result<Vec<Proje
             let graph = graph.unwrap_or_default();
             crate::query::concept(&idx, &graph, term)
         });
-        out.push(ProjectQueryResult { root: p.root, name: p.name, found });
+        out.push(ProjectQueryResult {
+            root: p.root,
+            name: p.name,
+            found,
+        });
     }
     Ok(out)
 }
@@ -195,7 +206,11 @@ pub fn status_registered_projects(db_path: &Path) -> Result<Vec<ProjectStatusRes
             let graph = graph.unwrap_or_default();
             crate::query::status(&idx, &graph)
         });
-        out.push(ProjectStatusResult { root: p.root, name: p.name, status });
+        out.push(ProjectStatusResult {
+            root: p.root,
+            name: p.name,
+            status,
+        });
     }
     Ok(out)
 }
@@ -208,11 +223,17 @@ mod tests {
     /// `~/.archietect/system.db`) so this suite can run on any machine,
     /// including CI, without touching real user state.
     fn tmp_db(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("archietect-system-db-test-{label}-{}.db", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "archietect-system-db-test-{label}-{}.db",
+            std::process::id()
+        ))
     }
 
     fn tmp_project(label: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("archietect-system-db-test-proj-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-system-db-test-proj-{label}-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -224,7 +245,10 @@ mod tests {
         let proj = tmp_project("register-list");
 
         let pointer = register_project(&db, &proj).unwrap();
-        assert_eq!(pointer.root, proj.canonicalize().unwrap().display().to_string());
+        assert_eq!(
+            pointer.root,
+            proj.canonicalize().unwrap().display().to_string()
+        );
 
         let listed = list_projects(&db).unwrap();
         assert_eq!(listed.len(), 1);
@@ -293,15 +317,38 @@ mod tests {
         register_project(&db, &proj_b).unwrap();
 
         let results = query_registered_projects(&db, "Widget").unwrap();
-        assert_eq!(results.len(), 2, "must check every registered project, not just one");
+        assert_eq!(
+            results.len(),
+            2,
+            "must check every registered project, not just one"
+        );
 
-        let a_result = results.iter().find(|r| r.root.contains(proj_a.file_name().unwrap().to_str().unwrap())).unwrap();
-        let b_result = results.iter().find(|r| r.root.contains(proj_b.file_name().unwrap().to_str().unwrap())).unwrap();
+        let a_result = results
+            .iter()
+            .find(|r| {
+                r.root
+                    .contains(proj_a.file_name().unwrap().to_str().unwrap())
+            })
+            .unwrap();
+        let b_result = results
+            .iter()
+            .find(|r| {
+                r.root
+                    .contains(proj_b.file_name().unwrap().to_str().unwrap())
+            })
+            .unwrap();
 
-        let a_verdict = a_result.found.as_ref().unwrap()["verdict"].as_str().unwrap();
-        assert_ne!(a_verdict, "ABSENT", "project A declares Widget, must not be reported absent");
+        let a_verdict = a_result.found.as_ref().unwrap()["verdict"]
+            .as_str()
+            .unwrap();
+        assert_ne!(
+            a_verdict, "ABSENT",
+            "project A declares Widget, must not be reported absent"
+        );
 
-        let b_verdict = b_result.found.as_ref().unwrap()["verdict"].as_str().unwrap();
+        let b_verdict = b_result.found.as_ref().unwrap()["verdict"]
+            .as_str()
+            .unwrap();
         assert_eq!(b_verdict, "ABSENT", "project B never declared Widget, must be genuinely checked and found absent, not just skipped");
 
         let _ = std::fs::remove_file(&db);
@@ -361,11 +408,33 @@ mod tests {
         register_project(&db, &proj_c).unwrap();
 
         let results = status_registered_projects(&db).unwrap();
-        assert_eq!(results.len(), 3, "must report every registered project, not just the init'd ones");
+        assert_eq!(
+            results.len(),
+            3,
+            "must report every registered project, not just the init'd ones"
+        );
 
-        let a_result = results.iter().find(|r| r.root.contains(proj_a.file_name().unwrap().to_str().unwrap())).unwrap();
-        let b_result = results.iter().find(|r| r.root.contains(proj_b.file_name().unwrap().to_str().unwrap())).unwrap();
-        let c_result = results.iter().find(|r| r.root.contains(proj_c.file_name().unwrap().to_str().unwrap())).unwrap();
+        let a_result = results
+            .iter()
+            .find(|r| {
+                r.root
+                    .contains(proj_a.file_name().unwrap().to_str().unwrap())
+            })
+            .unwrap();
+        let b_result = results
+            .iter()
+            .find(|r| {
+                r.root
+                    .contains(proj_b.file_name().unwrap().to_str().unwrap())
+            })
+            .unwrap();
+        let c_result = results
+            .iter()
+            .find(|r| {
+                r.root
+                    .contains(proj_c.file_name().unwrap().to_str().unwrap())
+            })
+            .unwrap();
 
         assert_eq!(
             a_result.status.as_ref().unwrap()["concepts_declared"].as_u64(),

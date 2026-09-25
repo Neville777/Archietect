@@ -102,8 +102,12 @@ pub fn scan_if_allowed(
     dir: &Path,
     asker: &dyn ConfirmationAsker,
 ) -> Result<(bool, Vec<Resource>)> {
-    let allowed =
-        crate::permissions::domain_allowed_with_confirmation(cfg, confirmations_path, "documents", asker)?;
+    let allowed = crate::permissions::domain_allowed_with_confirmation(
+        cfg,
+        confirmations_path,
+        "documents",
+        asker,
+    )?;
     if !allowed {
         return Ok((false, Vec::new()));
     }
@@ -135,16 +139,25 @@ pub fn scan_if_allowed(
 /// the same split `git_domain.rs`/`docker_domain.rs` already use.
 pub fn scan(dir: &Path) -> Vec<Resource> {
     let mut resources = Vec::new();
-    let dir_name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string());
+    let dir_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| dir.display().to_string());
 
-    let Ok(entries) = std::fs::read_dir(dir) else { return resources };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return resources;
+    };
     for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if !file_type.is_file() {
             continue; // no recursion into subdirectories — see module doc
         }
         let path = entry.path();
-        let Some(ext) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) else { continue };
+        let Some(ext) = path.extension().map(|e| e.to_string_lossy().to_lowercase()) else {
+            continue;
+        };
         if !DOCUMENT_EXTENSIONS.contains(&ext.as_str()) {
             continue;
         }
@@ -213,8 +226,10 @@ mod tests {
     }
 
     fn tmp_dir(label: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir()
-            .join(format!("archietect-documents-domain-test-{label}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "archietect-documents-domain-test-{label}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -228,21 +243,38 @@ mod tests {
         std::fs::write(dir.join("ignored.exe"), b"not a document").unwrap();
 
         let resources = scan(&dir);
-        assert_eq!(resources.len(), 2, "expected exactly the .md and .pdf files, got: {resources:?}");
+        assert_eq!(
+            resources.len(),
+            2,
+            "expected exactly the .md and .pdf files, got: {resources:?}"
+        );
 
-        let md = resources.iter().find(|r| r.attributes.get("extension").map(String::as_str) == Some("md"))
+        let md = resources
+            .iter()
+            .find(|r| r.attributes.get("extension").map(String::as_str) == Some("md"))
             .expect("expected a .md resource");
         assert_eq!(md.domain, "documents");
         assert_eq!(md.kind, "document");
-        assert_eq!(md.attributes.get("filename").map(String::as_str), Some("notes.md"));
-        assert_eq!(md.attributes.get("size_bytes").map(String::as_str), Some("7"));
+        assert_eq!(
+            md.attributes.get("filename").map(String::as_str),
+            Some("notes.md")
+        );
+        assert_eq!(
+            md.attributes.get("size_bytes").map(String::as_str),
+            Some("7")
+        );
         assert!(md.attributes.contains_key("modified_unix_ms"));
         assert_eq!(md.evidence[0].tier, Tier::Derived);
         assert!(md.evidence[0].what.contains("content never read"));
 
-        let pdf = resources.iter().find(|r| r.attributes.get("extension").map(String::as_str) == Some("pdf"))
+        let pdf = resources
+            .iter()
+            .find(|r| r.attributes.get("extension").map(String::as_str) == Some("pdf"))
             .expect("expected a .pdf resource");
-        assert_eq!(pdf.attributes.get("filename").map(String::as_str), Some("report.pdf"));
+        assert_eq!(
+            pdf.attributes.get("filename").map(String::as_str),
+            Some("report.pdf")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -252,7 +284,10 @@ mod tests {
         let dir = tmp_dir("empty");
         assert!(scan(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(scan(&dir).is_empty(), "a missing directory must yield empty, not panic");
+        assert!(
+            scan(&dir).is_empty(),
+            "a missing directory must yield empty, not panic"
+        );
     }
 
     #[test]
@@ -276,9 +311,21 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert_eq!(resources.len(), 2);
-        let big_resource = resources.iter().find(|r| r.attributes.get("filename").map(String::as_str) == Some("big.txt")).unwrap();
-        assert_eq!(big_resource.attributes.get("size_bytes").map(String::as_str), Some((50 * 1024 * 1024).to_string()).as_deref());
-        assert!(elapsed.as_secs() < 2, "scanning must only stat files, not read them — took {elapsed:?}");
+        let big_resource = resources
+            .iter()
+            .find(|r| r.attributes.get("filename").map(String::as_str) == Some("big.txt"))
+            .unwrap();
+        assert_eq!(
+            big_resource
+                .attributes
+                .get("size_bytes")
+                .map(String::as_str),
+            Some((50 * 1024 * 1024).to_string()).as_deref()
+        );
+        assert!(
+            elapsed.as_secs() < 2,
+            "scanning must only stat files, not read them — took {elapsed:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -291,8 +338,15 @@ mod tests {
         std::fs::write(dir.join("top.md"), b"top level").unwrap();
 
         let resources = scan(&dir);
-        assert_eq!(resources.len(), 1, "expected only the top-level file, got: {resources:?}");
-        assert_eq!(resources[0].attributes.get("filename").map(String::as_str), Some("top.md"));
+        assert_eq!(
+            resources.len(),
+            1,
+            "expected only the top-level file, got: {resources:?}"
+        );
+        assert_eq!(
+            resources[0].attributes.get("filename").map(String::as_str),
+            Some("top.md")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -301,8 +355,10 @@ mod tests {
     fn scan_if_allowed_blocks_when_confirmation_says_no() {
         let dir = tmp_dir("confirm-no");
         std::fs::write(dir.join("a.md"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-documents-test-confirm-no-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-documents-test-confirm-no-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
@@ -318,8 +374,10 @@ mod tests {
     fn scan_if_allowed_permits_and_persists_when_confirmation_says_yes() {
         let dir = tmp_dir("confirm-yes");
         std::fs::write(dir.join("a.md"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-documents-test-confirm-yes-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-documents-test-confirm-yes-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
         let cfg = PermissionConfig::default();
 
@@ -330,7 +388,10 @@ mod tests {
         // A second call with an asker that would say NO must not be
         // consulted — the "yes" from above is already persisted.
         let (allowed_again, _) = scan_if_allowed(&cfg, &confirmations, &dir, &AlwaysNo).unwrap();
-        assert!(allowed_again, "a prior persisted 'yes' must not be re-asked and overturned silently");
+        assert!(
+            allowed_again,
+            "a prior persisted 'yes' must not be re-asked and overturned silently"
+        );
 
         let _ = std::fs::remove_file(&confirmations);
         let _ = std::fs::remove_dir_all(&dir);
@@ -340,13 +401,21 @@ mod tests {
     fn scan_if_allowed_respects_explicit_attribute_restriction() {
         let dir = tmp_dir("attr-restrict");
         std::fs::write(dir.join("a.md"), b"x").unwrap();
-        let confirmations = std::env::temp_dir()
-            .join(format!("archietect-documents-test-attr-{}.toml", std::process::id()));
+        let confirmations = std::env::temp_dir().join(format!(
+            "archietect-documents-test-attr-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&confirmations);
 
-        let global = std::env::temp_dir()
-            .join(format!("archietect-documents-test-attr-global-{}.toml", std::process::id()));
-        std::fs::write(&global, "[domains.documents]\nstate = \"enabled\"\nattributes = [\"filename\"]\n").unwrap();
+        let global = std::env::temp_dir().join(format!(
+            "archietect-documents-test-attr-global-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &global,
+            "[domains.documents]\nstate = \"enabled\"\nattributes = [\"filename\"]\n",
+        )
+        .unwrap();
         let project_dir = tmp_dir("attr-restrict-project");
         let cfg = crate::permissions::load(&global, &project_dir).unwrap();
 

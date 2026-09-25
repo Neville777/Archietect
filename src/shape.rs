@@ -69,7 +69,11 @@ pub fn parse_only(s: Option<&str>) -> Option<Vec<String>> {
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
         .collect();
-    if keys.is_empty() { None } else { Some(keys) }
+    if keys.is_empty() {
+        None
+    } else {
+        Some(keys)
+    }
 }
 
 fn strip_prose(v: &mut Value) {
@@ -127,11 +131,14 @@ mod tests {
             "evidence_note": "more prose",
         });
         let out = apply(v, None, true);
-        assert_eq!(out, json!({
-            "verdict": "STRUCTURAL",
-            "evidence": [ { "tier": "Declared", "what": "Class declared in a.ts:1" } ],
-            "git": { "enabled": true, "resources": [] },
-        }));
+        assert_eq!(
+            out,
+            json!({
+                "verdict": "STRUCTURAL",
+                "evidence": [ { "tier": "Declared", "what": "Class declared in a.ts:1" } ],
+                "git": { "enabled": true, "resources": [] },
+            })
+        );
     }
 
     #[test]
@@ -146,6 +153,9 @@ mod tests {
         assert_eq!(parse_only(None), None);
         assert_eq!(parse_only(Some("")), None);
         assert_eq!(parse_only(Some(" , ,")), None);
-        assert_eq!(parse_only(Some(" git , docker ")), Some(vec!["git".to_string(), "docker".to_string()]));
+        assert_eq!(
+            parse_only(Some(" git , docker ")),
+            Some(vec!["git".to_string(), "docker".to_string()])
+        );
     }
 }

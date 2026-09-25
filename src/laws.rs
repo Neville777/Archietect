@@ -99,7 +99,8 @@ pub fn registry_json() -> Value {
     // Category breakdown — makes the "laws are doing too many jobs" problem
     // visible at a glance. Philosophy laws are the irreducible ones; the rest
     // have a natural home in their respective implementation layer.
-    let mut by_category: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut by_category: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
     for l in laws.iter().filter(|l| l.status == "active") {
         *by_category.entry(l.category.as_str()).or_insert(0) += 1;
     }
