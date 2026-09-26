@@ -25,6 +25,14 @@ links = ["Decision", "Index"]
 proposed_by = "human"
 
 [[decision]]
+id = "explicit-capabilities-and-query-budgets"
+decision = "Optional capabilities are explicitly configuration-driven and query-heavy paths expose bounded budgets and repeated-query diagnostics instead of silently expanding work."
+because = "Feature availability must fail closed, and architectural analysis must remain predictable as repositories and evidence graphs grow."
+rejected = ["Implicitly enabling optional capabilities", "Unbounded diagnostic memory", "Silently issuing one database query per entity"]
+links = ["Flag", "features", "QueryBudget", "QueryEvent", "QueryAudit", "QueryGroup", "query_budget", "record", "report", "suspicious_repeats"]
+proposed_by = "human"
+
+[[decision]]
 id = "bounded-lifecycle-and-concurrency"
 decision = "Long-running transports, runtime probes, and SQLite persistence use bounded shutdown, timeout, retry, ownership, and backoff behavior; failures remain explicit rather than hanging or overwriting newer state."
 because = "A deterministic architectural memory must remain responsive under process termination, unavailable runtimes, concurrent writes, and rapid UI navigation without converting incomplete work into a false architectural fact."

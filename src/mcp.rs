@@ -320,6 +320,14 @@ fn tool_defs_inner() -> Value {
             } }
         },
         {
+            "name": "features",
+            "description": "Evaluate local optional capabilities from [features] configuration. Project values override global values; unknown features are safely disabled. Omit name to list configured flags.",
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string", "description": "Feature name to evaluate." },
+                "root": root_prop
+            } }
+        },
+        {
             "name": "status",
             "description": "What the architectural index knows about this repository: declaration files found, concepts declared, concepts observably in use, concepts declared but never observed in use, and structural_coverage (which languages/frameworks in THIS repo Archietect can actually see) — with an honest note about what the scan cannot see.",
             "inputSchema": { "type": "object", "properties": { "root": root_prop } }
@@ -700,6 +708,10 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 args.get("file").and_then(|v| v.as_str()),
                                 args.get("content").and_then(|v| v.as_str()),
                             ),
+                            "features" => match args.get("name").and_then(|v| v.as_str()) {
+                                Some(name) => crate::feature_flags::evaluate(&root, name),
+                                None => crate::feature_flags::list(&root),
+                            },
                             "imports" => {
                                 query::imports(&graph, args["file"].as_str().unwrap_or(""))
                             }

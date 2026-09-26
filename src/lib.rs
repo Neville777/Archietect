@@ -5,10 +5,11 @@
 //! a third. Everything here is deterministic and offline — AI tools consume
 //! this through MCP, they are never a component of it.
 
+pub mod diff_impact;
 pub mod docker_domain;
 pub mod documents_domain;
-pub mod diff_impact;
 pub mod evidence;
+pub mod feature_flags;
 pub mod git_domain;
 pub mod humanize;
 pub mod invariants;
@@ -24,6 +25,7 @@ pub mod permissions;
 pub mod photos_domain;
 pub mod proposal;
 pub mod query;
+pub mod query_budget;
 pub mod register;
 pub mod resource;
 pub mod rest;

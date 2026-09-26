@@ -717,6 +717,10 @@ fn handle_request(
     }
 
     let mut body: Value = match (path.as_str(), root_result) {
+        ("/features", Ok(root)) => match p.get("name") {
+            Some(name) => crate::feature_flags::evaluate(&root, name),
+            None => crate::feature_flags::list(&root),
+        },
         ("/laws", _) => laws::registry_json(),
         // No scan triggered — reports on a scan already in flight (or
         // already finished) on another thread. See ScanProgress's doc.
@@ -1164,7 +1168,7 @@ fn handle_request(
                 other => json!({
                     "error": format!("unknown endpoint {other}"),
                     "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
-                                  "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts",
+                                  "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts", "/features",
                                   "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
                                   "/system/list", "/system/query", "/system/status", "/system/register",
                                   "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe", "/git/diff",

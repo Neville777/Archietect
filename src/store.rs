@@ -1267,8 +1267,14 @@ mod retry_tests {
             handle.join().unwrap();
         }
         let (loaded_idx, loaded_graph) = load_raw(&root);
-        assert!(loaded_idx.is_some(), "concurrent saves must not lose the index");
-        assert!(loaded_graph.is_some(), "concurrent saves must not lose the graph");
+        assert!(
+            loaded_idx.is_some(),
+            "concurrent saves must not lose the index"
+        );
+        assert!(
+            loaded_graph.is_some(),
+            "concurrent saves must not lose the graph"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

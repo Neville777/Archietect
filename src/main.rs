@@ -18,7 +18,9 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use archietect::{mcp, model, proposal, query, rest, root, scan, store, watch, workflow};
+use archietect::{
+    feature_flags, mcp, model, proposal, query, rest, root, scan, store, watch, workflow,
+};
 
 #[derive(Parser)]
 #[command(name = "archietect", version, about)]
@@ -368,6 +370,11 @@ enum Cmd {
     /// performs one bounded HTTP request and labels the result RUNTIME.
     #[command(subcommand)]
     Runtime(RuntimeCmd),
+    /// Evaluate optional local capabilities. Unknown flags are safely off.
+    Features {
+        /// Evaluate one flag; omit to list configured flags.
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -740,6 +747,10 @@ fn main() -> anyhow::Result<()> {
                 "hook": hook,
             })
         }
+        Cmd::Features { name } => match name {
+            Some(name) => feature_flags::evaluate(&root, &name),
+            None => feature_flags::list(&root),
+        },
         Cmd::Hook { action } => hook_command(&root, action)?,
         Cmd::Uninstall => {
             let result = hook_command(&root, HookAction::Uninstall)?;

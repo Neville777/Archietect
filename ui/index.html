@@ -140,12 +140,28 @@ const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;'
 // work), not what correctness depends on.
 let loadGeneration = 0;
 let currentAbort = null;
+// POST actions have their own ownership sequence. Aborting a browser request
+// does not cancel server work, so late responses must also be discarded.
+let mutationGeneration = 0;
+let currentMutationAbort = null;
 function startLoad(){
   if (currentAbort) currentAbort.abort();
   currentAbort = new AbortController();
+  cancelMutation();
   return { gen: ++loadGeneration, signal: currentAbort.signal };
 }
 function isCurrentLoad(gen){ return gen === loadGeneration; }
+function startMutation(){
+  if (currentMutationAbort) currentMutationAbort.abort();
+  currentMutationAbort = new AbortController();
+  return { gen: ++mutationGeneration, signal: currentMutationAbort.signal };
+}
+function cancelMutation(){
+  if (currentMutationAbort) currentMutationAbort.abort();
+  currentMutationAbort = null;
+  mutationGeneration += 1;
+}
+function isCurrentMutation(gen){ return gen === mutationGeneration; }
 
 // The server answers `{scanning:true}` instead of queuing this request
 // behind an already-in-flight scan of the same root (see rest.rs's
@@ -949,9 +965,19 @@ async function governance(gen, signal){
     <div id="decisionRegister" class="card" style="margin-top:.7rem"><span class="muted">decision context appears after a review</span></div>`;
 }
 async function loadStagedDiff(){
-  const s=$('governanceStatus'); s.textContent=' loading staged diff…';
-  try { const d=await fetch(`/git/diff?root=${encodeURIComponent($('root').value)}`).then(r=>r.json()); if(d.error){s.textContent=` ${d.error}`;s.className='bad';return;} lastGovernancePatch=d.diff||''; $('governanceDiff').value=lastGovernancePatch; s.textContent=` loaded ${lastGovernancePatch.length} bytes`;s.className='ok'; }
-  catch(e){s.textContent=` ${e}`;s.className='bad';}
+  const s=$('governanceStatus'); if(!s)return;
+  const {gen, signal}=startMutation();
+  s.textContent=' loading staged diff…'; s.className='muted';
+  try {
+    const d=await fetch(`/git/diff?root=${encodeURIComponent($('root').value)}`,{signal}).then(r=>r.json());
+    if(!isCurrentMutation(gen)||!s.isConnected)return;
+    if(d.error){s.textContent=` ${d.error}`;s.className='bad';return;}
+    lastGovernancePatch=d.diff||'';
+    const diff=$('governanceDiff'); if(diff)diff.value=lastGovernancePatch;
+    s.textContent=` loaded ${lastGovernancePatch.length} bytes`;s.className='ok';
+  } catch(e) {
+    if(isCurrentMutation(gen)&&e.name!=='AbortError'&&s.isConnected){s.textContent=` ${e}`;s.className='bad';}
+  }
 }
 function renderGovernanceReceipt(d){
   const r=d.governance_receipt||{}, c=d.change||{}, ms=c.mutations||[], vs=[...(d.violations||[]),...(c.violations||[])];
@@ -966,15 +992,17 @@ function renderGovernanceReceipt(d){
   }).join('');
   return `<h3 class="${cls}">${esc(verdict)} <span class="muted">· ${esc(r.enforcement_level||c.enforcement_level||'preventive')}</span></h3><p>${ms.length} mutation${ms.length===1?'':'s'} observed · engine ${esc(r.engine||'—')}</p><table><tr><th>kind</th><th>resource and evidence</th><th>file</th></tr>${rows||'<tr><td colspan="3" class="muted">no structural mutations observed</td></tr>'}</table>${vs.length?`<h4 class="bad">policy findings</h4><ul>${vs.map(v=>`<li>${esc(typeof v==='string'?v:JSON.stringify(v))}</li>`).join('')}</ul>`:''}${verdict==='BLOCKED'?`<h4>submit a decision proposal</h4><input id="proposalTitle" style="width:100%;box-sizing:border-box" placeholder="Decision title"><textarea id="proposalPatch" rows="6" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="TOML patch containing [[decision]] and links = [...]"></textarea><input id="proposalToken" type="password" style="width:100%;box-sizing:border-box;margin-top:.35rem" placeholder="server token (printed by archietect serve)"><button style="margin-top:.4rem" onclick="submitGovernanceProposal()">submit proposal</button> <span id="proposalStatus" class="muted"></span>`:''}`;
 }
-async function loadDecisionContext(mutations){
+async function loadDecisionContext(mutations, mutationGen, signal){
   const box=$('decisionRegister'); if(!box)return;
+  if(!isCurrentMutation(mutationGen))return;
   const resources=[...new Set(mutations.map(m=>m.resource).filter(Boolean))];
   if(!resources.length){box.innerHTML='<span class="muted">No changed resources require decision context.</span>';return;}
   box.innerHTML='<span class="muted">loading decision lifecycle…</span>';
   const results=await Promise.all(resources.map(async resource=>{
-    try { return await fetch(`/plan?root=${encodeURIComponent($('root').value)}&q=${encodeURIComponent(resource)}`).then(r=>r.json()); }
+    try { return await fetch(`/plan?root=${encodeURIComponent($('root').value)}&q=${encodeURIComponent(resource)}`,{signal}).then(r=>r.json()); }
     catch(e){ return {error:String(e), resource}; }
   }));
+  if(!isCurrentMutation(mutationGen)||!box.isConnected)return;
   const decisions=results.flatMap(x=>(x.extend||[]).flatMap(e=>e.existing_decisions||[]));
   const unique=new Map(decisions.map(d=>[d.id,d]));
   if(!unique.size){box.innerHTML='<h4>decision lifecycle</h4><span class="muted">No declared decisions govern the changed resources.</span>';return;}
@@ -982,26 +1010,40 @@ async function loadDecisionContext(mutations){
 }
 async function runGovernance(){
   const diff=($('governanceDiff')||{}).value||''; lastGovernancePatch=diff; const out=$('governanceResult'); if(!out)return;
+  const {gen, signal}=startMutation();
   out.innerHTML='<span class="muted">reviewing…</span>';
-  try { const q=new URLSearchParams({root:$('root').value,diff}); const d=await fetch('/ci',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q}).then(r=>r.json()); out.innerHTML=d.error?`<span class="bad">${esc(d.error)}</span>`:renderGovernanceReceipt(d); if(!d.error) loadDecisionContext((d.change||{}).mutations||[]); }
-  catch(e){out.innerHTML=`<span class="bad">${esc(e)}</span>`;}
+  try {
+    const q=new URLSearchParams({root:$('root').value,diff});
+    const d=await fetch('/ci',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q,signal}).then(r=>r.json());
+    if(!isCurrentMutation(gen)||!out.isConnected)return;
+    out.innerHTML=d.error?`<span class="bad">${esc(d.error)}</span>`:renderGovernanceReceipt(d);
+    if(!d.error) loadDecisionContext((d.change||{}).mutations||[],gen,signal);
+  } catch(e) {
+    if(isCurrentMutation(gen)&&e.name!=='AbortError'&&out.isConnected)out.innerHTML=`<span class="bad">${esc(e)}</span>`;
+  }
 }
 async function submitGovernanceProposal(){
   const s=$('proposalStatus'), token=($('proposalToken')||{}).value||'', patch=($('proposalPatch')||{}).value||'', title=($('proposalTitle')||{}).value||'Architectural decision';
-  if(!token||!patch){s.textContent=' token and TOML patch are required';s.className='bad';return;} s.textContent=' submitting…';
+  if(!s)return;
+  if(!token||!patch){s.textContent=' token and TOML patch are required';s.className='bad';return;}
+  const {gen, signal}=startMutation();
+  s.textContent=' submitting…'; s.className='muted';
   try {
-    const q=new URLSearchParams({root:$('root').value,token,kind:'decision',title,patch}); const d=await fetch('/proposal/submit',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q}).then(r=>r.json());
+    const q=new URLSearchParams({root:$('root').value,token,kind:'decision',title,patch}); const d=await fetch('/proposal/submit',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q,signal}).then(r=>r.json());
+    if(!isCurrentMutation(gen)||!s.isConnected)return;
     if(d.error){s.textContent=` ${d.error}`;s.className='bad';}
     else {s.innerHTML=` submitted proposal <b>${esc(d.id||'')}</b> <button onclick="proposalAction(${Number(d.id)||0},'test')">test</button> <button onclick="proposalAction(${Number(d.id)||0},'accept')">accept</button> <button onclick="proposalAction(${Number(d.id)||0},'reject')">reject</button>`;s.className='ok';}
   }
-  catch(e){s.textContent=` ${e}`;s.className='bad';}
+  catch(e){if(isCurrentMutation(gen)&&e.name!=='AbortError'&&s.isConnected){s.textContent=` ${e}`;s.className='bad';}}
 }
 async function proposalAction(id, action){
   const s=$('proposalStatus'), token=($('proposalToken')||{}).value||'';
+  if(!s)return;
   if(!token){s.textContent=' token is required';s.className='bad';return;}
+  const {gen, signal}=startMutation();
   s.textContent=` ${action}ing…`; s.className='muted';
-  try { const q=new URLSearchParams({root:$('root').value,token,id:String(id)}); const d=await fetch(`/proposal/${action}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q}).then(r=>r.json()); s.textContent=d.error?` ${d.error}`:` ${action} complete for proposal ${id}`; s.className=d.error?'bad':'ok'; }
-  catch(e){s.textContent=` ${e}`;s.className='bad';}
+  try { const q=new URLSearchParams({root:$('root').value,token,id:String(id)}); const d=await fetch(`/proposal/${action}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q,signal}).then(r=>r.json()); if(!isCurrentMutation(gen)||!s.isConnected)return; s.textContent=d.error?` ${d.error}`:` ${action} complete for proposal ${id}`; s.className=d.error?'bad':'ok'; }
+  catch(e){if(isCurrentMutation(gen)&&e.name!=='AbortError'&&s.isConnected){s.textContent=` ${e}`;s.className='bad';}}
 }
 
 // The only tab that works with NO root typed in at all — see show()'s own
