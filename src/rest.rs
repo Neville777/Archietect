@@ -497,6 +497,7 @@ const INDEX_ENDPOINTS: &[&str] = &[
     "/owner",
     "/guard",
     "/plan",
+    "/context",
     "/status",
     "/doctor",
     "/tour",
@@ -531,6 +532,15 @@ fn answer_from_index(
         "/owner" => query::owner(idx, graph, q),
         "/guard" => query::guard(idx, graph, p.get("sql").map(|s| s.as_str()).unwrap_or("")),
         "/plan" => query::plan(idx, graph, q),
+        "/context" => crate::context::for_term(
+            root,
+            idx,
+            graph,
+            p.get("for")
+                .or_else(|| p.get("q"))
+                .map(String::as_str)
+                .unwrap_or(""),
+        ),
         "/status" => query::status(idx, graph),
         "/doctor" => query::doctor(idx, graph, root),
         "/tour" => query::tour(idx, graph),
@@ -1169,7 +1179,7 @@ fn handle_request(
                     "error": format!("unknown endpoint {other}"),
                     "endpoints": ["/concept", "/intent", "/impact", "/imports", "/owner", "/guard", "/plan",
                                   "/status", "/doctor", "/tour", "/duplicates", "/duplicate-logic", "/verdicts", "/features",
-                                  "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register",
+                                  "/history", "/ci", "/laws", "/scan-progress", "/known-files", "/file-concepts", "/declaration-files", "/permissions", "/permissions/check", "/register", "/context",
                                   "/system/list", "/system/query", "/system/status", "/system/register",
                                   "/documents/scan", "/photos/scan", "/messages/scan", "/docker/observe", "/git/diff",
                                   "/proposal/submit", "/proposal/list", "/proposal/inspect",

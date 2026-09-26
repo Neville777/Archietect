@@ -563,7 +563,12 @@ pub fn intent(idx: &Index, graph: &StructuralGraph, text: &str) -> Value {
     for t in &terms {
         let r = concept(idx, graph, t);
         match r["verdict"].as_str().unwrap_or("") {
-            "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" => extend.push(json!({
+            // SYMBOL is a real in-memory declaration with no observed
+            // cross-file use. It is still existing architecture, not a
+            // greenfield concept: route it to extend just like the other
+            // evidence-backed verdicts. Treating it as create here caused
+            // intent/plan to recommend duplicate symbols.
+            "ACTIVE" | "DECLARED_ONLY" | "STRUCTURAL" | "SYMBOL" => extend.push(json!({
                 "concept": t,
                 "canonical": r["canonical"],
                 "verdict": r["verdict"],
@@ -2870,6 +2875,37 @@ mod intent_tests {
             "'glimmerpod' must not be claimed as genuinely new when it already exists structurally, got: {out}"
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn symbol_only_struct_is_existing_not_genuinely_new() {
+        let (idx, graph, tmp) = scan_tmp(
+            "symbol-only",
+            &[(
+                "src/models/glimmerpod.rs",
+                "pub struct Glimmerpod { pub id: String }\n",
+            )],
+        );
+        assert_eq!(concept(&idx, &graph, "Glimmerpod")["verdict"], "SYMBOL");
+
+        let out = intent(&idx, &graph, "add glimmerpod scoring");
+        assert!(
+            out["extend"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["concept"] == "glimmerpod" && e["verdict"] == "SYMBOL"),
+            "a symbol-only struct must route to extend, got: {out}"
+        );
+        assert!(
+            !out["create"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e == "glimmerpod"),
+            "a symbol-only struct must not be claimed as new, got: {out}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

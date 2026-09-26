@@ -320,6 +320,14 @@ fn tool_defs_inner() -> Value {
             } }
         },
         {
+            "name": "context",
+            "description": "Return one bounded architectural context packet for a term: concept verdict, owner, impact, plan, linked decisions, history, freshness, coverage, and explicit unknowns.",
+            "inputSchema": { "type": "object", "properties": {
+                "term": { "type": "string", "description": "Concept, symbol, model, route, or architectural term." },
+                "root": root_prop
+            }, "required": ["term"] }
+        },
+        {
             "name": "features",
             "description": "Evaluate local optional capabilities from [features] configuration. Project values override global values; unknown features are safely disabled. Omit name to list configured flags.",
             "inputSchema": { "type": "object", "properties": {
@@ -712,6 +720,12 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 Some(name) => crate::feature_flags::evaluate(&root, name),
                                 None => crate::feature_flags::list(&root),
                             },
+                            "context" => crate::context::for_term(
+                                &root,
+                                &idx,
+                                &graph,
+                                args.get("term").and_then(|v| v.as_str()).unwrap_or(""),
+                            ),
                             "imports" => {
                                 query::imports(&graph, args["file"].as_str().unwrap_or(""))
                             }

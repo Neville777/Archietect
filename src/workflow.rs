@@ -112,6 +112,20 @@ pub fn workflow_check(
     })
 }
 
+/// Map a workflow report to a process status for the CLI/CI boundary.
+///
+/// The library report remains advisory and composable.  A command-line caller
+/// gets a non-zero result by default so a missing proof chain cannot silently
+/// pass a shell/CI step; `--advisory` is the explicit escape hatch for
+/// exploratory use.
+pub fn cli_exit_code(report: &Value, advisory: bool) -> i32 {
+    match report["decision"].as_str() {
+        Some("blocked") => 1,
+        Some("advisory") if !advisory => 2,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +169,17 @@ mod tests {
         );
         assert_eq!(report["checks"]["verify_edit"]["status"], "blocked");
         assert_eq!(report["decision"], "blocked");
+        assert_eq!(cli_exit_code(&report, false), 1);
+    }
+
+    #[test]
+    fn cli_requires_explicit_advisory_opt_out() {
+        let report = serde_json::json!({"decision":"advisory"});
+        assert_eq!(cli_exit_code(&report, false), 2);
+        assert_eq!(cli_exit_code(&report, true), 0);
+        assert_eq!(
+            cli_exit_code(&serde_json::json!({"decision":"evidence_complete"}), false),
+            0
+        );
     }
 }

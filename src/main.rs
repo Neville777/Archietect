@@ -19,7 +19,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use archietect::{
-    feature_flags, mcp, model, proposal, query, rest, root, scan, store, watch, workflow,
+    context, feature_flags, mcp, model, proposal, query, rest, root, scan, store, watch, workflow,
 };
 
 #[derive(Parser)]
@@ -113,6 +113,11 @@ enum Cmd {
         /// File containing the complete proposed content.
         #[arg(long)]
         content_file: Option<PathBuf>,
+        /// Permit missing optional evidence and return success for exploratory
+        /// checks. Without this flag, advisory/blocked decisions are non-zero
+        /// so CI cannot mistake an incomplete workflow for approval.
+        #[arg(long)]
+        advisory: bool,
     },
     /// What does this file exactly, unambiguously import — and what
     /// imports it? Only exact relative-import resolutions are reported
@@ -374,6 +379,12 @@ enum Cmd {
     Features {
         /// Evaluate one flag; omit to list configured flags.
         name: Option<String>,
+    },
+    /// Return one bounded architectural context packet for a concept.
+    Context {
+        /// Concept, symbol, model, route, or architectural term.
+        #[arg(long = "for", value_name = "TERM")]
+        term: String,
     },
 }
 
@@ -653,6 +664,7 @@ fn main() -> anyhow::Result<()> {
     let only = archietect::shape::parse_only(cli.only.as_deref());
     let compact = cli.compact;
     let refresh = cli.refresh;
+    let workflow_advisory = matches!(&cli.cmd, Some(Cmd::WorkflowCheck { advisory: true, .. }));
     // ONE resolver, before dispatch — every handler receives the same root.
     let root = root::resolve_from_cwd(cli.root)?;
     // Printed once, before any command runs, uniformly — every command
@@ -751,6 +763,10 @@ fn main() -> anyhow::Result<()> {
             Some(name) => feature_flags::evaluate(&root, &name),
             None => feature_flags::list(&root),
         },
+        Cmd::Context { term } => {
+            let (idx, g) = index_for_query(&root, refresh);
+            context::for_term(&root, &idx, &g, &term)
+        }
         Cmd::Hook { action } => hook_command(&root, action)?,
         Cmd::Uninstall => {
             let result = hook_command(&root, HookAction::Uninstall)?;
@@ -801,6 +817,7 @@ fn main() -> anyhow::Result<()> {
             patch,
             file,
             content_file,
+            advisory: _,
         } => {
             let (idx, g) = index_for_query(&root, refresh);
             let content = content_file
@@ -1362,6 +1379,15 @@ fn main() -> anyhow::Result<()> {
             compact
         ))?
     );
+
+    if out["kind"].as_str() == Some("workflow_prerequisite_report") {
+        let workflow_exit = archietect::workflow::cli_exit_code(&out, workflow_advisory);
+        if workflow_exit != 0 {
+            let decision = out["decision"].as_str().unwrap_or("advisory");
+            eprintln!("archietect workflow-check: exit {workflow_exit} — decision={decision}; pass --advisory for exploratory use");
+            std::process::exit(workflow_exit);
+        }
+    }
 
     // ── Typed exit codes — post-print, after JSON is on stdout ───────────
     //

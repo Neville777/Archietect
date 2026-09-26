@@ -59,13 +59,43 @@ fn changed_files(root: &Path, base: &str) -> Result<Vec<ChangedFile>, String> {
             old_path,
         });
     }
+    // `git diff` excludes untracked files. Include ordinary untracked files
+    // separately so a new route or symbol is not silently omitted. Ignored
+    // files remain outside this architectural boundary.
+    let untracked = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not list untracked files: {e}"))?;
+    if !untracked.status.success() {
+        return Err(format!(
+            "git untracked-file listing failed: {}",
+            String::from_utf8_lossy(&untracked.stderr).trim()
+        ));
+    }
+    let existing: BTreeSet<String> = result.iter().map(|f| f.path.clone()).collect();
+    for field in untracked
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|v| !v.is_empty())
+    {
+        let path = String::from_utf8_lossy(field).to_string();
+        if !existing.contains(&path) {
+            result.push(ChangedFile {
+                status: "??".into(),
+                path,
+                old_path: None,
+            });
+        }
+    }
+    result.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(result)
 }
 
 /// Build a deterministic impact report for the current worktree relative to
-/// `base`. `git diff base` includes staged and unstaged changes, but not
-/// untracked files; that boundary is surfaced in the output rather than
-/// pretending the report is a complete filesystem diff.
+/// `base`. Tracked changes come from `git diff`; ordinary untracked files are
+/// added from `git ls-files --others`. Ignored files and runtime behavior
+/// remain outside this static report.
 pub fn impact_report(root: &Path, base: &str, idx: &Index, graph: &StructuralGraph) -> Value {
     let files = match changed_files(root, base) {
         Ok(files) => files,
@@ -119,7 +149,8 @@ pub fn impact_report(root: &Path, base: &str, idx: &Index, graph: &StructuralGra
         "changed_routes": routes,
         "affected_importers": importers,
         "complete": false,
-        "limitations": ["Untracked files are not included; use git add -N or stage them before running the report.", "Impact is static and does not prove runtime behavior, database migration application, or browser behavior."],
+        "untracked_files_included": files.iter().filter(|f| f.status == "??").count(),
+        "limitations": ["Ignored files are not included; use an explicit scan if they are relevant.", "Impact is static and does not prove runtime behavior, database migration application, or browser behavior."],
     })
 }
 
@@ -189,6 +220,47 @@ fn route_matches(declared: &str, observed: &str) -> bool {
 mod tests {
     use super::*;
     use crate::structural::{Route, StructuralGraph};
+
+    #[test]
+    fn impact_includes_untracked_files_without_claiming_complete_coverage() {
+        let root = std::env::temp_dir().join(format!(
+            "archietect-impact-untracked-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("tracked.rs"), "pub struct Tracked;\n").unwrap();
+        git(&["add", "tracked.rs"]);
+        git(&[
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        std::fs::write(root.join("new.rs"), "pub struct NewThing;\n").unwrap();
+        let files = changed_files(&root, "HEAD").unwrap();
+        assert!(
+            files.iter().any(|f| f.path == "new.rs" && f.status == "??"),
+            "{files:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn route_contradiction_is_not_inferred_without_runtime_evidence() {
