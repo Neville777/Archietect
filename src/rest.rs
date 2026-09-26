@@ -409,6 +409,7 @@ fn clear_dirty(watchers: &Watchers, root: &Path) {
 }
 
 pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
+    crate::lifecycle::install_shutdown_handlers();
     let server = tiny_http::Server::http(("127.0.0.1", port))
         .map_err(|e| anyhow::anyhow!("bind 127.0.0.1:{port}: {e}"))?;
     let token = std::sync::Arc::new(generate_token());
@@ -420,6 +421,7 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
         std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
     let watchers: std::sync::Arc<Watchers> =
         std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let active_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let default_root = std::sync::Arc::new(default_root);
     // See `crate::exe_mtime`'s doc comment — same staleness detection as the
     // MCP server, for the same reason: this is a long-running process that
@@ -434,12 +436,19 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
     // indistinguishable from hung. `cache` and `root_locks` are the only
     // state shared across requests, so they are the only things that need
     // a lock — see `RootLocks`'s doc for why the second one exists.
-    for req in server.incoming_requests() {
+    // A timed receive lets SIGINT/SIGTERM be observed without relying on a
+    // signal handler to perform unsafe I/O or forcibly tear down a request.
+    while !crate::lifecycle::shutdown_requested() {
+        let Some(req) = server.recv_timeout(std::time::Duration::from_millis(200))? else {
+            continue;
+        };
         let cache = cache.clone();
         let root_locks = root_locks.clone();
         let watchers = watchers.clone();
         let default_root = default_root.clone();
         let token = token.clone();
+        let active_requests = active_requests.clone();
+        active_requests.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         std::thread::spawn(move || {
             handle_request(
                 req,
@@ -449,9 +458,17 @@ pub fn serve(default_root: Option<PathBuf>, port: u16) -> anyhow::Result<()> {
                 &root_locks,
                 &watchers,
                 started_mtime,
-            )
+            );
+            active_requests.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         });
     }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while active_requests.load(std::sync::atomic::Ordering::Acquire) != 0
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    eprintln!("archietect REST shutting down gracefully");
     Ok(())
 }
 

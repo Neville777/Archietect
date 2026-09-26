@@ -25,6 +25,14 @@ links = ["Decision", "Index"]
 proposed_by = "human"
 
 [[decision]]
+id = "bounded-lifecycle-and-concurrency"
+decision = "Long-running transports, runtime probes, and SQLite persistence use bounded shutdown, timeout, retry, ownership, and backoff behavior; failures remain explicit rather than hanging or overwriting newer state."
+because = "A deterministic architectural memory must remain responsive under process termination, unavailable runtimes, concurrent writes, and rapid UI navigation without converting incomplete work into a false architectural fact."
+rejected = ["Unbounded shutdown waits", "Infinite retry loops", "Applying stale asynchronous responses", "Treating a timeout as route absence"]
+links = ["lifecycle", "ProbeCircuitBreaker", "verify_http_with_breaker", "append_events", "save", "Index"]
+proposed_by = "human"
+
+[[decision]]
 id = "patches-are-observed-mutations"
 decision = "Change policy evaluates verified structural mutations derived from before and after patch contents."
 because = "Diff text heuristics cannot distinguish routine edits from architectural changes reliably; the extractor should observe established objects and report unknown when evidence is incomplete."

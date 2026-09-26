@@ -1601,14 +1601,23 @@ mod snapshot_tests {
             "export default function Page() { return null }",
         );
         assert!(page_uncertainty.is_empty());
-        assert!(page.routes.iter().any(|r| r.method == "GET" && r.path == "/projects/:id"));
+        assert!(page
+            .routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/projects/:id"));
 
         let (api, _) = extract_snapshot(
             "app/api/projects/route.ts",
             "export async function GET() { return Response.json({}) }\nexport async function POST() { return Response.json({}) }",
         );
-        assert!(api.routes.iter().any(|r| r.method == "GET" && r.path == "/api/projects"));
-        assert!(api.routes.iter().any(|r| r.method == "POST" && r.path == "/api/projects"));
+        assert!(api
+            .routes
+            .iter()
+            .any(|r| r.method == "GET" && r.path == "/api/projects"));
+        assert!(api
+            .routes
+            .iter()
+            .any(|r| r.method == "POST" && r.path == "/api/projects"));
 
         let (middleware, _) = extract_snapshot(
             "src/middleware.ts",
@@ -1626,8 +1635,14 @@ mod snapshot_tests {
         assert!(uncertainty.is_empty(), "{uncertainty:?}");
         assert!(schema.symbols.iter().any(|s| s.name == "User"));
         assert!(schema.symbols.iter().any(|s| s.name == "Order"));
-        assert!(schema.imports.iter().any(|i| i.to_module == "Order" && i.names == ["User.orders"]));
-        assert!(schema.imports.iter().any(|i| i.to_module == "User" && i.names == ["Order.user"]));
+        assert!(schema
+            .imports
+            .iter()
+            .any(|i| i.to_module == "Order" && i.names == ["User.orders"]));
+        assert!(schema
+            .imports
+            .iter()
+            .any(|i| i.to_module == "User" && i.names == ["Order.user"]));
 
         let (migration, migration_uncertainty) = extract_snapshot(
             "prisma/migrations/001_init/migration.sql",
@@ -1659,9 +1674,9 @@ mod snapshot_tests {
 
         // Shell is present in the explicit unsupported registry; it must not
         // silently look like an empty, successfully analyzed source file.
-        assert!(KNOWN_UNSUPPORTED.iter().any(|(name, exts)| {
-            *name == "Shell" && exts.contains(&"sh")
-        }));
+        assert!(KNOWN_UNSUPPORTED
+            .iter()
+            .any(|(name, exts)| { *name == "Shell" && exts.contains(&"sh") }));
     }
 }
 
@@ -2601,9 +2616,7 @@ pub const LANGUAGES: &[LanguageSpec] = &[
 /// listed explicitly so the coverage report can say "present, unsupported"
 /// instead of silently omitting them. A language absent from BOTH tables is
 /// simply not something this list anticipated; the report says so too.
-pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[
-    ("Shell", &["sh", "bash", "zsh", "fish"]),
-];
+pub const KNOWN_UNSUPPORTED: &[(&str, &[&str])] = &[("Shell", &["sh", "bash", "zsh", "fish"])];
 
 /// Per-language, per-framework structural coverage for the files actually
 /// present in this scan — the honest answer to "does Archietect understand
@@ -2703,8 +2716,7 @@ fn extract_prisma_structural(
     let model_re = Regex::new(r"(?ms)^\s*model\s+(\w+)\s*\{(.*?)^\s*\}").unwrap();
     let field_re = Regex::new(r"(?m)^\s*(\w+)\s+([A-Z][A-Za-z0-9_]*)(\[\])?(?:\s|$)").unwrap();
     let scalars = [
-        "String", "Int", "BigInt", "Float", "Decimal", "Boolean", "DateTime", "Json",
-        "Bytes",
+        "String", "Int", "BigInt", "Float", "Decimal", "Boolean", "DateTime", "Json", "Bytes",
     ];
     for cap in model_re.captures_iter(text) {
         let name = cap[1].to_string();
@@ -2740,8 +2752,12 @@ fn extract_sql_structural(
     symbols: &mut Vec<Symbol>,
     imports: &mut Vec<Import>,
 ) {
-    let create_re = Regex::new(r#"(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#).unwrap();
-    let reference_re = Regex::new(r#"(?i)\bREFERENCES\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#).unwrap();
+    let create_re = Regex::new(
+        r#"(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#,
+    )
+    .unwrap();
+    let reference_re =
+        Regex::new(r#"(?i)\bREFERENCES\s+[\"`]?([A-Za-z_][A-Za-z0-9_]*)[\"`]?"#).unwrap();
     for cap in create_re.captures_iter(text) {
         let name = cap[1].to_string();
         symbols.push(Symbol {
@@ -2805,12 +2821,21 @@ fn extract_next_middleware(rel: &str, text: &str, symbols: &mut Vec<Symbol>) {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    if !matches!(file, "middleware.ts" | "middleware.js" | "proxy.ts" | "proxy.js") {
+    if !matches!(
+        file,
+        "middleware.ts" | "middleware.js" | "proxy.ts" | "proxy.js"
+    ) {
         return;
     }
-    let function_re = Regex::new(r"(?m)\b(?:export\s+default\s+|export\s+)?(?:async\s+)?function\s+(middleware|proxy)\s*\(").unwrap();
+    let function_re = Regex::new(
+        r"(?m)\b(?:export\s+default\s+|export\s+)?(?:async\s+)?function\s+(middleware|proxy)\s*\(",
+    )
+    .unwrap();
     let const_re = Regex::new(r"(?m)\b(?:export\s+)?const\s+(middleware|proxy)\s*=").unwrap();
-    for cap in function_re.captures_iter(text).chain(const_re.captures_iter(text)) {
+    for cap in function_re
+        .captures_iter(text)
+        .chain(const_re.captures_iter(text))
+    {
         let name = cap[1].to_string();
         if symbols.iter().any(|s| s.name == name && s.file == rel) {
             continue;
@@ -8160,7 +8185,12 @@ fn extract_compose(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &m
 /// Extract GitHub Actions workflow jobs and their explicit `needs` edges.
 /// Workflow names and step commands are intentionally not treated as
 /// architecture symbols; job IDs are the stable graph nodes.
-fn extract_github_actions(rel: &str, text: &str, symbols: &mut Vec<Symbol>, imports: &mut Vec<Import>) {
+fn extract_github_actions(
+    rel: &str,
+    text: &str,
+    symbols: &mut Vec<Symbol>,
+    imports: &mut Vec<Import>,
+) {
     let mut in_jobs = false;
     let mut current: Option<String> = None;
     for (line_no, line) in text.lines().enumerate() {

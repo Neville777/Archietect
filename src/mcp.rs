@@ -17,6 +17,8 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::{
     docker_domain, documents_domain, permissions, photos_domain, query, root, scan, system_db,
@@ -80,7 +82,10 @@ fn describe_call(name: &str, args: &Value) -> String {
         "claim" => field(args, "statement").map(|s| truncate(&s, 80)),
         "ci" => field(args, "diff").map(|s| truncate(&s, 60)),
         "history" => field(args, "concept"),
-        "impact_diff" => args.get("base").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "impact_diff" => args
+            .get("base")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "proposal_submit" => field(args, "title"),
         "proposal_inspect" | "proposal_test" | "proposal_accept" | "proposal_reject" => args
             .get("id")
@@ -492,6 +497,7 @@ fn tool_defs_inner() -> Value {
 }
 
 pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
+    crate::lifecycle::install_shutdown_handlers();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     // Snapshot once at startup — see `crate::exe_mtime`'s doc comment. This
@@ -535,8 +541,25 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
     let activity = std::sync::Arc::new(std::sync::Mutex::new(McpActivity::default()));
     spawn_activity_flusher(activity.clone());
 
-    for line in stdin.lock().lines() {
-        let line = line?;
+    // Read stdin on a helper so the main loop can observe SIGTERM/SIGINT even
+    // while an MCP client is idle and has not written another JSON-RPC line.
+    let (line_tx, line_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stdin.lock().lines() {
+            if line_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    loop {
+        if crate::lifecycle::shutdown_requested() {
+            break;
+        }
+        let line = match line_rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => line?,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -663,11 +686,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                 query::impact(&idx, &graph, args["term"].as_str().unwrap_or(""))
                             }
                             "impact_diff" => {
-                                let base = args.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
+                                let base =
+                                    args.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
                                 crate::diff_impact::impact_report(&root, base, &idx, &graph)
                             }
                             "workflow_check" => crate::workflow::workflow_check(
-                                &root, &idx, &graph,
+                                &root,
+                                &idx,
+                                &graph,
                                 args.get("goal").and_then(|v| v.as_str()).unwrap_or(""),
                                 args.get("impact_term").and_then(|v| v.as_str()),
                                 args.get("patch").and_then(|v| v.as_str()),
@@ -1062,8 +1088,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         url,
                                         args["timeout_ms"].as_u64(),
                                     ) {
-                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) =>
-                                            crate::evidence::qaforge_envelope(value, "archietect.runtime.verify_http", json!({ "url": url }), Some(&root)),
+                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) => {
+                                            crate::evidence::qaforge_envelope(
+                                                value,
+                                                "archietect.runtime.verify_http",
+                                                json!({ "url": url }),
+                                                Some(&root),
+                                            )
+                                        }
                                         Ok(value) => value,
                                         Err(error) => json!({
                                             "evidence": "RUNTIME",
@@ -1086,8 +1118,14 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
                                         args["timeout_ms"].as_u64(),
                                         args["settle_ms"].as_u64(),
                                     ) {
-                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) =>
-                                            crate::evidence::qaforge_envelope(value, "archietect.runtime.verify_browser", json!({ "url": url }), Some(&root)),
+                                        Ok(value) if args["qaforge"].as_bool().unwrap_or(false) => {
+                                            crate::evidence::qaforge_envelope(
+                                                value,
+                                                "archietect.runtime.verify_browser",
+                                                json!({ "url": url }),
+                                                Some(&root),
+                                            )
+                                        }
                                         Ok(value) => value,
                                         Err(error) => json!({
                                             "evidence": "BROWSER",
@@ -1150,6 +1188,7 @@ pub fn serve(default_root: Option<PathBuf>) -> anyhow::Result<()> {
         writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
         stdout.flush()?;
     }
+    eprintln!("archietect MCP shutting down gracefully");
     Ok(())
 }
 

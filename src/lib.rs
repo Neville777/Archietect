@@ -13,6 +13,7 @@ pub mod git_domain;
 pub mod humanize;
 pub mod invariants;
 pub mod laws;
+pub mod lifecycle;
 pub mod mcp;
 pub mod messages_domain;
 pub mod model;

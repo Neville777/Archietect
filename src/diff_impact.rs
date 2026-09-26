@@ -32,7 +32,11 @@ fn changed_files(root: &Path, base: &str) -> Result<Vec<ChangedFile>, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let fields: Vec<&[u8]> = output.stdout.split(|b| *b == 0).filter(|v| !v.is_empty()).collect();
+    let fields: Vec<&[u8]> = output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|v| !v.is_empty())
+        .collect();
     let mut result = Vec::new();
     let mut i = 0;
     while i < fields.len() {
@@ -42,13 +46,18 @@ fn changed_files(root: &Path, base: &str) -> Result<Vec<ChangedFile>, String> {
         let path = String::from_utf8_lossy(fields.get(i).copied().unwrap_or_default()).to_string();
         i += 1;
         let (old_path, final_path) = if status_code == 'R' || status_code == 'C' {
-            let new_path = String::from_utf8_lossy(fields.get(i).copied().unwrap_or_default()).to_string();
+            let new_path =
+                String::from_utf8_lossy(fields.get(i).copied().unwrap_or_default()).to_string();
             i += 1;
             (Some(path), new_path)
         } else {
             (None, path)
         };
-        result.push(ChangedFile { status, path: final_path, old_path });
+        result.push(ChangedFile {
+            status,
+            path: final_path,
+            old_path,
+        });
     }
     Ok(result)
 }
@@ -75,7 +84,10 @@ pub fn impact_report(root: &Path, base: &str, idx: &Index, graph: &StructuralGra
     for (name, concept) in &idx.concepts {
         for (file, _) in concept.declared_in.iter().chain(concept.usage.iter()) {
             if changed.contains(file) {
-                concepts.entry(name.clone()).or_default().insert(file.clone());
+                concepts
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(file.clone());
             }
         }
     }
@@ -119,10 +131,20 @@ pub fn contradictions(graph: &StructuralGraph, runtime: &[Value]) -> Value {
     let mut findings = Vec::new();
     let mut checked = 0usize;
     for observation in runtime {
-        let Some(path) = observation["path"].as_str() else { continue };
-        let Some(status) = observation["status"].as_u64() else { continue };
-        let matching: Vec<_> = graph.routes.iter().filter(|r| route_matches(&r.path, path)).collect();
-        if matching.is_empty() { continue; }
+        let Some(path) = observation["path"].as_str() else {
+            continue;
+        };
+        let Some(status) = observation["status"].as_u64() else {
+            continue;
+        };
+        let matching: Vec<_> = graph
+            .routes
+            .iter()
+            .filter(|r| route_matches(&r.path, path))
+            .collect();
+        if matching.is_empty() {
+            continue;
+        }
         checked += 1;
         if status >= 400 {
             for route in matching {
@@ -151,10 +173,16 @@ fn route_matches(declared: &str, observed: &str) -> bool {
     }
     let d = normalize(declared);
     let o = normalize(observed);
-    if d == o { return true; }
+    if d == o {
+        return true;
+    }
     let ds: Vec<_> = d.split('/').filter(|s| !s.is_empty()).collect();
     let os: Vec<_> = o.split('/').filter(|s| !s.is_empty()).collect();
-    ds.len() == os.len() && ds.iter().zip(os.iter()).all(|(a, b)| a.starts_with(':') || *a == *b)
+    ds.len() == os.len()
+        && ds
+            .iter()
+            .zip(os.iter())
+            .all(|(a, b)| a.starts_with(':') || *a == *b)
 }
 
 #[cfg(test)]
@@ -164,7 +192,15 @@ mod tests {
 
     #[test]
     fn route_contradiction_is_not_inferred_without_runtime_evidence() {
-        let graph = StructuralGraph { routes: vec![Route { method: "GET".into(), path: "/health".into(), handler: "health".into(), file: "src/routes.rs".into() }], ..Default::default() };
+        let graph = StructuralGraph {
+            routes: vec![Route {
+                method: "GET".into(),
+                path: "/health".into(),
+                handler: "health".into(),
+                file: "src/routes.rs".into(),
+            }],
+            ..Default::default()
+        };
         let out = contradictions(&graph, &[]);
         assert_eq!(out["contradictions"].as_array().unwrap().len(), 0);
         assert_eq!(out["unverified_routes"], 1);
@@ -172,8 +208,19 @@ mod tests {
 
     #[test]
     fn failing_runtime_observation_contradicts_declared_route() {
-        let graph = StructuralGraph { routes: vec![Route { method: "GET".into(), path: "/health".into(), handler: "health".into(), file: "src/routes.rs".into() }], ..Default::default() };
-        let out = contradictions(&graph, &[json!({"evidence":"RUNTIME", "path":"/health", "status":500})]);
+        let graph = StructuralGraph {
+            routes: vec![Route {
+                method: "GET".into(),
+                path: "/health".into(),
+                handler: "health".into(),
+                file: "src/routes.rs".into(),
+            }],
+            ..Default::default()
+        };
+        let out = contradictions(
+            &graph,
+            &[json!({"evidence":"RUNTIME", "path":"/health", "status":500})],
+        );
         assert_eq!(out["contradictions"][0]["verdict"], "CONTRADICTED");
     }
 }

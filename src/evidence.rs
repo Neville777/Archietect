@@ -11,12 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const CONTRACT_VERSION: &str = "qaforge.evidence.v1";
 
 /// Wrap a probe result in the public QAForge ingestion contract.
-pub fn qaforge_envelope(
-    payload: Value,
-    source: &str,
-    target: Value,
-    root: Option<&Path>,
-) -> Value {
+pub fn qaforge_envelope(payload: Value, source: &str, target: Value, root: Option<&Path>) -> Value {
     let observed_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

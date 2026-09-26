@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -20,6 +21,92 @@ const MAX_BROWSER_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_BROWSER_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_BROWSER_SETTLE_MS: u64 = 250;
 const MAX_BROWSER_SETTLE_MS: u64 = 3_000;
+
+/// Bounded failure isolation for repeated runtime probes. A probe adapter can
+/// keep one breaker per target; after consecutive transport failures, calls
+/// fail fast until the cooldown elapses, then one half-open call is allowed.
+/// HTTP 4xx/5xx responses are observations (and therefore do not trip it).
+#[derive(Debug)]
+pub struct ProbeCircuitBreaker {
+    state: Mutex<BreakerState>,
+    failure_threshold: u32,
+    cooldown: Duration,
+}
+
+#[derive(Debug)]
+struct BreakerState {
+    failures: u32,
+    opened_at: Option<std::time::Instant>,
+    half_open: bool,
+}
+
+impl ProbeCircuitBreaker {
+    pub fn new(failure_threshold: u32, cooldown: Duration) -> Self {
+        Self {
+            state: Mutex::new(BreakerState {
+                failures: 0,
+                opened_at: None,
+                half_open: false,
+            }),
+            failure_threshold: failure_threshold.max(1),
+            cooldown,
+        }
+    }
+
+    pub fn default_probe() -> Self {
+        Self::new(3, Duration::from_secs(5))
+    }
+
+    /// Execute only when the breaker is closed or its cooldown has elapsed.
+    pub fn call<T, F>(&self, operation: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        {
+            let mut state = self.state.lock().expect("probe breaker mutex poisoned");
+            if let Some(opened_at) = state.opened_at {
+                if opened_at.elapsed() < self.cooldown {
+                    bail!("runtime probe circuit is open; target temporarily unavailable")
+                }
+                // Half-open: this call is the single trial. Keep it open until
+                // success/failure is recorded below.
+                if state.half_open {
+                    bail!("runtime probe circuit is half-open; trial already in progress")
+                }
+                state.half_open = true;
+            }
+        }
+        match operation() {
+            Ok(value) => {
+                let mut state = self.state.lock().expect("probe breaker mutex poisoned");
+                state.failures = 0;
+                state.opened_at = None;
+                state.half_open = false;
+                Ok(value)
+            }
+            Err(error) => {
+                let mut state = self.state.lock().expect("probe breaker mutex poisoned");
+                state.failures = state.failures.saturating_add(1);
+                if state.failures >= self.failure_threshold {
+                    state.opened_at = Some(std::time::Instant::now());
+                }
+                state.half_open = false;
+                Err(error)
+            }
+        }
+    }
+}
+
+/// Run an HTTP probe through a caller-owned breaker. The plain `verify_http`
+/// function remains available for one-off CLI checks; long-lived adapters
+/// should retain a breaker per target and call this wrapper.
+pub fn verify_http_with_breaker(
+    breaker: &ProbeCircuitBreaker,
+    raw_url: &str,
+    timeout_ms: Option<u64>,
+) -> Result<Value> {
+    breaker.call(|| verify_http(raw_url, timeout_ms))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Target {
@@ -272,27 +359,32 @@ const { chromium } = require("playwright");
   process.exitCode = 1;
 });
 "#;
-    let mut child = Command::new(
-        std::env::var_os("ARCHIETECT_NODE").unwrap_or_else(|| "node".into()),
-    )
-        .arg("-e")
-        .arg(script)
-        .arg("--")
-        .arg(raw_url)
-        .arg(timeout_ms.to_string())
-        .arg(settle_ms.to_string())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("could not start node; install Node.js and the target project's Playwright package")?;
+    let mut child =
+        Command::new(std::env::var_os("ARCHIETECT_NODE").unwrap_or_else(|| "node".into()))
+            .arg("-e")
+            .arg(script)
+            .arg("--")
+            .arg(raw_url)
+            .arg(timeout_ms.to_string())
+            .arg(settle_ms.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context(
+                "could not start node; install Node.js and the target project's Playwright package",
+            )?;
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms + 5_000);
     loop {
         if let Some(status) = child.try_wait()? {
             let output = child.wait_with_output()?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             if status.success() {
-                let line = stdout.lines().last().ok_or_else(|| anyhow!("browser verifier returned no JSON"))?;
-                return serde_json::from_str(line).context("browser verifier returned invalid JSON");
+                let line = stdout
+                    .lines()
+                    .last()
+                    .ok_or_else(|| anyhow!("browser verifier returned no JSON"))?;
+                return serde_json::from_str(line)
+                    .context("browser verifier returned invalid JSON");
             }
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("browser verifier failed: {}", stderr.trim());
@@ -324,6 +416,7 @@ fn validate_browser_url(raw_url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     #[test]
     fn validates_targets_and_extracts_titles() {
         assert!(parse_target("https://example.test").is_err());
@@ -339,5 +432,50 @@ mod tests {
         assert!(validate_browser_url("https://example.test/path").is_ok());
         assert!(validate_browser_url("ftp://example.test").is_err());
         assert!(validate_browser_url("http://user:pass@example.test").is_err());
+    }
+
+    #[test]
+    fn probe_breaker_opens_after_bounded_failures_and_recovers() {
+        let breaker = ProbeCircuitBreaker::new(2, Duration::from_millis(0));
+        let calls = AtomicUsize::new(0);
+        assert!(breaker
+            .call(|| -> Result<()> {
+                calls.fetch_add(1, Ordering::SeqCst);
+                bail!("down")
+            })
+            .is_err());
+        assert!(breaker
+            .call(|| -> Result<()> {
+                calls.fetch_add(1, Ordering::SeqCst);
+                bail!("down")
+            })
+            .is_err());
+        // Cooldown is zero, so the breaker permits a half-open trial rather
+        // than repeatedly hammering a known-dead target.
+        assert!(breaker
+            .call(|| -> Result<()> {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn probe_breaker_fails_fast_during_cooldown() {
+        let breaker = ProbeCircuitBreaker::new(1, Duration::from_secs(60));
+        let calls = AtomicUsize::new(0);
+        let fail = || -> Result<()> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            bail!("down")
+        };
+        assert!(breaker.call(fail).is_err());
+        assert!(breaker
+            .call(|| -> Result<()> {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -157,17 +157,45 @@ function isCurrentLoad(gen){ return gen === loadGeneration; }
 // for the in-flight scan to finish, then gets the fresh, fast, cached
 // answer. Stops retrying the moment its own signal is aborted — a
 // superseded load must not keep looping forever.
+// A request keeps the root it was created for. Reading #root again on each
+// retry creates a subtle async race: a user can type/select another project
+// while the first project is still scanning, causing the old generation to
+// send its next retry to the new root. The generation guard prevents stale
+// rendering, but it cannot prevent the wrong server-side work. Capture the
+// target once, and make the scan wait bounded so a lost watcher/server does
+// not leave a tab spinning forever.
+const MAX_SCAN_RETRIES = 240; // 2 minutes at the 500ms polling interval
+function abortableDelay(ms, signal){
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve(false);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(false);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 async function api(ep, extra, signal){
+  const requestedRoot = $('root').value;
+  let retries = 0;
   while (true) {
     let d;
     try {
-      d = await fetch(`${ep}?root=${encodeURIComponent($('root').value)}${extra||''}`, { signal }).then(r => r.json());
+      d = await fetch(`${ep}?root=${encodeURIComponent(requestedRoot)}${extra||''}`, { signal }).then(r => r.json());
     } catch (e) {
       return e.name === 'AbortError' ? { aborted: true } : { error: `fetch to ${ep} failed: ${e}` };
     }
     if (!d || !d.scanning) return d;
-    await new Promise(resolve => setTimeout(resolve, 500));
-    if (signal && signal.aborted) return { aborted: true };
+    retries += 1;
+    if (retries >= MAX_SCAN_RETRIES) {
+      return { error: `request to ${ep} timed out while the repository scan was still running` };
+    }
+    if (!(await abortableDelay(500, signal))) return { aborted: true };
   }
 }
 const t = ms => ms ? new Date(ms).toLocaleString() : '—';

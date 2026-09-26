@@ -93,10 +93,12 @@ pub fn workflow_check(
         "verify_edit": verify,
     });
 
-    let blocked = ["guard", "verify_edit"].iter().any(|key| checks[*key]["status"] == "blocked");
-    let all_provided = ["plan", "impact", "guard", "verify_edit"].iter().all(|key| {
-        checks[*key]["status"] == "complete"
-    });
+    let blocked = ["guard", "verify_edit"]
+        .iter()
+        .any(|key| checks[*key]["status"] == "blocked");
+    let all_provided = ["plan", "impact", "guard", "verify_edit"]
+        .iter()
+        .all(|key| checks[*key]["status"] == "complete");
     json!({
         "evidence": ["DECLARED", "USED"],
         "kind": "workflow_prerequisite_report",
@@ -117,7 +119,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(label: &str) -> std::path::PathBuf {
-        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let path = std::env::temp_dir().join(format!("archietect-workflow-{label}-{id}"));
         std::fs::create_dir_all(&path).unwrap();
         path
@@ -139,8 +144,14 @@ mod tests {
         let dir = temp_path("blocked");
         let (idx, graph) = scan::scan(&dir);
         let report = workflow_check(
-            &dir, &idx, &graph, "edit", Some("Thing"), None,
-            Some("src/main.rs"), Some("fn broken("),
+            &dir,
+            &idx,
+            &graph,
+            "edit",
+            Some("Thing"),
+            None,
+            Some("src/main.rs"),
+            Some("fn broken("),
         );
         assert_eq!(report["checks"]["verify_edit"]["status"], "blocked");
         assert_eq!(report["decision"], "blocked");

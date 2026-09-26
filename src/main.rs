@@ -1304,7 +1304,11 @@ fn main() -> anyhow::Result<()> {
             let resources = archietect::docker_domain::scan_observed(&cfg, &root);
             serde_json::json!({ "resources": resources })
         }
-        Cmd::Runtime(RuntimeCmd::VerifyHttp { url, timeout_ms, qaforge }) => {
+        Cmd::Runtime(RuntimeCmd::VerifyHttp {
+            url,
+            timeout_ms,
+            qaforge,
+        }) => {
             let value = match archietect::runtime::verify_http(&url, timeout_ms) {
                 Ok(value) => value,
                 Err(error) => archietect::runtime::http_error_evidence(&url, &error),
@@ -1316,9 +1320,16 @@ fn main() -> anyhow::Result<()> {
                     serde_json::json!({ "url": url }),
                     Some(&root),
                 )
-            } else { value }
+            } else {
+                value
+            }
         }
-        Cmd::Runtime(RuntimeCmd::VerifyBrowser { url, timeout_ms, settle_ms, qaforge }) => {
+        Cmd::Runtime(RuntimeCmd::VerifyBrowser {
+            url,
+            timeout_ms,
+            settle_ms,
+            qaforge,
+        }) => {
             let value = archietect::runtime::verify_browser(&url, timeout_ms, settle_ms)?;
             if qaforge {
                 archietect::evidence::qaforge_envelope(
@@ -1327,7 +1338,9 @@ fn main() -> anyhow::Result<()> {
                     serde_json::json!({ "url": url }),
                     Some(&root),
                 )
-            } else { value }
+            } else {
+                value
+            }
         }
     };
     println!(

@@ -10,6 +10,48 @@ use crate::model::Index;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::Path;
+use std::time::Duration;
+
+/// SQLite has one writer even in WAL mode.  A short-lived reader/writer
+/// collision is normal for the watcher and should not be reported as a
+/// missing index or a failed history write.  Keep retries bounded: a
+/// permanently blocked database must still produce an explicit error.
+const SQLITE_BUSY_RETRIES: usize = 8;
+const SQLITE_BUSY_BASE_MS: u64 = 10;
+const SQLITE_BUSY_MAX_MS: u64 = 250;
+
+fn is_busy_or_locked(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if matches!(
+                code.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
+fn with_busy_retry<T, F>(mut operation: F) -> rusqlite::Result<T>
+where
+    F: FnMut() -> rusqlite::Result<T>,
+{
+    for attempt in 0..=SQLITE_BUSY_RETRIES {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) if is_busy_or_locked(&error) && attempt < SQLITE_BUSY_RETRIES => {
+                let exponential = SQLITE_BUSY_BASE_MS.saturating_mul(1u64 << attempt.min(5));
+                let delay_ms = exponential.min(SQLITE_BUSY_MAX_MS);
+                // No extra dependency is needed for bounded jitter.  Vary
+                // within a small deterministic-per-attempt window so a set
+                // of Archietect processes does not retry in lockstep.
+                let jitter = (chrono_ms().unsigned_abs() % 11) as u64;
+                std::thread::sleep(Duration::from_millis(delay_ms + jitter));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the bounded retry loop always returns")
+}
 
 /// Append architectural events (daemon-only — the daemon is the single
 /// writer; queries never write). The timeline is APPEND-ONLY: history that
@@ -18,15 +60,24 @@ pub fn append_events(root: &Path, events: &[(i64, String, String, String)]) -> R
     if events.is_empty() {
         return Ok(());
     }
-    let conn = Connection::open(root.join("archietect.db"))?;
+    let mut conn = Connection::open(root.join("archietect.db"))?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.busy_timeout(Duration::from_secs(5))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS events (           id INTEGER PRIMARY KEY AUTOINCREMENT,            ts_ms INTEGER NOT NULL,            kind TEXT NOT NULL,            concept TEXT NOT NULL,            detail TEXT NOT NULL)",
     )?;
-    let mut stmt =
-        conn.prepare("INSERT INTO events (ts_ms, kind, concept, detail) VALUES (?1, ?2, ?3, ?4)")?;
-    for (ts, kind, concept, detail) in events {
-        stmt.execute(rusqlite::params![ts, kind, concept, detail])?;
-    }
+    with_busy_retry(|| {
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO events (ts_ms, kind, concept, detail) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for (ts, kind, concept, detail) in events {
+                stmt.execute(rusqlite::params![ts, kind, concept, detail])?;
+            }
+        }
+        tx.commit()
+    })?;
     Ok(())
 }
 
@@ -563,7 +614,7 @@ pub fn save(
     root: &Path,
 ) -> Result<std::path::PathBuf> {
     let db_path = root.join("archietect.db");
-    let conn = Connection::open(&db_path)?;
+    let mut conn = Connection::open(&db_path)?;
     // WAL mode: under SQLite's default rollback-journal mode, a reader
     // opened mid-write gets SQLITE_BUSY immediately with no retry. The MCP
     // server rescans-and-saves on every tool call, so a live session
@@ -579,18 +630,27 @@ pub fn save(
         "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
          CREATE TABLE IF NOT EXISTS idx (k TEXT PRIMARY KEY, doc TEXT);",
     )?;
-    conn.execute(
-        "INSERT OR REPLACE INTO idx (k, doc) VALUES ('index', ?1)",
-        [serde_json::to_string(idx)?],
-    )?;
-    conn.execute(
-        "INSERT OR REPLACE INTO idx (k, doc) VALUES ('structural', ?1)",
-        [serde_json::to_string(graph)?],
-    )?;
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (k, v) VALUES ('written_ms', ?1)",
-        [chrono_ms().to_string()],
-    )?;
+    let idx_doc = serde_json::to_string(idx)?;
+    let graph_doc = serde_json::to_string(graph)?;
+    with_busy_retry(|| {
+        let tx = conn.transaction()?;
+        // Keep the index and graph in one transaction. A reader can now see
+        // either the previous complete snapshot or the next complete one,
+        // never an index paired with a graph from different scans.
+        tx.execute(
+            "INSERT OR REPLACE INTO idx (k, doc) VALUES ('index', ?1)",
+            [&idx_doc],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO idx (k, doc) VALUES ('structural', ?1)",
+            [&graph_doc],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (k, v) VALUES ('written_ms', ?1)",
+            [chrono_ms().to_string()],
+        )?;
+        tx.commit()
+    })?;
     Ok(db_path)
 }
 
@@ -1148,5 +1208,67 @@ mod concurrent_access_tests {
         commit_result.unwrap();
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    #[test]
+    fn busy_errors_are_retried_then_succeed_with_a_bound() {
+        let attempts = std::cell::Cell::new(0usize);
+        let result = with_busy_retry(|| {
+            let attempt = attempts.get() + 1;
+            attempts.set(attempt);
+            if attempt < 3 {
+                Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error {
+                        code: rusqlite::ffi::ErrorCode::DatabaseBusy,
+                        extended_code: rusqlite::ffi::ErrorCode::DatabaseBusy as i32,
+                    },
+                    None,
+                ))
+            } else {
+                Ok("committed")
+            }
+        })
+        .unwrap();
+        assert_eq!(result, "committed");
+        assert_eq!(attempts.get(), 3);
+    }
+
+    #[test]
+    fn concurrent_saves_leave_a_complete_readable_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "archietect-concurrent-save-{}-{}",
+            std::process::id(),
+            chrono_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (idx, graph) = crate::scan::scan(&root);
+        save(&idx, &graph, &root).unwrap();
+
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let barrier = Arc::clone(&barrier);
+            let root = root.clone();
+            let idx = idx.clone();
+            let graph = graph.clone();
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                save(&idx, &graph, &root).unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let (loaded_idx, loaded_graph) = load_raw(&root);
+        assert!(loaded_idx.is_some(), "concurrent saves must not lose the index");
+        assert!(loaded_graph.is_some(), "concurrent saves must not lose the graph");
+        let _ = std::fs::remove_dir_all(root);
     }
 }
